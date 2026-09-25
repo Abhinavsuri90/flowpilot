@@ -4,6 +4,11 @@ import { loadEnv } from '../env'
 import { ApiError, errorResponse, unauthorized } from '../http'
 import type { ApiContext, AuthedContext } from './context'
 import * as auth from './auth'
+import * as workflows from './workflows'
+import * as runs from './runs'
+import * as workspace from './workspace'
+import * as dashboard from './dashboard'
+import * as system from './system'
 
 type Method = 'GET' | 'POST' | 'PATCH' | 'DELETE'
 
@@ -19,7 +24,25 @@ const ROUTES: Route[] = [
   { method: 'POST', pattern: '/api/auth/login', auth: false, handler: auth.login },
   { method: 'POST', pattern: '/api/auth/logout', auth: false, handler: auth.logout },
   { method: 'GET', pattern: '/api/me', auth: true, handler: auth.me },
+  { method: 'GET', pattern: '/api/dashboard', auth: true, handler: dashboard.get },
+  { method: 'GET', pattern: '/api/workflows', auth: true, handler: workflows.list },
+  { method: 'POST', pattern: '/api/workflows', auth: true, handler: workflows.create },
+  { method: 'GET', pattern: '/api/workflows/:id', auth: true, handler: workflows.detail },
+  { method: 'PATCH', pattern: '/api/workflows/:id', auth: true, handler: workflows.patch },
+  { method: 'POST', pattern: '/api/workflows/:id/versions', auth: true, handler: workflows.saveVersion },
+  { method: 'POST', pattern: '/api/workflows/:id/fork', auth: true, handler: workflows.fork },
+  { method: 'GET', pattern: '/api/workflows/:id/access', auth: true, handler: workflows.access },
+  { method: 'POST', pattern: '/api/runs', auth: true, handler: runs.create },
+  { method: 'GET', pattern: '/api/runs', auth: true, handler: runs.list },
+  { method: 'DELETE', pattern: '/api/runs', auth: true, handler: runs.remove },
+  { method: 'GET', pattern: '/api/runs/:id', auth: true, handler: runs.detail },
+  { method: 'GET', pattern: '/api/runs/:id/csv', auth: true, handler: runs.csv },
+  { method: 'GET', pattern: '/api/workspace', auth: true, handler: workspace.get },
+  { method: 'PATCH', pattern: '/api/workspace/members/:userId', auth: true, handler: workspace.setRole },
+  { method: 'GET', pattern: '/api/system', auth: true, handler: (ctx) => system.get(ctx, API_ROUTES) },
 ]
+
+export const API_ROUTES = ROUTES.map(({ method, pattern, auth }) => ({ method, pattern, auth }))
 
 type CompiledRoute = Route & { regex: RegExp; keys: string[] }
 
@@ -112,4 +135,3 @@ export async function handleApi(request: Request): Promise<Response> {
   }
 }
 
-export const API_ROUTES = ROUTES.map(({ method, pattern, auth }) => ({ method, pattern, auth }))

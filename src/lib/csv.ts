@@ -230,8 +230,10 @@ export function inferColumns(input: CsvInput): { columns: InferredColumn[]; rowC
 
 /** Serializes a result table. Cells that start like a formula are prefixed with ' so spreadsheets don't run them. */
 export function toCsv(columns: string[], rows: Row[]): string {
-  return Papa.unparse(
+  const csv = Papa.unparse(
     { fields: columns, data: rows.map((row) => columns.map((c) => row[c] ?? '')) },
     { escapeFormulae: true, newline: '\r\n' },
   )
+  // Papa ends a header-only file with a newline; keep the shape consistent.
+  return csv.replace(/\r\n$/, '')
 }

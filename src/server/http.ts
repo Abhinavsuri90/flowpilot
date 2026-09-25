@@ -61,7 +61,7 @@ export function noContent(headers?: Record<string, string>): Response {
  * Reads a request body with a hard byte cap, whatever Content-Length claims.
  * Oversized bodies stop being read as soon as the cap is crossed.
  */
-export async function readBodyCapped(request: Request, maxBytes: number): Promise<Uint8Array> {
+export async function readBodyCapped(request: Request, maxBytes: number): Promise<Uint8Array<ArrayBuffer>> {
   const declared = Number(request.headers.get('content-length') ?? NaN)
   if (Number.isFinite(declared) && declared > maxBytes) throw tooLarge(maxBytes)
   if (!request.body) return new Uint8Array(0)

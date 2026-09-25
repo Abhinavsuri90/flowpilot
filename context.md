@@ -1,5 +1,5 @@
 # FlowPilot: context
-_Last updated: 2026-09-26 02:20 · Phase 2/8 · Deterministic core done; starting API + access_
+_Last updated: 2026-09-26 02:30 · Phase 3/8 · API + access done; starting core UI_
 
 ## What this is
 FlowPilot turns a one-sentence description of a repetitive CSV report into a saved, versioned recipe that a workspace can run on their own files, share and fork.
@@ -7,8 +7,8 @@ Stack: TanStack Start 1.168 (React 19.3, Vite 8, Nitro 3 beta), TanStack Router/
 Run: `npm install && npm run dev` → http://localhost:3000
 
 ## Current status
-- Phase: 2 deterministic core. Status: done
-- Tests: 38/38 (`npm test`, 2026-09-26: engine 13, csv 12, validator 13). Typecheck: pass. Build: pass (phase 1)
+- Phase: 3 API + access. Status: done
+- Tests: 69/69 (`npm test`, 2026-09-26: engine 13, csv 12, validator 13, access 19, demo-loop 12). Typecheck: pass. Build: pass (phase 1)
 - App runs with: `npm install && npm run dev` → http://localhost:3000
 
 ## Done (with evidence)
@@ -25,15 +25,24 @@ Run: `npm install && npm run dev` → http://localhost:3000
 - [x] CSV: 1 MiB/5,000 rows/50 columns, BOM, trimming, duplicates, field counts, 5 bad-amount kinds with line numbers, inference, formula-escaped export. Evidence: `tests/csv.test.ts` (12)
 - [x] Deterministic describe + summary (`2 rows · status = "paid" · grouped by region · total < ₹1,00,000`). Evidence: engine suite
 
+- [x] Pure policy (`decide`, `denialStatus`, `decideRoleChange`, `permissionMatrix`). Evidence: access suite "renders the permission matrix from the same policy the API enforces"
+- [x] 19 of 20 REST endpoints through `handleApi` (all but `/api/generate`, phase 5). Evidence: `tests/access.test.ts` (19), `tests/demo-loop.test.ts` (12)
+- [x] 404 hides existence (outsider body identical to a missing id), 403 only for visible-but-not-yours. Evidence: access "outsider 404 everywhere"
+- [x] Runs private to runner (even owner/admin), CSV download formula-escaped with attachment + nosniff. Evidence: access "keeps runs and result downloads private"
+- [x] Versions immutable, forks independent, unshare → 404 while the copy runs with hidden attribution. Evidence: access + demo-loop 8–10
+- [x] DB triggers verified directly (versions, identity, pointer, final runs, append-only events, sequential/owner-only versions, json_valid). Evidence: access "enforces the invariants in the database itself"
+- [x] Activity feed filtered: fork announced to the source owner without the copy's title/id; runs only to the runner. Evidence: demo-loop 11
+- [x] Seed includes labelled examples: "Paid revenue by sales rep" (Vikram, Sales, team) and "Live spend by channel" (Olivia, Marketing). Evidence: access "isolates workspaces"
+
 ## In progress
-- Phase 3: API + access
+- Phase 4: core UI
 
 ## Next steps (ordered)
-1. `src/lib/policy.ts` (decide, denialStatus, role rules, matrix)
-2. `src/server/repo.ts` (access-aware queries, versions, forks, runs, stale reaper), `events.ts` (audit + filtered feed)
-3. Endpoints: workflows, versions, fork, access, runs (+csv, delete), workspace, dashboard, system; generate stub → phase 5
-4. Seed examples (Paid revenue by sales rep; Live spend by channel)
-5. `tests/access.test.ts`, `tests/demo-loop.test.ts`
+1. Full shell (nav groups, AI status pill, ⌘K search, New recipe button)
+2. Library (`/library?tab=&q=`), recipe cards
+3. Editor (`/workflows/new`, `/w/$id/edit`): 5 sections, step cards, parameters, live validity, columns-through-pipeline, Advanced JSON
+4. Recipe detail (`/w/$id?v=&run=`): header/version picker, recipe card, run panel (drop zone, header pre-check, parameters + reset), result (summary, funnel, TanStack Table v9, CSV), my runs, who-has-access
+5. Screenshot review in light/dark
 
 ## Decisions log
 | Date | Decision | Why | Alternatives rejected |
@@ -51,6 +60,13 @@ Run: `npm install && npm run dev` → http://localhost:3000
 | 2026-09-26 | Fully blank rows (all fields empty) are skipped | They carry no data; brief says skip blank lines | Treating `,,,,` as a bad row |
 | 2026-09-26 | Escaped export cells are quoted (`"'=A1"`) | Papa Parse 5.7 behaviour; still neutralises formulas | — |
 | 2026-09-26 | Names `__proto__`/`constructor`/`prototype` rejected for columns, aliases, parameters | Rows are plain objects keyed by these names | Null-prototype rows |
+| 2026-09-26 | Create bodies strip unknown keys (identity fields ignored); PATCH bodies are strict (422) | Brief: "ignored on create and rejected on update" | Strict everywhere |
+| 2026-09-26 | New recipes go to the caller's first workspace where they are admin/member | Workspace comes from the session, never the body | `workspaceId` in body |
+| 2026-09-26 | Fork allowed = can view AND role admin/member (owner included) | Matrix: viewers can't copy; a copy is a new recipe in the workspace | Owner always allowed |
+| 2026-09-26 | Extra DB triggers beyond the brief: versions numbered sequentially + only by the owner; runs must start `running` and pin a version of their own recipe; runs keep version/runner/parameters | Cheap, and makes crafted writes impossible below the API | — |
+| 2026-09-26 | "Library team" tab includes my own shared recipes | Team library = what the team sees | Excluding mine |
+| 2026-09-26 | Access-matrix workspace rows (create, roles) don't change with recipe visibility | They are workspace permissions, not recipe permissions | Showing 404 for them on private |
+| 2026-09-26 | Dashboard day buckets are UTC | Server-side aggregation; prototype | Per-user time zones |
 
 ## Deviations from the brief
 - (none yet)
@@ -81,6 +97,10 @@ DATABASE_PATH, SEED_PASSWORD, MODEL_PROVIDER, MODEL_NAME, ANTHROPIC_API_KEY, OPE
 - `src/lib/workflow/`: `schema.ts` (contract, LIMITS, Zod) · `validate.ts` (validateDefinition, analyze, resolveParameters) · `execute.ts` (engine) · `describe.ts` (INR, plain-language steps, summary) · `examples.ts` (demo + seed definitions)
 - `src/lib/csv.ts`: parseTable, parseForContract, checkAmount, inferColumns, toCsv
 - `fixtures/`: sales_A/B + invalid files · `public/samples/`: downloadable demo CSVs · `tests/helpers/fixtures.ts`
+- `src/lib/policy.ts`: pure access policy + matrix
+- `src/server/repo.ts`: access-aware queries, create/save/fork transactions, runs, stale reaper · `events.ts`: audit log + filtered feed
+- `src/server/api/`: `workflows.ts`, `runs.ts`, `workspace.ts`, `dashboard.ts`, `system.ts` (+ `auth.ts`, `router.ts`)
+- `tests/helpers/app.ts`: in-memory app + cookie-keeping client calling `handleApi`
 - `scripts/screenshots.ts`: Playwright screenshot helper
 
 ## Demo checklist
