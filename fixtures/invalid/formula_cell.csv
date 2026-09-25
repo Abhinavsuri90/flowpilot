@@ -1,0 +1,4 @@
+order_id,region,sales_rep,status,amount
+O-101,=HYPERLINK("http://example.com"),Asha,paid,60000
+O-102,@SUM(A1),Asha,paid,50000
+O-103,South,Vikram,paid,40000

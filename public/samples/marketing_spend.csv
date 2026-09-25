@@ -1,0 +1,6 @@
+campaign,channel,status,spend
+C-201,Search,live,42000
+C-202,Social,live,18000
+C-203,Search,paused,9000
+C-204,Email,live,6000
+C-205,Social,ended,12000

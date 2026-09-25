@@ -1,5 +1,5 @@
 # FlowPilot: context
-_Last updated: 2026-09-26 01:40 · Phase 1/8 · Scaffold done; starting deterministic core_
+_Last updated: 2026-09-26 02:20 · Phase 2/8 · Deterministic core done; starting API + access_
 
 ## What this is
 FlowPilot turns a one-sentence description of a repetitive CSV report into a saved, versioned recipe that a workspace can run on their own files, share and fork.
@@ -7,8 +7,8 @@ Stack: TanStack Start 1.168 (React 19.3, Vite 8, Nitro 3 beta), TanStack Router/
 Run: `npm install && npm run dev` → http://localhost:3000
 
 ## Current status
-- Phase: 1 scaffold. Status: done
-- Tests: no suites yet (phase 2 adds them). Typecheck: pass. Build: pass (`npm run build`, prod server smoke-tested on :3001)
+- Phase: 2 deterministic core. Status: done
+- Tests: 38/38 (`npm test`, 2026-09-26: engine 13, csv 12, validator 13). Typecheck: pass. Build: pass (phase 1)
 - App runs with: `npm install && npm run dev` → http://localhost:3000
 
 ## Done (with evidence)
@@ -19,14 +19,21 @@ Run: `npm install && npm run dev` → http://localhost:3000
 - [x] Login page (split brand panel + one-click demo accounts), app shell, light/dark tokens. Evidence: screenshots reviewed in session (scratchpad), to be regenerated under docs/screenshots in phase 8
 - [x] Production build via Nitro, better-sqlite3 traced into `.output/server/node_modules`. Evidence: `node .output/server/index.mjs` served login + /api/me with `private, no-store`
 
+- [x] Recipe contract: strict Zod schema, LIMITS, types. Evidence: `src/lib/workflow/schema.ts`, validator suite
+- [x] Validator with step-by-step schema tracking (works on partial drafts) + parameter resolution. Evidence: `tests/validator.test.ts` (13), incl. exact "no longer available" message
+- [x] Engine: filter/group_sum, code-point ordering, exact sums, 30 s deadline checked between steps and every 1,024 rows, step log. Evidence: `tests/engine.test.ts` (13): all six demo expectations, lt vs lte, TIMEOUT
+- [x] CSV: 1 MiB/5,000 rows/50 columns, BOM, trimming, duplicates, field counts, 5 bad-amount kinds with line numbers, inference, formula-escaped export. Evidence: `tests/csv.test.ts` (12)
+- [x] Deterministic describe + summary (`2 rows · status = "paid" · grouped by region · total < ₹1,00,000`). Evidence: engine suite
+
 ## In progress
-- Phase 2 deterministic core: schema/validate/execute/describe/csv + fixtures + engine/csv/validator suites
+- Phase 3: API + access
 
 ## Next steps (ordered)
-1. `src/lib/workflow/{schema,validate,execute,describe,examples}.ts`, `src/lib/csv.ts`
-2. `fixtures/` (sales_A/B + invalid files) and `public/samples/`
-3. `tests/engine.test.ts`, `tests/csv.test.ts`, `tests/validator.test.ts`
-4. Phase 3: policy, repo, events, remaining 17 endpoints, seed examples, access + demo-loop suites
+1. `src/lib/policy.ts` (decide, denialStatus, role rules, matrix)
+2. `src/server/repo.ts` (access-aware queries, versions, forks, runs, stale reaper), `events.ts` (audit + filtered feed)
+3. Endpoints: workflows, versions, fork, access, runs (+csv, delete), workspace, dashboard, system; generate stub → phase 5
+4. Seed examples (Paid revenue by sales rep; Live spend by channel)
+5. `tests/access.test.ts`, `tests/demo-loop.test.ts`
 
 ## Decisions log
 | Date | Decision | Why | Alternatives rejected |
@@ -40,11 +47,16 @@ Run: `npm install && npm run dev` → http://localhost:3000
 | 2026-09-26 | Client data via TanStack Query `useQuery` (no SSR prefetch) | Brief: QueryClient via router context + `Wrap`; SSR renders shell, data loads client-side | ssr-query integration |
 | 2026-09-26 | Cookie `fp_session` (+Secure on HTTPS) instead of `__Host-` prefix | `__Host-` requires Secure, which breaks plain http://localhost | `__Host-fp_session` |
 | 2026-09-26 | Import protection denies `src/server/**` in the client bundle | Build fails if DB/session/model code leaks to the browser | Marker imports |
+| 2026-09-26 | Text cells are trimmed; amounts must match `^\d+$` after trim | Stray spaces from spreadsheet exports otherwise break exact matching; amounts stay strict | Keeping raw whitespace |
+| 2026-09-26 | Fully blank rows (all fields empty) are skipped | They carry no data; brief says skip blank lines | Treating `,,,,` as a bad row |
+| 2026-09-26 | Escaped export cells are quoted (`"'=A1"`) | Papa Parse 5.7 behaviour; still neutralises formulas | — |
+| 2026-09-26 | Names `__proto__`/`constructor`/`prototype` rejected for columns, aliases, parameters | Rows are plain objects keyed by these names | Null-prototype rows |
 
 ## Deviations from the brief
 - (none yet)
 
 ## Known issues / bugs
+- CSV line numbers count records (header = line 1); a quoted field containing a newline would shift later line numbers. Low severity; documented.
 - Build prints rolldown "use client" directive warnings from lucide-react. Harmless.
 
 ## How to run
@@ -66,6 +78,9 @@ DATABASE_PATH, SEED_PASSWORD, MODEL_PROVIDER, MODEL_NAME, ANTHROPIC_API_KEY, OPE
 - `src/lib/session.ts`: server functions for the `_app` guard and login page · `lib/api.ts`: fetch wrapper + query keys · `lib/types.ts`: shared types · `lib/demo.ts`: demo people
 - `src/routes/`: `__root.tsx` (document, theme script), `login.tsx`, `_app.tsx` (guard + shell), `_app/index.tsx`, `api/$.ts`
 - `src/components/`: `ui.tsx` (Button, Badge, Card, Dialog, Callout, Field, Avatar…), `shell.tsx`, `toast.tsx`, `states.tsx`, `logo.tsx`, `theme.ts`
+- `src/lib/workflow/`: `schema.ts` (contract, LIMITS, Zod) · `validate.ts` (validateDefinition, analyze, resolveParameters) · `execute.ts` (engine) · `describe.ts` (INR, plain-language steps, summary) · `examples.ts` (demo + seed definitions)
+- `src/lib/csv.ts`: parseTable, parseForContract, checkAmount, inferColumns, toCsv
+- `fixtures/`: sales_A/B + invalid files · `public/samples/`: downloadable demo CSVs · `tests/helpers/fixtures.ts`
 - `scripts/screenshots.ts`: Playwright screenshot helper
 
 ## Demo checklist

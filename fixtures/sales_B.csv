@@ -1,0 +1,7 @@
+order_id,region,sales_rep,status,amount
+O-101,North,Asha,paid,30000
+O-102,North,Asha,paid,40000
+O-103,South,Vikram,paid,120000
+O-104,South,Vikram,refunded,90000
+O-105,West,Asha,paid,20000
+O-106,West,Vikram,cancelled,30000
