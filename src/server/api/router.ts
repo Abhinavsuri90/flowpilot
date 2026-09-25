@@ -9,6 +9,7 @@ import * as runs from './runs'
 import * as workspace from './workspace'
 import * as dashboard from './dashboard'
 import * as system from './system'
+import * as generate from './generate'
 
 type Method = 'GET' | 'POST' | 'PATCH' | 'DELETE'
 
@@ -32,6 +33,7 @@ const ROUTES: Route[] = [
   { method: 'POST', pattern: '/api/workflows/:id/versions', auth: true, handler: workflows.saveVersion },
   { method: 'POST', pattern: '/api/workflows/:id/fork', auth: true, handler: workflows.fork },
   { method: 'GET', pattern: '/api/workflows/:id/access', auth: true, handler: workflows.access },
+  { method: 'POST', pattern: '/api/generate', auth: true, handler: generate.create },
   { method: 'POST', pattern: '/api/runs', auth: true, handler: runs.create },
   { method: 'GET', pattern: '/api/runs', auth: true, handler: runs.list },
   { method: 'DELETE', pattern: '/api/runs', auth: true, handler: runs.remove },

@@ -1,5 +1,5 @@
 # FlowPilot: context
-_Last updated: 2026-09-26 02:50 · Phase 4/8 · Core UI done; starting AI authoring_
+_Last updated: 2026-09-26 03:00 · Phase 5/8 · AI authoring done; starting Access + My runs_
 
 ## What this is
 FlowPilot turns a one-sentence description of a repetitive CSV report into a saved, versioned recipe that a workspace can run on their own files, share and fork.
@@ -7,8 +7,8 @@ Stack: TanStack Start 1.168 (React 19.3, Vite 8, Nitro 3 beta), TanStack Router/
 Run: `npm install && npm run dev` → http://localhost:3000
 
 ## Current status
-- Phase: 4 core UI. Status: done
-- Tests: 69/69 (`npm test`, 2026-09-26: engine 13, csv 12, validator 13, access 19, demo-loop 12). Typecheck: pass. Build: pass (phase 1)
+- Phase: 5 AI authoring. Status: done
+- Tests: 77/77 (`npm test`, 2026-09-26: engine 13, csv 12, validator 13, access 19, demo-loop 12, ai 8). Typecheck: pass. Build: pass (phase 1)
 - App runs with: `npm install && npm run dev` → http://localhost:3000
 
 ## Done (with evidence)
@@ -40,14 +40,18 @@ Run: `npm install && npm run dev` → http://localhost:3000
 - [x] Recipe detail `/w/$id?v=&run=`: version picker + "Version N (latest is M)" banner, recipe card, run panel (drop zone, header pre-check, parameters with reset), result (summary chips, TanStack Table v9 sorting, rows-through-each-step funnel, CSV download, "No rows matched"), my runs + Delete my results, who has access. Evidence: walkthrough ran sales_A → South ₹40,000 / West ₹70,000 in Chromium; light/dark/390px screenshots
 - [x] Share dialog (visibility + version-pinned link) and fork dialog (title, version, then opens the copy in the editor). Evidence: typecheck; exercised end-to-end in phase 8 e2e
 
+- [x] `POST /api/generate` (20th endpoint): flat strict output schema; Anthropic forced `submit_recipe` tool call or OpenAI `json_schema` strict; author's contract wraps model steps; full validation; exactly one repair (Anthropic `tool_result` `is_error: true`); 422 DRAFT_INVALID with draft; 503 MODEL_UNAVAILABLE (no key, provider error, 20 s timeout); never writes. Evidence: `tests/ai.test.ts` (8)
+- [x] Editor Generate flow: AI draft badges, unsupported/clarification/invalid/unavailable callouts. Evidence: Chromium run against `tests/e2e/mock-model.ts` (unsupported callout for Gmail; 3 generated step cards for the demo sentence)
+- [x] Run path never imports the model client. Evidence: ai suite static import check + run with fetch stubbed to throw
+- [x] `npm run check:model` reports configuration (currently: not configured)
+
 ## In progress
-- Phase 5: AI authoring
+- Phase 6: Access & sharing page, My runs page
 
 ## Next steps (ordered)
-1. `src/server/ai/generate.ts`: prompt, flat strict output schema, Anthropic forced tool call / OpenAI json_schema strict, 20 s timeout, one repair, DRAFT_INVALID with draft, 503 MODEL_UNAVAILABLE
-2. `POST /api/generate` route (the editor UI already calls it and handles every outcome)
-3. `scripts/check-model.ts`
-4. `tests/ai.test.ts` (8) with a stubbed fetch
+1. `/access`: matrix from `permissionMatrix` with Private/Team toggle and 403/404 cells; members with role dropdowns (admins); one-click share/unshare of my recipes; the principles
+2. `/runs`: all my runs, status filter, sortable Table v9, per-run CSV, "Delete all my results"
+3. Add both to nav + command palette
 
 ## Decisions log
 | Date | Decision | Why | Alternatives rejected |
@@ -75,9 +79,12 @@ Run: `npm install && npm run dev` → http://localhost:3000
 | 2026-09-26 | Sample-CSV column checklist unchecks id-like columns (`order_id`) by default | The demo contract ignores order_id; authors can re-check it | All checked |
 | 2026-09-26 | After "Make a copy" the app opens the copy in the editor | Demo: copy → change groupBy → save → run | Opening the copy's detail page |
 | 2026-09-26 | Editor Save in edit mode = POST versions, then PATCH title/description only if changed | Versions hold definitions; title/description are recipe metadata | Versioning metadata |
+| 2026-09-26 | Model reply parsed leniently (nullish fields, extra keys stripped); the built definition is validated strictly | Avoids wasting the single repair on harmless omissions (Anthropic tool input isn't strict-mode) | Strict parse of the reply |
+| 2026-09-26 | Literal values are placed by tracked column type (e.g. "100000" as text for an amount becomes 100000) | Fewer needless repairs; still validated | Trusting the model's slot choice |
+| 2026-09-26 | OpenAI default model `gpt-5` | Needs a default; override with MODEL_NAME | — |
 
 ## Deviations from the brief
-- (none yet)
+- Added optional `ANTHROPIC_BASE_URL` / `OPENAI_BASE_URL` (defaults: the public APIs) · the browser e2e test needs a local mock model because the model call is server-side · no change when unset
 
 ## Known issues / bugs
 - Fixed in phase 4: the editor's unsaved-changes blocker read stale state and prompted after a successful save (found by the Playwright walkthrough).
@@ -94,7 +101,7 @@ Run: `npm install && npm run dev` → http://localhost:3000
 - Screenshots: `npx tsx scripts/screenshots.ts --as asha --theme both / /library`
 
 ## Environment variables (names only)
-DATABASE_PATH, SEED_PASSWORD, MODEL_PROVIDER, MODEL_NAME, ANTHROPIC_API_KEY, OPENAI_API_KEY
+DATABASE_PATH, SEED_PASSWORD, MODEL_PROVIDER, MODEL_NAME, ANTHROPIC_API_KEY, OPENAI_API_KEY (+ optional ANTHROPIC_BASE_URL, OPENAI_BASE_URL)
 
 ## File map
 - `src/server/migrations.ts`: schema + invariant triggers · `db.ts`: connection, migrate, `useDatabase` for tests
@@ -114,10 +121,13 @@ DATABASE_PATH, SEED_PASSWORD, MODEL_PROVIDER, MODEL_NAME, ANTHROPIC_API_KEY, OPE
 - `src/lib/workflow/draft.ts`: editor draft model ↔ definition (incl. lenient loader for invalid model drafts) · `src/lib/format.ts`
 - `src/components/`: `editor.tsx`, `results.tsx` (Table v9 grid + funnel), `workflow-bits.tsx` (badges, chips, step list, recipe card), `file-drop.tsx`, `share-dialog.tsx`, `fork-dialog.tsx`, `access-panel.tsx`, `command.tsx` (⌘K)
 - `src/routes/_app/`: `library.tsx`, `workflows.new.tsx`, `w.$workflowId.index.tsx`, `w.$workflowId.edit.tsx`
+- `src/server/ai/generate.ts`: prompt, output schema, provider adapters, repair loop · `src/server/api/generate.ts`: endpoint · `scripts/check-model.ts`
+- `tests/e2e/mock-model.ts`: stand-in Anthropic endpoint for browser tests only
 - `scripts/screenshots.ts`: Playwright screenshot helper
 
 ## Demo checklist
 - [ ] Asha creates & shares · [ ] Vikram reruns · [ ] Vikram forks · [ ] Asha's original unchanged · [ ] Meera/Olivia blocked
 
 ## Open questions for the owner
+- No model key in this environment (`ANTHROPIC_API_KEY` / `OPENAI_API_KEY` unset). The default I took meanwhile: AI generation is verified against stubbed/mock providers only; the app shows "AI off" and manual editing works. Run `npm run check:model` after adding a key.
 - Sections 11 (after "Governance: Access") to 19 of the brief were cut off by the paste limit. The default I took meanwhile: follow the system design PDF for those parts, with 8 phases: 1 scaffold · 2 deterministic core · 3 API + access · 4 core UI · 5 AI authoring · 6 sharing/governance UI · 7 dashboard, runs, system design · 8 hardening, e2e, README.

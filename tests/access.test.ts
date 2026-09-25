@@ -40,6 +40,7 @@ describe('access control', () => {
       ['POST', '/api/workflows/wf_x/versions'],
       ['POST', '/api/workflows/wf_x/fork'],
       ['GET', '/api/workflows/wf_x/access'],
+      ['POST', '/api/generate'],
       ['POST', '/api/runs'],
       ['GET', '/api/runs'],
       ['DELETE', '/api/runs'],

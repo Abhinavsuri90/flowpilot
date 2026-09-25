@@ -7,7 +7,12 @@ export const DEFAULT_MODELS: Record<Provider, string> = {
   openai: 'gpt-5',
 }
 
-export type ModelConfig = { provider: Provider; model: string; apiKey: string }
+export type ModelConfig = { provider: Provider; model: string; apiKey: string; baseUrl: string }
+
+const DEFAULT_BASE_URLS: Record<Provider, string> = {
+  anthropic: 'https://api.anthropic.com',
+  openai: 'https://api.openai.com/v1',
+}
 
 /**
  * Reads the model configuration from the environment on every call, so a key
@@ -28,7 +33,10 @@ export function modelConfig(): ModelConfig | null {
   const apiKey = provider === 'anthropic' ? anthropicKey : openaiKey
   if (!apiKey) return null
   const model = process.env.MODEL_NAME?.trim() || DEFAULT_MODELS[provider]
-  return { provider, model, apiKey }
+  // Optional override (same convention as the official SDKs), e.g. a proxy or a local mock in e2e tests.
+  const override = (provider === 'anthropic' ? process.env.ANTHROPIC_BASE_URL : process.env.OPENAI_BASE_URL)?.trim()
+  const baseUrl = (override || DEFAULT_BASE_URLS[provider]).replace(/\/+$/, '')
+  return { provider, model, apiKey, baseUrl }
 }
 
 export function modelStatus(): ModelStatus {
