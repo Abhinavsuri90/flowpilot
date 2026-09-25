@@ -1,5 +1,5 @@
 # FlowPilot: context
-_Last updated: 2026-09-26 02:30 · Phase 3/8 · API + access done; starting core UI_
+_Last updated: 2026-09-26 02:50 · Phase 4/8 · Core UI done; starting AI authoring_
 
 ## What this is
 FlowPilot turns a one-sentence description of a repetitive CSV report into a saved, versioned recipe that a workspace can run on their own files, share and fork.
@@ -7,7 +7,7 @@ Stack: TanStack Start 1.168 (React 19.3, Vite 8, Nitro 3 beta), TanStack Router/
 Run: `npm install && npm run dev` → http://localhost:3000
 
 ## Current status
-- Phase: 3 API + access. Status: done
+- Phase: 4 core UI. Status: done
 - Tests: 69/69 (`npm test`, 2026-09-26: engine 13, csv 12, validator 13, access 19, demo-loop 12). Typecheck: pass. Build: pass (phase 1)
 - App runs with: `npm install && npm run dev` → http://localhost:3000
 
@@ -34,15 +34,20 @@ Run: `npm install && npm run dev` → http://localhost:3000
 - [x] Activity feed filtered: fork announced to the source owner without the copy's title/id; runs only to the runner. Evidence: demo-loop 11
 - [x] Seed includes labelled examples: "Paid revenue by sales rep" (Vikram, Sales, team) and "Live spend by channel" (Olivia, Marketing). Evidence: access "isolates workspaces"
 
+- [x] Shell: dark sidebar (workspace card + role, New recipe, nav, AI status pill, user + sign out), sticky top bar (⌘K palette, theme toggle, New recipe), mobile drawer. Evidence: screenshots reviewed in session
+- [x] Library `/library?tab=&q=` (Zod validateSearch, debounced search in URL, tab counts, recipe cards with badges/columns/attribution, Run + Make a copy). Evidence: screenshot as Vikram
+- [x] Editor `/workflows/new` + `/w/$id/edit`: 5 sections, sample CSV parsed in browser, column checklist, step cards with per-step available columns, "Make adjustable", parameters, live validity, columns-through-the-pipeline, Advanced JSON (validated before applying), unsaved-changes guard. Evidence: Playwright walkthrough created "Regional revenue exceptions" through the UI
+- [x] Recipe detail `/w/$id?v=&run=`: version picker + "Version N (latest is M)" banner, recipe card, run panel (drop zone, header pre-check, parameters with reset), result (summary chips, TanStack Table v9 sorting, rows-through-each-step funnel, CSV download, "No rows matched"), my runs + Delete my results, who has access. Evidence: walkthrough ran sales_A → South ₹40,000 / West ₹70,000 in Chromium; light/dark/390px screenshots
+- [x] Share dialog (visibility + version-pinned link) and fork dialog (title, version, then opens the copy in the editor). Evidence: typecheck; exercised end-to-end in phase 8 e2e
+
 ## In progress
-- Phase 4: core UI
+- Phase 5: AI authoring
 
 ## Next steps (ordered)
-1. Full shell (nav groups, AI status pill, ⌘K search, New recipe button)
-2. Library (`/library?tab=&q=`), recipe cards
-3. Editor (`/workflows/new`, `/w/$id/edit`): 5 sections, step cards, parameters, live validity, columns-through-pipeline, Advanced JSON
-4. Recipe detail (`/w/$id?v=&run=`): header/version picker, recipe card, run panel (drop zone, header pre-check, parameters + reset), result (summary, funnel, TanStack Table v9, CSV), my runs, who-has-access
-5. Screenshot review in light/dark
+1. `src/server/ai/generate.ts`: prompt, flat strict output schema, Anthropic forced tool call / OpenAI json_schema strict, 20 s timeout, one repair, DRAFT_INVALID with draft, 503 MODEL_UNAVAILABLE
+2. `POST /api/generate` route (the editor UI already calls it and handles every outcome)
+3. `scripts/check-model.ts`
+4. `tests/ai.test.ts` (8) with a stubbed fetch
 
 ## Decisions log
 | Date | Decision | Why | Alternatives rejected |
@@ -67,11 +72,16 @@ Run: `npm install && npm run dev` → http://localhost:3000
 | 2026-09-26 | "Library team" tab includes my own shared recipes | Team library = what the team sees | Excluding mine |
 | 2026-09-26 | Access-matrix workspace rows (create, roles) don't change with recipe visibility | They are workspace permissions, not recipe permissions | Showing 404 for them on private |
 | 2026-09-26 | Dashboard day buckets are UTC | Server-side aggregation; prototype | Per-user time zones |
+| 2026-09-26 | Sample-CSV column checklist unchecks id-like columns (`order_id`) by default | The demo contract ignores order_id; authors can re-check it | All checked |
+| 2026-09-26 | After "Make a copy" the app opens the copy in the editor | Demo: copy → change groupBy → save → run | Opening the copy's detail page |
+| 2026-09-26 | Editor Save in edit mode = POST versions, then PATCH title/description only if changed | Versions hold definitions; title/description are recipe metadata | Versioning metadata |
 
 ## Deviations from the brief
 - (none yet)
 
 ## Known issues / bugs
+- Fixed in phase 4: the editor's unsaved-changes blocker read stale state and prompted after a successful save (found by the Playwright walkthrough).
+- Fixed in phase 4: single-column grids overflowed at 390px (added `grid-cols-1`).
 - CSV line numbers count records (header = line 1); a quoted field containing a newline would shift later line numbers. Low severity; documented.
 - Build prints rolldown "use client" directive warnings from lucide-react. Harmless.
 
@@ -101,6 +111,9 @@ DATABASE_PATH, SEED_PASSWORD, MODEL_PROVIDER, MODEL_NAME, ANTHROPIC_API_KEY, OPE
 - `src/server/repo.ts`: access-aware queries, create/save/fork transactions, runs, stale reaper · `events.ts`: audit log + filtered feed
 - `src/server/api/`: `workflows.ts`, `runs.ts`, `workspace.ts`, `dashboard.ts`, `system.ts` (+ `auth.ts`, `router.ts`)
 - `tests/helpers/app.ts`: in-memory app + cookie-keeping client calling `handleApi`
+- `src/lib/workflow/draft.ts`: editor draft model ↔ definition (incl. lenient loader for invalid model drafts) · `src/lib/format.ts`
+- `src/components/`: `editor.tsx`, `results.tsx` (Table v9 grid + funnel), `workflow-bits.tsx` (badges, chips, step list, recipe card), `file-drop.tsx`, `share-dialog.tsx`, `fork-dialog.tsx`, `access-panel.tsx`, `command.tsx` (⌘K)
+- `src/routes/_app/`: `library.tsx`, `workflows.new.tsx`, `w.$workflowId.index.tsx`, `w.$workflowId.edit.tsx`
 - `scripts/screenshots.ts`: Playwright screenshot helper
 
 ## Demo checklist

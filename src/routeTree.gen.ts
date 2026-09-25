@@ -12,7 +12,11 @@ import { Route as rootRouteImport } from './routes/__root'
 import { Route as AppRouteImport } from './routes/_app'
 import { Route as LoginRouteImport } from './routes/login'
 import { Route as AppIndexRouteImport } from './routes/_app/index'
+import { Route as AppLibraryRouteImport } from './routes/_app/library'
 import { Route as ApiSplatRouteImport } from './routes/api/$'
+import { Route as AppWorkflowsNewRouteImport } from './routes/_app/workflows.new'
+import { Route as AppWWorkflowIdIndexRouteImport } from './routes/_app/w.$workflowId.index'
+import { Route as AppWWorkflowIdEditRouteImport } from './routes/_app/w.$workflowId.edit'
 
 const AppRoute = AppRouteImport.update({
   id: '/_app',
@@ -28,35 +32,90 @@ const AppIndexRoute = AppIndexRouteImport.update({
   path: '/',
   getParentRoute: () => AppRoute,
 } as any)
+const AppLibraryRoute = AppLibraryRouteImport.update({
+  id: '/library',
+  path: '/library',
+  getParentRoute: () => AppRoute,
+} as any)
 const ApiSplatRoute = ApiSplatRouteImport.update({
   id: '/api/$',
   path: '/api/$',
   getParentRoute: () => rootRouteImport,
 } as any)
+const AppWorkflowsNewRoute = AppWorkflowsNewRouteImport.update({
+  id: '/workflows/new',
+  path: '/workflows/new',
+  getParentRoute: () => AppRoute,
+} as any)
+const AppWWorkflowIdIndexRoute = AppWWorkflowIdIndexRouteImport.update({
+  id: '/w/$workflowId/',
+  path: '/w/$workflowId/',
+  getParentRoute: () => AppRoute,
+} as any)
+const AppWWorkflowIdEditRoute = AppWWorkflowIdEditRouteImport.update({
+  id: '/w/$workflowId/edit',
+  path: '/w/$workflowId/edit',
+  getParentRoute: () => AppRoute,
+} as any)
 
 export interface FileRoutesByFullPath {
   '/': typeof AppIndexRoute
   '/login': typeof LoginRoute
+  '/library': typeof AppLibraryRoute
   '/api/$': typeof ApiSplatRoute
+  '/workflows/new': typeof AppWorkflowsNewRoute
+  '/w/$workflowId/edit': typeof AppWWorkflowIdEditRoute
+  '/w/$workflowId/': typeof AppWWorkflowIdIndexRoute
 }
 export interface FileRoutesByTo {
   '/login': typeof LoginRoute
+  '/library': typeof AppLibraryRoute
   '/api/$': typeof ApiSplatRoute
   '/': typeof AppIndexRoute
+  '/workflows/new': typeof AppWorkflowsNewRoute
+  '/w/$workflowId/edit': typeof AppWWorkflowIdEditRoute
+  '/w/$workflowId': typeof AppWWorkflowIdIndexRoute
 }
 export interface FileRoutesById {
   __root__: typeof rootRouteImport
   '/_app': typeof AppRouteWithChildren
   '/login': typeof LoginRoute
+  '/_app/library': typeof AppLibraryRoute
   '/api/$': typeof ApiSplatRoute
   '/_app/': typeof AppIndexRoute
+  '/_app/workflows/new': typeof AppWorkflowsNewRoute
+  '/_app/w/$workflowId/edit': typeof AppWWorkflowIdEditRoute
+  '/_app/w/$workflowId/': typeof AppWWorkflowIdIndexRoute
 }
 export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
-  fullPaths: '/' | '/login' | '/api/$'
+  fullPaths:
+    | '/'
+    | '/login'
+    | '/library'
+    | '/api/$'
+    | '/workflows/new'
+    | '/w/$workflowId/edit'
+    | '/w/$workflowId/'
   fileRoutesByTo: FileRoutesByTo
-  to: '/login' | '/api/$' | '/'
-  id: '__root__' | '/_app' | '/login' | '/api/$' | '/_app/'
+  to:
+    | '/login'
+    | '/library'
+    | '/api/$'
+    | '/'
+    | '/workflows/new'
+    | '/w/$workflowId/edit'
+    | '/w/$workflowId'
+  id:
+    | '__root__'
+    | '/_app'
+    | '/login'
+    | '/_app/library'
+    | '/api/$'
+    | '/_app/'
+    | '/_app/workflows/new'
+    | '/_app/w/$workflowId/edit'
+    | '/_app/w/$workflowId/'
   fileRoutesById: FileRoutesById
 }
 export interface RootRouteChildren {
@@ -88,6 +147,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof AppIndexRouteImport
       parentRoute: typeof AppRoute
     }
+    '/_app/library': {
+      id: '/_app/library'
+      path: '/library'
+      fullPath: '/library'
+      preLoaderRoute: typeof AppLibraryRouteImport
+      parentRoute: typeof AppRoute
+    }
     '/api/$': {
       id: '/api/$'
       path: '/api/$'
@@ -95,15 +161,44 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof ApiSplatRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/_app/workflows/new': {
+      id: '/_app/workflows/new'
+      path: '/workflows/new'
+      fullPath: '/workflows/new'
+      preLoaderRoute: typeof AppWorkflowsNewRouteImport
+      parentRoute: typeof AppRoute
+    }
+    '/_app/w/$workflowId/': {
+      id: '/_app/w/$workflowId/'
+      path: '/w/$workflowId'
+      fullPath: '/w/$workflowId/'
+      preLoaderRoute: typeof AppWWorkflowIdIndexRouteImport
+      parentRoute: typeof AppRoute
+    }
+    '/_app/w/$workflowId/edit': {
+      id: '/_app/w/$workflowId/edit'
+      path: '/w/$workflowId/edit'
+      fullPath: '/w/$workflowId/edit'
+      preLoaderRoute: typeof AppWWorkflowIdEditRouteImport
+      parentRoute: typeof AppRoute
+    }
   }
 }
 
 interface AppRouteChildren {
+  AppLibraryRoute: typeof AppLibraryRoute
   AppIndexRoute: typeof AppIndexRoute
+  AppWorkflowsNewRoute: typeof AppWorkflowsNewRoute
+  AppWWorkflowIdEditRoute: typeof AppWWorkflowIdEditRoute
+  AppWWorkflowIdIndexRoute: typeof AppWWorkflowIdIndexRoute
 }
 
 const AppRouteChildren: AppRouteChildren = {
+  AppLibraryRoute: AppLibraryRoute,
   AppIndexRoute: AppIndexRoute,
+  AppWorkflowsNewRoute: AppWorkflowsNewRoute,
+  AppWWorkflowIdEditRoute: AppWWorkflowIdEditRoute,
+  AppWWorkflowIdIndexRoute: AppWWorkflowIdIndexRoute,
 }
 
 const AppRouteWithChildren = AppRoute._addFileChildren(AppRouteChildren)
