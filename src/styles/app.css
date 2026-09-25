@@ -1,0 +1,316 @@
+@import 'tailwindcss';
+@import '@fontsource-variable/inter';
+@import '@fontsource-variable/jetbrains-mono';
+
+@custom-variant dark (&:where([data-theme='dark'], [data-theme='dark'] *));
+
+/* ------------------------------------------------------------------------
+   Design tokens. Colour carries meaning:
+   brand (indigo) = primary actions · flow (teal) = execution and amounts ·
+   ai (violet) = AI drafts · ok / bad / warn = status only, always with an
+   icon and a label.
+   ------------------------------------------------------------------------ */
+:root {
+  color-scheme: light;
+  --canvas: #f4f5f8;
+  --surface: #ffffff;
+  --surface-2: #fafbfd;
+  --sunken: #eef0f5;
+  --line: #e3e6ee;
+  --line-strong: #cfd4e0;
+  --ink: #0e1424;
+  --ink-2: #2a3245;
+  --muted: #5b6477;
+  --faint: #8a93a6;
+
+  --brand: #4353ff;
+  --brand-2: #6b5cff;
+  --brand-soft: #ecedff;
+  --brand-ink: #2f3ce0;
+  --flow: #0ea5a0;
+  --flow-soft: #e2f6f5;
+  --flow-ink: #0a7d79;
+  --ai: #8b5cf6;
+  --ai-soft: #f1ebff;
+  --ai-ink: #6b3ce0;
+
+  --ok: #16a34a;
+  --ok-soft: #e7f6ec;
+  --ok-ink: #15803d;
+  --bad: #e5484d;
+  --bad-soft: #fdecec;
+  --bad-ink: #c3272c;
+  --warn: #d97706;
+  --warn-soft: #fdf3e1;
+  --warn-ink: #a95a05;
+
+  --sidebar: #0c1020;
+  --sidebar-2: #151a2e;
+  --sidebar-line: rgb(255 255 255 / 0.08);
+  --sidebar-ink: #e7e9f3;
+  --sidebar-muted: #8f97b2;
+
+  --dot: rgb(14 20 36 / 0.09);
+  --glow-brand: rgb(67 83 255 / 0.22);
+  --glow-flow: rgb(14 165 160 / 0.18);
+  --glow-ai: rgb(139 92 246 / 0.2);
+  --shadow-color: 222 30% 30%;
+  --shadow-sm: 0 1px 2px hsl(var(--shadow-color) / 0.06), 0 1px 1px hsl(var(--shadow-color) / 0.04);
+  --shadow-md: 0 1px 2px hsl(var(--shadow-color) / 0.05), 0 6px 16px -4px hsl(var(--shadow-color) / 0.1);
+  --shadow-lg: 0 2px 4px hsl(var(--shadow-color) / 0.05), 0 18px 40px -12px hsl(var(--shadow-color) / 0.22);
+  --ring: rgb(67 83 255 / 0.45);
+}
+
+:root[data-theme='dark'] {
+  color-scheme: dark;
+  --canvas: #0a0d18;
+  --surface: #11152a;
+  --surface-2: #141934;
+  --sunken: #0d1122;
+  --line: #232a47;
+  --line-strong: #323b61;
+  --ink: #eef0f8;
+  --ink-2: #cfd4e6;
+  --muted: #9aa2bd;
+  --faint: #6b7392;
+
+  --brand: #6e7bff;
+  --brand-2: #8d7fff;
+  --brand-soft: rgb(110 123 255 / 0.15);
+  --brand-ink: #aab3ff;
+  --flow: #26c2bb;
+  --flow-soft: rgb(38 194 187 / 0.13);
+  --flow-ink: #5fe0d9;
+  --ai: #a78bfa;
+  --ai-soft: rgb(167 139 250 / 0.15);
+  --ai-ink: #c9b6ff;
+
+  --ok: #3ccf78;
+  --ok-soft: rgb(60 207 120 / 0.13);
+  --ok-ink: #72e3a1;
+  --bad: #ff6369;
+  --bad-soft: rgb(255 99 105 / 0.13);
+  --bad-ink: #ff9a9e;
+  --warn: #f5a524;
+  --warn-soft: rgb(245 165 36 / 0.13);
+  --warn-ink: #ffc766;
+
+  --sidebar: #070a14;
+  --sidebar-2: #10142a;
+  --sidebar-line: rgb(255 255 255 / 0.07);
+  --sidebar-ink: #e7e9f3;
+  --sidebar-muted: #8189a6;
+
+  --dot: rgb(255 255 255 / 0.07);
+  --glow-brand: rgb(110 123 255 / 0.25);
+  --glow-flow: rgb(38 194 187 / 0.18);
+  --glow-ai: rgb(167 139 250 / 0.22);
+  --shadow-color: 230 60% 2%;
+  --shadow-sm: 0 1px 2px hsl(var(--shadow-color) / 0.5);
+  --shadow-md: 0 1px 2px hsl(var(--shadow-color) / 0.4), 0 8px 20px -6px hsl(var(--shadow-color) / 0.6);
+  --shadow-lg: 0 2px 4px hsl(var(--shadow-color) / 0.4), 0 20px 44px -12px hsl(var(--shadow-color) / 0.75);
+  --ring: rgb(125 138 255 / 0.55);
+}
+
+@theme inline {
+  --color-canvas: var(--canvas);
+  --color-surface: var(--surface);
+  --color-surface-2: var(--surface-2);
+  --color-sunken: var(--sunken);
+  --color-line: var(--line);
+  --color-line-strong: var(--line-strong);
+  --color-ink: var(--ink);
+  --color-ink-2: var(--ink-2);
+  --color-muted: var(--muted);
+  --color-faint: var(--faint);
+  --color-brand: var(--brand);
+  --color-brand-2: var(--brand-2);
+  --color-brand-soft: var(--brand-soft);
+  --color-brand-ink: var(--brand-ink);
+  --color-flow: var(--flow);
+  --color-flow-soft: var(--flow-soft);
+  --color-flow-ink: var(--flow-ink);
+  --color-ai: var(--ai);
+  --color-ai-soft: var(--ai-soft);
+  --color-ai-ink: var(--ai-ink);
+  --color-ok: var(--ok);
+  --color-ok-soft: var(--ok-soft);
+  --color-ok-ink: var(--ok-ink);
+  --color-bad: var(--bad);
+  --color-bad-soft: var(--bad-soft);
+  --color-bad-ink: var(--bad-ink);
+  --color-warn: var(--warn);
+  --color-warn-soft: var(--warn-soft);
+  --color-warn-ink: var(--warn-ink);
+  --color-sidebar: var(--sidebar);
+  --color-sidebar-2: var(--sidebar-2);
+  --color-sidebar-line: var(--sidebar-line);
+  --color-sidebar-ink: var(--sidebar-ink);
+  --color-sidebar-muted: var(--sidebar-muted);
+
+  --font-sans: 'Inter Variable', ui-sans-serif, system-ui, -apple-system, 'Segoe UI', sans-serif;
+  --font-mono: 'JetBrains Mono Variable', ui-monospace, SFMono-Regular, Menlo, monospace;
+
+  --shadow-soft: var(--shadow-sm);
+  --shadow-card: var(--shadow-md);
+  --shadow-lift: var(--shadow-lg);
+
+  --animate-rise: rise 0.5s cubic-bezier(0.2, 0.7, 0.2, 1) both;
+  --animate-fade: fade 0.25s ease-out both;
+  --animate-pop: pop 0.18s cubic-bezier(0.2, 0.7, 0.2, 1) both;
+  --animate-shimmer: shimmer 1.6s linear infinite;
+  --animate-flow: flow 2.4s linear infinite;
+  --animate-pulse-soft: pulse-soft 2.2s ease-in-out infinite;
+  --animate-drip: drip 2.2s cubic-bezier(0.45, 0, 0.55, 1) infinite;
+
+  @keyframes drip {
+    0% {
+      top: -4px;
+      opacity: 0;
+    }
+    15% {
+      opacity: 1;
+    }
+    85% {
+      opacity: 1;
+    }
+    100% {
+      top: calc(100% - 2px);
+      opacity: 0;
+    }
+  }
+
+  @keyframes rise {
+    from {
+      opacity: 0;
+      transform: translateY(8px);
+    }
+    to {
+      opacity: 1;
+      transform: none;
+    }
+  }
+  @keyframes fade {
+    from {
+      opacity: 0;
+    }
+    to {
+      opacity: 1;
+    }
+  }
+  @keyframes pop {
+    from {
+      opacity: 0;
+      transform: translateY(4px) scale(0.98);
+    }
+    to {
+      opacity: 1;
+      transform: none;
+    }
+  }
+  @keyframes shimmer {
+    from {
+      background-position: 200% 0;
+    }
+    to {
+      background-position: -200% 0;
+    }
+  }
+  @keyframes flow {
+    from {
+      offset-distance: 0%;
+    }
+    to {
+      offset-distance: 100%;
+    }
+  }
+  @keyframes pulse-soft {
+    0%,
+    100% {
+      opacity: 1;
+    }
+    50% {
+      opacity: 0.45;
+    }
+  }
+}
+
+@layer base {
+  html {
+    background: var(--canvas);
+    -webkit-text-size-adjust: 100%;
+  }
+  body {
+    @apply bg-canvas text-ink font-sans antialiased;
+    font-feature-settings: 'cv11', 'ss01';
+    min-height: 100dvh;
+  }
+  ::selection {
+    background: var(--brand-soft);
+    color: var(--ink);
+  }
+  :focus-visible {
+    outline: 2px solid var(--ring);
+    outline-offset: 2px;
+    border-radius: 6px;
+  }
+  button,
+  [role='button'],
+  label[for],
+  select {
+    cursor: pointer;
+  }
+  button:disabled,
+  [aria-disabled='true'] {
+    cursor: not-allowed;
+  }
+  code,
+  kbd,
+  .mono {
+    font-family: var(--font-mono);
+    font-feature-settings: 'zero' 0;
+  }
+}
+
+@utility tabular {
+  font-variant-numeric: tabular-nums;
+}
+
+@utility bg-dots {
+  background-image: radial-gradient(var(--dot) 1px, transparent 1.2px);
+  background-size: 18px 18px;
+}
+
+@utility bg-grid {
+  background-image:
+    linear-gradient(var(--dot) 1px, transparent 1px),
+    linear-gradient(90deg, var(--dot) 1px, transparent 1px);
+  background-size: 28px 28px;
+}
+
+@utility skeleton {
+  background: linear-gradient(90deg, var(--sunken) 25%, var(--line) 37%, var(--sunken) 63%);
+  background-size: 400% 100%;
+  animation: var(--animate-shimmer);
+  border-radius: 8px;
+}
+
+@utility text-balance {
+  text-wrap: balance;
+}
+
+@utility scrollbar-thin {
+  scrollbar-width: thin;
+  scrollbar-color: var(--line-strong) transparent;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  ::before,
+  ::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+}

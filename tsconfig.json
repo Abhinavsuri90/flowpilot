@@ -1,0 +1,20 @@
+{
+  "include": ["src/**/*", "scripts/**/*", "tests/**/*", "vite.config.ts", "vitest.config.ts", "playwright.config.ts"],
+  "compilerOptions": {
+    "strict": true,
+    "esModuleInterop": true,
+    "jsx": "react-jsx",
+    "module": "ESNext",
+    "moduleResolution": "Bundler",
+    "lib": ["DOM", "DOM.Iterable", "ES2023"],
+    "types": ["node", "vite/client"],
+    "isolatedModules": true,
+    "resolveJsonModule": true,
+    "skipLibCheck": true,
+    "target": "ES2022",
+    "forceConsistentCasingInFileNames": true,
+    "noFallthroughCasesInSwitch": true,
+    "paths": { "~/*": ["./src/*"] },
+    "noEmit": true
+  }
+}

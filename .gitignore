@@ -1,0 +1,17 @@
+node_modules/
+.output/
+.nitro/
+.tanstack/
+dist/
+data/
+*.db
+*.db-shm
+*.db-wal
+.env
+.env.local
+test-results/
+playwright-report/
+blob-report/
+.vite/
+*.log
+.DS_Store
