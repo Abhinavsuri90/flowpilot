@@ -50,15 +50,23 @@ export function hashToken(token: string): string {
   return createHash('sha256').update(token).digest('hex')
 }
 
-export function createSession(db: DB, userId: string, now = Date.now()): { token: string; expiresAt: string } {
-  const token = randomBytes(32).toString('base64url')
+/** A random URL-safe secret (sessions, invite links, reset links); only its hash is stored. */
+export function newToken(): string {
+  return randomBytes(32).toString('base64url')
+}
+
+export function createSession(
+  db: DB,
+  userId: string,
+  opts: { workspaceId?: string | null; userAgent?: string | null; now?: number } = {},
+): { token: string; expiresAt: string } {
+  const now = opts.now ?? Date.now()
+  const token = newToken()
   const expiresAt = new Date(now + SESSION_TTL_MS).toISOString()
-  db.prepare('INSERT INTO sessions (token_hash, user_id, created_at, expires_at) VALUES (?, ?, ?, ?)').run(
-    hashToken(token),
-    userId,
-    new Date(now).toISOString(),
-    expiresAt,
-  )
+  const at = new Date(now).toISOString()
+  db.prepare(
+    'INSERT INTO sessions (token_hash, user_id, created_at, expires_at, workspace_id, user_agent, last_seen_at) VALUES (?, ?, ?, ?, ?, ?, ?)',
+  ).run(hashToken(token), userId, at, expiresAt, opts.workspaceId ?? null, opts.userAgent?.slice(0, 300) || null, at)
   return { token, expiresAt }
 }
 
@@ -107,9 +115,18 @@ export type SessionUser = {
   displayName: string
   avatarHue: number
   memberships: Membership[]
+  /** The workspace this browser works in (a membership id), or null for the first one. */
+  activeWorkspaceId: string | null
+  /** Shared demo accounts can't change their password, name or memberships. */
+  isDemo: boolean
+  /** Hash of this request's session token (identifies "this device"). */
+  sessionHash: string
 }
 
-type UserRow = { id: string; email: string; display_name: string; avatar_hue: number }
+type UserRow = { id: string; email: string; display_name: string; avatar_hue: number; is_demo: 0 | 1 }
+
+/** How often a session's last_seen_at is refreshed (a write), at most. */
+const LAST_SEEN_EVERY_MS = 5 * 60 * 1000
 
 export function membershipsFor(db: DB, userId: string): Membership[] {
   const rows = db
@@ -127,56 +144,86 @@ export function membershipsFor(db: DB, userId: string): Membership[] {
 export function userFromRequest(db: DB, request: Request, now = Date.now()): SessionUser | null {
   const token = readCookie(request, SESSION_COOKIE)
   if (!token || token.length > 128) return null
+  const sessionHash = hashToken(token)
   const row = db
     .prepare(
-      `SELECT u.id, u.email, u.display_name, u.avatar_hue, s.expires_at
+      `SELECT u.id, u.email, u.display_name, u.avatar_hue, u.is_demo, s.expires_at, s.workspace_id, s.last_seen_at
          FROM sessions s JOIN users u ON u.id = s.user_id
         WHERE s.token_hash = ?`,
     )
-    .get(hashToken(token)) as (UserRow & { expires_at: string }) | undefined
+    .get(sessionHash) as (UserRow & { expires_at: string; workspace_id: string | null; last_seen_at: string | null }) | undefined
   if (!row) return null
   if (Date.parse(row.expires_at) <= now) {
     deleteSession(db, token)
     return null
   }
+  if (!row.last_seen_at || now - Date.parse(row.last_seen_at) > LAST_SEEN_EVERY_MS) {
+    db.prepare('UPDATE sessions SET last_seen_at = ? WHERE token_hash = ?').run(new Date(now).toISOString(), sessionHash)
+  }
+  const memberships = membershipsFor(db, row.id)
   return {
     id: row.id,
     email: row.email,
     displayName: row.display_name,
     avatarHue: row.avatar_hue,
-    memberships: membershipsFor(db, row.id),
+    memberships,
+    // A workspace you've left falls back to your first one.
+    activeWorkspaceId: memberships.some((m) => m.workspaceId === row.workspace_id) ? row.workspace_id : null,
+    isDemo: row.is_demo === 1,
+    sessionHash,
   }
 }
 
+/** The membership requests act in: the session's workspace, else the first one. */
+export function currentMembership(user: Pick<SessionUser, 'memberships' | 'activeWorkspaceId'>): Membership | null {
+  return user.memberships.find((m) => m.workspaceId === user.activeWorkspaceId) ?? user.memberships[0] ?? null
+}
+
 // ---------------------------------------------------------------------------
-// Login throttling: 10 failures per email per 10 minutes → 429.
-// Kept in memory for the prototype; a shared store (Redis) at scale.
+// Login throttling. Failures are counted three ways:
+//   - per email and address: 10 in 10 minutes (stops one attacker quickly);
+//   - per email from anywhere: 50 (a distributed attack on one account);
+//   - per address across emails: 100 (password spraying).
+// So one attacker can't lock someone else out just by knowing their email.
+// Kept in memory for a single server; a shared store (Redis) at scale.
 // ---------------------------------------------------------------------------
 
 export const LOGIN_WINDOW_MS = 10 * 60 * 1000
-export const LOGIN_MAX_FAILURES = 10
+export const LOGIN_LIMITS = { pair: 10, email: 50, address: 100 } as const
 const failures = new Map<string, number[]>()
 
-function recent(email: string, now: number): number[] {
-  const key = email.toLowerCase()
+function recent(key: string, now: number): number[] {
   const kept = (failures.get(key) ?? []).filter((t) => now - t < LOGIN_WINDOW_MS)
   if (kept.length) failures.set(key, kept)
   else failures.delete(key)
   return kept
 }
 
-export function isLoginThrottled(email: string, now = Date.now()): boolean {
-  return recent(email, now).length >= LOGIN_MAX_FAILURES
+const keys = (email: string, ip: string) => {
+  const e = email.toLowerCase()
+  return { pair: `pair:${e}|${ip}`, email: `email:${e}`, address: `ip:${ip}` }
 }
 
-export function recordLoginFailure(email: string, now = Date.now()): void {
-  const list = recent(email, now)
-  list.push(now)
-  failures.set(email.toLowerCase(), list)
+export function isLoginThrottled(email: string, ip = 'unknown', now = Date.now()): boolean {
+  const k = keys(email, ip)
+  return (
+    recent(k.pair, now).length >= LOGIN_LIMITS.pair ||
+    recent(k.email, now).length >= LOGIN_LIMITS.email ||
+    recent(k.address, now).length >= LOGIN_LIMITS.address
+  )
 }
 
-export function clearLoginFailures(email: string): void {
-  failures.delete(email.toLowerCase())
+export function recordLoginFailure(email: string, ip = 'unknown', now = Date.now()): void {
+  for (const key of Object.values(keys(email, ip))) {
+    const list = recent(key, now)
+    list.push(now)
+    failures.set(key, list)
+  }
+}
+
+/** A successful sign-in clears that person's own counter (not the global ones). */
+export function clearLoginFailures(email: string, ip = 'unknown'): void {
+  failures.delete(keys(email, ip).pair)
 }
 
 export function resetLoginThrottle(): void {

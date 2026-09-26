@@ -82,6 +82,9 @@ function RecipePage() {
   const detail = useQuery({
     queryKey: qk.workflow(workflowId, v),
     queryFn: () => api.get<WorkflowDetail>(`/api/workflows/${workflowId}${qs({ v })}`),
+    // Switching versions keeps this recipe on screen (and the run panel's chosen
+    // file) until the other version arrives; another recipe never shows stale data.
+    placeholderData: (previous, previousQuery) => (previousQuery?.queryKey[1] === workflowId ? previous : undefined),
   })
 
   React.useEffect(() => {
@@ -102,6 +105,8 @@ function RecipePage() {
   const d = detail.data
   const wf = d.workflow
   const link = shareLink(wf.id, d.version.id)
+  // Another version is loading; the one on screen stays until it arrives.
+  const switching = detail.isPlaceholderData
 
   return (
     <>
@@ -134,6 +139,7 @@ function RecipePage() {
               <span className="sr-only">Version</span>
               <Select
                 value={d.version.id}
+                disabled={switching}
                 onChange={(e) => {
                   const chosen = e.target.value
                   const latest = d.versions[0]?.id
@@ -148,6 +154,7 @@ function RecipePage() {
                   </option>
                 ))}
               </Select>
+              {switching && <Spinner className="size-3.5" />}
             </label>
             {d.forkCount !== null && d.forkCount > 0 && (
               <>
@@ -206,7 +213,7 @@ function RecipePage() {
         <RecipeOverview detail={d} className="lg:col-start-1" />
 
         <aside className="lg:sticky lg:top-20 lg:col-start-2 lg:row-span-4 lg:row-start-1 lg:self-start">
-          <RunPanel detail={d} onRan={(id) => selectRun(id, true)} />
+          <RunPanel detail={d} busy={switching} onRan={(id) => selectRun(id, true)} />
         </aside>
 
         {runId && (
@@ -350,7 +357,7 @@ function paramProblem(p: WorkflowDefinition['parameters'][string], raw: string):
   return null
 }
 
-function RunPanel({ detail, onRan }: { detail: WorkflowDetail; onRan: (runId: string) => void }) {
+function RunPanel({ detail, busy, onRan }: { detail: WorkflowDetail; busy: boolean; onRan: (runId: string) => void }) {
   const def = detail.version.definition
   const versionId = detail.version.id
   const required = Object.keys(def.input.columns)
@@ -608,7 +615,7 @@ function RunPanel({ detail, onRan }: { detail: WorkflowDetail; onRan: (runId: st
           className="w-full"
           icon={<Play className="size-4" />}
           loading={run.isPending}
-          disabled={!fileOk || !paramsOk}
+          disabled={!fileOk || !paramsOk || busy}
           onClick={() => run.mutate({ versionId })}
         >
           {file ? 'Run recipe' : 'Choose a file to run'}

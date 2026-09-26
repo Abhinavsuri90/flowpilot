@@ -1,5 +1,5 @@
 import * as React from 'react'
-import { Link, createFileRoute } from '@tanstack/react-router'
+import { Link, createFileRoute, useRouter } from '@tanstack/react-router'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import {
   Check,
@@ -8,16 +8,38 @@ import {
   KeyRound,
   Link2,
   Lock,
+  MailPlus,
+  Pencil,
   ShieldCheck,
   ShieldHalf,
   UserCog,
+  UserMinus,
   Users,
   UsersRound,
 } from 'lucide-react'
 import { api, ApiError, qk, qs } from '~/lib/api'
 import { MATRIX_COLUMNS, permissionMatrix, type MatrixCell } from '~/lib/policy'
-import type { Role, Visibility, WorkflowList, WorkflowSummary, WorkspaceInfo } from '~/lib/types'
-import { Avatar, Badge, Card, CardHeader, PageHeader, Segmented, Select, Skeleton, Switch, Tip, cn } from '~/components/ui'
+import { emailProblem, normalizeEmail, workspaceNameProblem } from '~/lib/account'
+import { formatDateTime } from '~/lib/format'
+import type { InviteInfo, Role, Visibility, WorkflowList, WorkflowSummary, WorkspaceInfo, WorkspaceMember } from '~/lib/types'
+import {
+  Avatar,
+  Badge,
+  Button,
+  Callout,
+  Card,
+  CardHeader,
+  Dialog,
+  Field,
+  Input,
+  PageHeader,
+  Segmented,
+  Select,
+  Skeleton,
+  Switch,
+  Tip,
+  cn,
+} from '~/components/ui'
 import { RoleBadge, VisibilityBadge } from '~/components/workflow-bits'
 import { CopyLinkButton, shareLink } from '~/components/share-dialog'
 import { ErrorState } from '~/components/states'
@@ -41,6 +63,7 @@ function AccessPage() {
         <MatrixCard myRole={me.workspace?.role ?? null} />
         <div className="grid grid-cols-1 gap-6 xl:grid-cols-2">
           <MembersCard />
+          {me.workspace?.role === 'admin' && !me.user.isDemo && <InvitesCard workspaceName={me.workspace.workspaceName} />}
           <MyRecipesCard />
         </div>
         <PrinciplesCard />
@@ -148,21 +171,39 @@ function MatrixCard({ myRole }: { myRole: Role | null }) {
 // ----- Members and roles ----------------------------------------------------------
 
 function MembersCard() {
+  const { me } = Route.useRouteContext()
   const ws = useQuery({ queryKey: qk.workspace, queryFn: () => api.get<WorkspaceInfo>('/api/workspace') })
   const queryClient = useQueryClient()
   const toast = useToast()
+  const [removing, setRemoving] = React.useState<WorkspaceMember | null>(null)
+  const [renaming, setRenaming] = React.useState(false)
+  const refreshAll = () =>
+    Promise.all([
+      queryClient.invalidateQueries({ queryKey: qk.workspace }),
+      queryClient.invalidateQueries({ queryKey: qk.dashboard }),
+      queryClient.invalidateQueries({ queryKey: ['access'] }),
+      queryClient.invalidateQueries({ queryKey: qk.workflowsAll }),
+    ])
   const setRole = useMutation({
     mutationFn: ({ userId, role }: { userId: string; role: Role }) => api.patch(`/api/workspace/members/${userId}`, { role }),
     onSuccess: async (_res, vars) => {
-      await Promise.all([
-        queryClient.invalidateQueries({ queryKey: qk.workspace }),
-        queryClient.invalidateQueries({ queryKey: qk.dashboard }),
-        queryClient.invalidateQueries({ queryKey: ['access'] }),
-      ])
+      await refreshAll()
       const name = ws.data?.members.find((m) => m.user.id === vars.userId)?.user.name ?? 'Member'
       toast.show({ tone: 'ok', title: `${name} is now ${vars.role === 'admin' ? 'an' : 'a'} ${vars.role}`, description: 'It applies on their next request; no re-login needed.' })
     },
     onError: (err) => toast.show({ tone: 'bad', title: 'Role not changed', description: err instanceof ApiError ? err.message : String(err) }),
+  })
+  const remove = useMutation({
+    mutationFn: (member: WorkspaceMember) => api.delete<{ transferred: number }>(`/api/workspace/members/${member.user.id}`),
+    onSuccess: async (res, member) => {
+      setRemoving(null)
+      await refreshAll()
+      toast.show({
+        tone: 'ok',
+        title: `${member.user.name} was removed`,
+        description: res.transferred ? `Their ${res.transferred} recipe${res.transferred === 1 ? ' is' : 's are'} yours now, so the team keeps them.` : 'They can no longer see this workspace.',
+      })
+    },
   })
 
   return (
@@ -172,8 +213,15 @@ function MembersCard() {
         title={ws.data ? `Members of ${ws.data.workspace.name}` : 'Members'}
         description={
           ws.data?.canManageRoles
-            ? 'As an admin you manage roles only: you can’t edit other people’s recipes or see their runs.'
-            : 'Only admins change roles.'
+            ? 'As an admin you manage people, not their work: you can’t edit other people’s recipes or see their runs.'
+            : 'Only admins change roles or invite people.'
+        }
+        actions={
+          ws.data?.canManageMembers && !me.user.isDemo ? (
+            <Button size="sm" variant="ghost" icon={<Pencil className="size-3.5" />} onClick={() => setRenaming(true)}>
+              Rename
+            </Button>
+          ) : undefined
         }
       />
       <div className="px-5 pb-5">
@@ -190,6 +238,7 @@ function MembersCard() {
             {ws.data.members.map((m) => {
               const lastAdmin = m.role === 'admin' && ws.data.adminCount <= 1
               const reason = m.isYou ? "You can't change your own role" : lastAdmin ? "The last admin can't be demoted" : null
+              const canRemove = ws.data.canManageMembers && !m.isYou && !m.isDemo
               return (
                 <li key={m.user.id} className="flex items-center gap-3 px-4 py-3">
                   <Avatar name={m.user.name} hue={m.user.hue} size={32} />
@@ -221,6 +270,17 @@ function MembersCard() {
                   ) : (
                     <RoleBadge role={m.role} />
                   )}
+                  {canRemove && (
+                    <button
+                      type="button"
+                      onClick={() => setRemoving(m)}
+                      aria-label={`Remove ${m.user.name} from ${ws.data.workspace.name}`}
+                      title="Remove from workspace"
+                      className="grid size-8 shrink-0 place-items-center rounded-lg text-faint hover:bg-bad-soft hover:text-bad-ink"
+                    >
+                      <UserMinus className="size-4" />
+                    </button>
+                  )}
                 </li>
               )
             })}
@@ -229,6 +289,196 @@ function MembersCard() {
         <p className="mt-3 text-[12px] text-muted">
           Roles are read on every request. People outside {ws.data?.workspace.name ?? 'this workspace'} never appear here and can’t see its recipes.
         </p>
+      </div>
+
+      <Dialog
+        open={!!removing}
+        onClose={() => setRemoving(null)}
+        size="sm"
+        icon={<UserMinus />}
+        title={removing ? `Remove ${removing.user.name}?` : ''}
+        description="They lose access to this workspace immediately. Their own runs stay private to them."
+        footer={
+          <>
+            <Button variant="ghost" onClick={() => setRemoving(null)}>
+              Cancel
+            </Button>
+            <Button variant="danger" loading={remove.isPending} onClick={() => removing && remove.mutate(removing)}>
+              Remove
+            </Button>
+          </>
+        }
+      >
+        {removing && (
+          <p className="text-[13.5px] text-ink-2">
+            {removing.recipeCount
+              ? `Their ${removing.recipeCount} recipe${removing.recipeCount === 1 ? '' : 's'} here will move to you, so the team keeps ${removing.recipeCount === 1 ? 'it' : 'them'} (private ones stay private, now to you).`
+              : 'They don’t own any recipes here.'}
+          </p>
+        )}
+        {remove.error && (
+          <Callout tone="bad" className="mt-3">
+            {remove.error.message}
+          </Callout>
+        )}
+      </Dialog>
+      {ws.data && <RenameWorkspaceDialog open={renaming} onClose={() => setRenaming(false)} current={ws.data.workspace.name} />}
+    </Card>
+  )
+}
+
+function RenameWorkspaceDialog({ open, onClose, current }: { open: boolean; onClose: () => void; current: string }) {
+  const [name, setName] = React.useState(current)
+  const [seen, setSeen] = React.useState(open)
+  if (open !== seen) {
+    setSeen(open)
+    if (open) setName(current)
+  }
+  const router = useRouter()
+  const queryClient = useQueryClient()
+  const toast = useToast()
+  const rename = useMutation({
+    mutationFn: () => api.patch('/api/workspace', { name: name.trim() }),
+    onSuccess: async () => {
+      onClose()
+      await Promise.all([queryClient.invalidateQueries(), router.invalidate()])
+      toast.show({ tone: 'ok', title: `Renamed to ${name.trim()}` })
+    },
+  })
+  const problem = workspaceNameProblem(name)
+  return (
+    <Dialog
+      open={open}
+      onClose={onClose}
+      size="sm"
+      icon={<Pencil />}
+      title="Rename workspace"
+      footer={
+        <>
+          <Button variant="ghost" onClick={onClose}>
+            Cancel
+          </Button>
+          <Button variant="brand" loading={rename.isPending} disabled={!!problem || name.trim() === current} onClick={() => rename.mutate()}>
+            Save
+          </Button>
+        </>
+      }
+    >
+      <Field label="Workspace name" htmlFor="rename-workspace" error={problem ?? undefined}>
+        <Input id="rename-workspace" value={name} maxLength={80} onChange={(e) => setName(e.target.value)} />
+      </Field>
+      {rename.error && (
+        <Callout tone="bad" className="mt-3">
+          {rename.error.message}
+        </Callout>
+      )}
+    </Dialog>
+  )
+}
+
+// ----- Invitations (admins) -------------------------------------------------------------
+
+function InvitesCard({ workspaceName }: { workspaceName: string }) {
+  const invites = useQuery({ queryKey: ['invites'], queryFn: () => api.get<{ invites: InviteInfo[] }>('/api/workspace/invites') })
+  const queryClient = useQueryClient()
+  const toast = useToast()
+  const [role, setRole] = React.useState<Role>('member')
+  const [email, setEmail] = React.useState('')
+  const [created, setCreated] = React.useState<{ link: string; invite: InviteInfo; emailed: boolean } | null>(null)
+  const emailIssue = email.trim() ? emailProblem(normalizeEmail(email)) : null
+  const create = useMutation({
+    mutationFn: () =>
+      api.post<{ link: string; invite: InviteInfo; emailed: boolean }>('/api/workspace/invites', {
+        role,
+        ...(email.trim() ? { email: normalizeEmail(email) } : {}),
+      }),
+    onSuccess: async (res) => {
+      setCreated(res)
+      setEmail('')
+      await queryClient.invalidateQueries({ queryKey: ['invites'] })
+    },
+  })
+  const revoke = useMutation({
+    mutationFn: (id: string) => api.delete(`/api/workspace/invites/${id}`),
+    onSuccess: async () => {
+      await queryClient.invalidateQueries({ queryKey: ['invites'] })
+      toast.show({ tone: 'ok', title: 'Invite link revoked', description: 'It stops working immediately.' })
+    },
+  })
+  return (
+    <Card className="animate-rise">
+      <CardHeader
+        icon={<MailPlus />}
+        title="Invite people"
+        description={`Create a link to join ${workspaceName}. With an email, it works once for that address; without one, anyone with it can join (up to 25 people, for 7 days).`}
+      />
+      <div className="space-y-4 px-5 pb-5">
+        <form
+          className="grid grid-cols-1 gap-3 sm:grid-cols-[1fr_130px_auto] sm:items-end"
+          onSubmit={(e) => {
+            e.preventDefault()
+            if (!emailIssue) create.mutate()
+          }}
+        >
+          <Field label="Email (optional)" htmlFor="invite-email" error={emailIssue ?? undefined}>
+            <Input id="invite-email" type="email" value={email} onChange={(e) => setEmail(e.target.value)} placeholder="teammate@company.com" />
+          </Field>
+          <Field label="Role" htmlFor="invite-role">
+            <Select id="invite-role" value={role} onChange={(e) => setRole(e.target.value as Role)}>
+              <option value="member">member</option>
+              <option value="viewer">viewer</option>
+              <option value="admin">admin</option>
+            </Select>
+          </Field>
+          <Button type="submit" variant="brand" loading={create.isPending} disabled={!!emailIssue} icon={<Link2 className="size-4" />}>
+            Create link
+          </Button>
+        </form>
+        {create.error && <Callout tone="bad">{create.error.message}</Callout>}
+        {created && (
+          <Callout tone="ok" title="Invite link ready">
+            <p className="mb-2">
+              {created.invite.email
+                ? created.emailed
+                  ? `We emailed it to ${created.invite.email}. You can also copy it now; it isn't shown again.`
+                  : `For ${created.invite.email} only. Copy it now and send it to them; it isn't shown again.`
+                : 'Copy it now and share it with your team; it isn’t shown again.'}
+            </p>
+            <div className="flex items-center gap-2">
+              <code className="min-w-0 flex-1 truncate rounded-lg border border-line bg-surface px-2.5 py-1.5 text-[12px] text-ink-2">{created.link}</code>
+              <CopyLinkButton href={created.link} label="Copy" />
+            </div>
+          </Callout>
+        )}
+        <div>
+          <div className="mb-2 text-[12px] font-medium tracking-wide text-faint uppercase">Pending invites</div>
+          {invites.isPending ? (
+            <Skeleton className="h-12" />
+          ) : invites.isError ? (
+            <Callout tone="bad">{invites.error.message}</Callout>
+          ) : invites.data.invites.length === 0 ? (
+            <p className="rounded-xl border border-dashed border-line-strong px-4 py-4 text-center text-[13px] text-muted">No pending invites.</p>
+          ) : (
+            <ul className="divide-y divide-line overflow-hidden rounded-xl border border-line">
+              {invites.data.invites.map((invite) => (
+                <li key={invite.id} className="flex items-center gap-3 px-4 py-2.5">
+                  <div className="min-w-0 flex-1">
+                    <div className="flex items-center gap-2 text-[13px] text-ink">
+                      <span className="truncate font-medium">{invite.email ?? 'Anyone with the link'}</span>
+                      <RoleBadge role={invite.role} />
+                    </div>
+                    <div className="text-[12px] text-muted">
+                      {invite.email ? 'Single use' : `${invite.uses} of ${invite.maxUses} used`} · expires {formatDateTime(invite.expiresAt)} · by {invite.createdBy.name}
+                    </div>
+                  </div>
+                  <Button size="sm" variant="ghost" loading={revoke.isPending && revoke.variables === invite.id} onClick={() => revoke.mutate(invite.id)}>
+                    Revoke
+                  </Button>
+                </li>
+              ))}
+            </ul>
+          )}
+        </div>
       </div>
     </Card>
   )
@@ -348,15 +598,20 @@ const PRINCIPLES = [
   },
   {
     icon: <ShieldHalf />,
-    title: 'Admins manage roles, not recipes',
+    title: 'Admins manage people, not recipes',
     body: 'Admins can’t edit others’ recipes or read their runs, can’t change their own role, and the last admin can’t be demoted. Changes apply on the next request.',
+  },
+  {
+    icon: <UsersRound />,
+    title: 'People leave; recipes stay',
+    body: 'When someone leaves or is removed, the recipes they own move to an admin (a database trigger allows handing over only to an admin or member), so the team never loses its work.',
   },
 ]
 
 function PrinciplesCard() {
   return (
     <Card className="animate-rise">
-      <CardHeader icon={<ShieldCheck />} title="Six principles" description="What the policy guarantees, whatever the client sends." />
+      <CardHeader icon={<ShieldCheck />} title="Seven principles" description="What the policy guarantees, whatever the client sends." />
       <ul className="grid gap-3 px-5 pb-5 sm:grid-cols-2 xl:grid-cols-3">
         {PRINCIPLES.map((p) => (
           <li key={p.title} className="rounded-xl border border-line bg-surface-2 p-3.5">

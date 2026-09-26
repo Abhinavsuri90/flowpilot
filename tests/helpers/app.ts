@@ -2,6 +2,8 @@ import { handleApi } from '../../src/server/api/router'
 import { openDatabase, useDatabase } from '../../src/server/db'
 import { seedDatabase } from '../../src/server/seed'
 import { resetLoginThrottle } from '../../src/server/auth'
+import { resetAccountLimits } from '../../src/server/ratelimit'
+import { clearMailOutbox } from '../../src/server/mail'
 import type { DemoKey } from '../../src/lib/demo'
 
 export const BASE = 'http://localhost:3000'
@@ -11,6 +13,8 @@ export const PASSWORD = 'flowpilot-demo'
 export async function freshApp() {
   const db = useDatabase(openDatabase(':memory:'))
   resetLoginThrottle()
+  resetAccountLimits()
+  clearMailOutbox()
   const seed = await seedDatabase(db, { password: PASSWORD })
   return { db, seed }
 }

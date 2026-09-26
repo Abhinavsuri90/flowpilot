@@ -1,4 +1,4 @@
-// In-memory sliding-window limits, keyed per user. A shared store (Redis) at scale.
+// In-memory sliding-window limits. A shared store (Redis) at scale.
 
 export type Limiter = {
   /** Records a hit if allowed; otherwise says how long to wait. */
@@ -39,4 +39,27 @@ export function takeGenerateBudget(userId: string, now = Date.now()): { allowed:
 export function resetGenerateLimits(): void {
   perMinute.reset()
   perDay.reset()
+}
+
+// Account endpoints that anyone can call, keyed by address (see clientIp) and
+// email. Generous for people, tight enough to stop scripted abuse.
+export const ACCOUNT_LIMITS = { registrationsPerHour: 20, resetsPerEmailPerHour: 3, resetsPerAddressPerHour: 20 } as const
+const registrations = slidingWindow(ACCOUNT_LIMITS.registrationsPerHour, 60 * 60_000)
+const resetsByEmail = slidingWindow(ACCOUNT_LIMITS.resetsPerEmailPerHour, 60 * 60_000)
+const resetsByAddress = slidingWindow(ACCOUNT_LIMITS.resetsPerAddressPerHour, 60 * 60_000)
+
+export function takeRegistration(address: string, now = Date.now()) {
+  return registrations.take(address, now)
+}
+
+export function takePasswordReset(email: string, address: string, now = Date.now()) {
+  const byAddress = resetsByAddress.take(address, now)
+  if (!byAddress.allowed) return byAddress
+  return resetsByEmail.take(email.toLowerCase(), now)
+}
+
+export function resetAccountLimits(): void {
+  registrations.reset()
+  resetsByEmail.reset()
+  resetsByAddress.reset()
 }

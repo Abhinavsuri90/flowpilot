@@ -34,12 +34,49 @@ export type ModelStatus = {
 
 /** The signed-in user, as the app shell and GET /api/me see them. */
 export type Me = {
-  user: { id: string; email: string; name: string; hue: number }
+  user: { id: string; email: string; name: string; hue: number; isDemo: boolean }
   memberships: Membership[]
-  /** The workspace new recipes are created in (first membership). */
+  /** The workspace this browser works in: lists, new recipes and the Access page use it. */
   workspace: Membership | null
   model: ModelStatus
 }
+
+export type RegistrationMode = 'open' | 'invite-only' | 'closed'
+
+/** What the sign-in and sign-up pages need to know about this server. */
+export type AuthOptions = {
+  demoMode: boolean
+  /** Filled only when the demo accounts use the documented demo password. */
+  demoPassword: string | null
+  registration: RegistrationMode
+  /** Whether emails (reset links, invites) are really sent. */
+  mail: boolean
+}
+
+export type InviteInfo = {
+  id: string
+  role: Role
+  email: string | null
+  createdBy: UserRef
+  createdAt: string
+  expiresAt: string
+  uses: number
+  maxUses: number
+}
+
+/** GET /api/invites/:token: what someone opening an invite link sees. */
+export type InviteLanding = {
+  workspace: { name: string }
+  invitedBy: string
+  invitedByHue: number
+  role: Role
+  email: string | null
+  expiresAt: string
+  /** Only when signed in. */
+  viewer: { alreadyMember: boolean; emailMatches: boolean } | null
+}
+
+export type SessionInfo = { id: string; current: boolean; createdAt: string; lastSeenAt: string | null; device: string }
 
 // ----- Recipes ---------------------------------------------------------------
 
@@ -148,6 +185,10 @@ export type WorkspaceMember = {
   role: Role
   joinedAt: string
   isYou: boolean
+  /** Shared demo accounts can't be removed. */
+  isDemo: boolean
+  /** Recipes they own here (they move to whoever removes them). */
+  recipeCount: number
 }
 
 export type WorkspaceInfo = {
@@ -155,6 +196,8 @@ export type WorkspaceInfo = {
   role: Role
   members: WorkspaceMember[]
   canManageRoles: boolean
+  /** Invite and remove people, rename the workspace (admins). */
+  canManageMembers: boolean
   adminCount: number
 }
 
@@ -182,7 +225,7 @@ export type Dashboard = {
   recentRuns: RunSummary[]
   activity: ActivityItem[]
   model: ModelStatus
-  checklist: { created: boolean; ran: boolean; shared: boolean; copied: boolean }
+  checklist: { created: boolean; ran: boolean; shared: boolean; copied: boolean; invited: boolean }
 }
 
 export type SystemInfo = {

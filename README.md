@@ -53,6 +53,15 @@ The full loop works end to end, and a real browser test proves it: **describe �
 - Anything you can't see answers 404, as if it didn't exist. Runs are private even from recipe owners and admins.
 - The library pages 60 recipes at a time, and the ⌘K search asks only for the 7 it shows.
 
+**Accounts and teams**
+- Sign up and get your own workspace as its admin, or join a team through an invite link. Sign-ups can be open, invite-only or closed (`REGISTRATION`).
+- Invite people by link, in a role, optionally locked to one email address. Links expire after 7 days and can be revoked; only a hash of each link is stored.
+- Forgot-password emails with single-use, one-hour links; resetting or changing a password signs out every other device.
+- Account settings: your name, your password, and the devices you're signed in on ("Sign out everywhere else").
+- Belong to several workspaces and switch between them; lists, the dashboard and the Access page follow the one you're in.
+- Admins rename the workspace and remove people. When someone leaves or is removed, their recipes stay with the team: ownership moves to an admin, and a database trigger only ever allows handing a recipe to an admin or member of its workspace. Owners can also hand a recipe over themselves.
+- Demo accounts appear only in demo mode (`DEMO_MODE`), and their password, name and memberships are locked, so a shared demo can't be hijacked.
+
 **Around it**
 - A dashboard with a checklist of the reuse loop, stats, a 14-day run chart, recent runs and a permission-filtered activity feed.
 - A System design page with interactive diagrams and the live schema, triggers, limits and endpoints of the running server.
@@ -65,7 +74,7 @@ npm install
 npm run dev        # the first run seeds ./data/flowpilot.db, then serves http://localhost:3000
 ```
 
-This needs **Node 22 or newer**; it was built on Node 25.3. Nothing else is required, because the database is a local SQLite file. Sign in with one of the synthetic demo accounts: the login page has one-click buttons, and the password is `flowpilot-demo`.
+This needs **Node 22 or newer**; it was built on Node 25.3. Nothing else is required, because the database is a local SQLite file. Create an account at `/signup` (you get a workspace of your own), or, in development, sign in with one of the synthetic demo accounts: the login page has one-click buttons, and the password is `flowpilot-demo`.
 
 | Person | Email | Workspace | Role | In the demo |
 |---|---|---|---|---|
@@ -203,14 +212,24 @@ flowchart LR
 
 ## API reference
 
-One server route (`/api/$`) fronts 21 REST endpoints through a single dispatcher, `handleApi(Request)`. The dispatcher matches the route, blocks cross-site writes, reads the session, runs the handler and maps errors. Every response is `Cache-Control: private, no-store`. Every error has the shape `{ "error": { "code", "message", "issues"? , "draft"?, "runId"? } }`. Every path also answers `HEAD` (as `GET`, without a body) and `OPTIONS` (204 with `Allow`); any other method gets 405.
+One server route (`/api/$`) fronts 40 REST endpoints through a single dispatcher, `handleApi(Request)`. The dispatcher matches the route, blocks cross-site writes, reads the session, runs the handler and maps errors. Every response is `Cache-Control: private, no-store`. Every error has the shape `{ "error": { "code", "message", "issues"? , "draft"?, "runId"? } }`. Every path also answers `HEAD` (as `GET`, without a body) and `OPTIONS` (204 with `Allow`); any other method gets 405.
 
 | Method | Path | Who | Purpose |
 |---|---|---|---|
-| POST | `/api/auth/login` | anyone | `{email, password}` → session cookie. 401 is the same for unknown emails and wrong passwords; 10 failures in 10 minutes → 429 |
+| POST | `/api/auth/login` | anyone | `{email, password}` → session cookie. 401 is the same for unknown emails and wrong passwords; throttled per email + address (10), per email (50) and per address (100) in 10 minutes → 429 |
 | POST | `/api/auth/logout` | anyone | Ends the session |
+| POST | `/api/auth/register` | anyone (per `REGISTRATION`) | `{name, email, password, workspaceName}` → account + workspace, signed in; or `{…, inviteToken}` to join a workspace. 409 if the email is taken |
+| POST | `/api/auth/forgot` | anyone | `{email}` → the same answer whether or not the account exists; emails a one-hour reset link |
+| GET | `/api/auth/reset/:token` | anyone | Whether a reset link still works (and the masked email) |
+| POST | `/api/auth/reset` | anyone with the link | `{token, password}` → new password, every device signed out, this one signed in |
 | GET | `/api/health` | anyone | `{"status":"ok"}` when the database answers |
-| GET | `/api/me` | signed in | User, memberships, AI status |
+| GET | `/api/me` | signed in | User, memberships, the workspace in use, AI status |
+| PATCH | `/api/me` | signed in | `{name}` |
+| POST | `/api/me/password` | signed in | `{currentPassword, newPassword}`; signs out your other devices |
+| GET | `/api/me/sessions` | signed in | Devices you're signed in on |
+| DELETE | `/api/me/sessions` | signed in | Sign out everywhere except this browser |
+| POST | `/api/me/workspace` | member of it | `{workspaceId}`: work in another of your workspaces |
+| POST | `/api/workspaces` | signed in | `{name}` → a new workspace with you as admin |
 | GET | `/api/dashboard` | signed in | Stats, 14-day runs, recent runs, filtered activity, checklist |
 | GET | `/api/workflows?scope=mine\|team\|all&q=&limit=&offset=` | signed in | One page of recipes you can read (60 by default, at most 200), newest first, with `total`, `nextOffset` and the count for each tab |
 | POST | `/api/workflows` | admin, member | `{title, description, definition}` → private v1 |
@@ -219,21 +238,31 @@ One server route (`/api/$`) fronts 21 REST endpoints through a single dispatcher
 | POST | `/api/workflows/:id/versions` | owner | `{definition}` → the next immutable version |
 | POST | `/api/workflows/:id/fork` | admin, member who can view | `{versionId, title}` → a private copy |
 | GET | `/api/workflows/:id/access` | can view | Workspace members and what each can do |
+| POST | `/api/workflows/:id/transfer` | owner | `{userId}` → hand the recipe to an admin or member of its workspace |
 | POST | `/api/generate` | signed in | `{request, columns}` → a draft, “unsupported” or a question; never writes |
 | POST | `/api/runs` | can view | Multipart `{versionId, file, parameters}` → result, summary and step log |
 | GET | `/api/runs?workflowId=&status=&limit=` | signed in | Your own runs only, newest first (at most 500), with exact `counts` per status |
 | DELETE | `/api/runs?workflowId=` | signed in | Delete your finished runs |
 | GET | `/api/runs/:id` | the runner | The full result and step log |
 | GET | `/api/runs/:id/csv` | the runner | A formula-escaped CSV attachment (409 if the run has no result) |
-| GET | `/api/workspace` | member | Members and roles |
+| GET | `/api/workspace` | member | Members, roles and how many recipes each owns |
+| PATCH | `/api/workspace` | admin | `{name}` |
+| POST | `/api/workspace/leave` | member | Leave; your recipes move to an admin. The last admin can't leave |
 | PATCH | `/api/workspace/members/:userId` | admin | `{role}`; not your own, and never the last admin |
+| DELETE | `/api/workspace/members/:userId` | admin | Remove someone; their recipes move to you |
+| GET | `/api/workspace/invites` | admin | Invite links that can still be used |
+| POST | `/api/workspace/invites` | admin | `{role, email?}` → a link (single use when locked to an email; emailed if mail is set up) |
+| DELETE | `/api/workspace/invites/:id` | admin | Revoke a link |
+| GET | `/api/invites/:token` | anyone with the link | Who invited you, to which workspace and role |
+| POST | `/api/invites/:token/accept` | signed in | Join (or switch to) that workspace |
 | GET | `/api/system` | signed in | Schema, triggers, limits and endpoints: structure only, never rows |
 
-Status codes: 401 not signed in · 403 visible but not yours, or a cross-site write · 404 not visible to you · 409 nothing to download · 413 over 1 MiB · 415 wrong content type · 422 validation failed, with `issues` · 429 too many attempts · 500 run failed (`TIMEOUT`, `EXECUTION_ERROR`) · 503 AI unavailable.
+Status codes: 401 not signed in · 403 visible but not yours, a cross-site write, or an account rule (demo accounts, closed sign-ups) · 404 not visible to you, or an invite/reset link that no longer works · 409 email taken, already a member, or nothing to download · 413 over 1 MiB · 415 wrong content type · 422 validation failed, with `issues` · 429 too many attempts, with `Retry-After` · 500 run failed (`TIMEOUT`, `EXECUTION_ERROR`) · 503 AI unavailable.
 
 ## Security and privacy
 
-- Passwords are hashed with scrypt and a random salt. Sessions are 256-bit tokens in an HttpOnly, SameSite=Lax cookie (Secure on HTTPS), and only a SHA-256 hash of each token is stored. Signing in replaces the browser's previous session and purges expired ones. Sign-in is throttled after 10 failures per email, and after signing in you are only ever sent to a path on this site.
+- Passwords are hashed with scrypt and a random salt, and must be at least 10 characters and not a common password. Sessions are 256-bit tokens in an HttpOnly, SameSite=Lax cookie (Secure on HTTPS), and only a SHA-256 hash of each token is stored; the same goes for invite and password-reset links. Signing in replaces the browser's previous session and purges expired ones. After signing in you are only ever sent to a path on this site.
+- Sign-in is throttled per email and address, so an attacker can't lock someone out just by knowing their email. Sign-ups and reset requests are rate-limited too, and "forgot password" answers the same for every address. Reset links are single use, last an hour and sign out every device.
 - Cross-site writes are rejected by an Origin check, and server functions have Start's CSRF middleware. Responses send `X-Frame-Options: DENY`, `nosniff` and `Referrer-Policy`. Login controls stay disabled until the page is interactive, so a native form submit can never put credentials in a URL.
 - Identity always comes from the session: an `owner_id` sent by a client is ignored on create and rejected on update. Recipe definitions are re-validated on save, on copy and before every run.
 - Uploaded files are processed inside the request and never stored. Results are visible only to the person who ran them, and anyone can delete their own. CSV exports escape formula-like cells.
@@ -242,17 +271,18 @@ Status codes: 401 not signed in · 403 visible but not yours, or a cross-site wr
 ## Testing
 
 ```bash
-npm test                          # 97 unit and API tests
+npm test                          # 114 unit and API tests
 npx playwright install chromium   # once
-npm run test:e2e                  # 19 browser tests
+npm run test:e2e                  # 24 browser tests
 npm run typecheck
 ```
 
-- **Unit and API tests (Vitest), 97 in total:** engine 13, CSV 18, validator 13, access 20, demo loop 12, AI 9, hardening 12 (HTTP methods, redirects, sessions, no-op edits, the activity feed on a busy team, list paging and run counts). They call the same `handleApi(Request)` the server uses, with real session cookies, against an in-memory SQLite database, so access rules are tested end to end rather than mocked. The model is always stubbed, and the tests never read `.env`.
-- **Browser tests (Playwright), 19 in total:**
+- **Unit and API tests (Vitest), 114 in total:** engine 13, CSV 18, validator 13, access 20, demo loop 12, AI 9, hardening 12 (HTTP methods, redirects, sessions, no-op edits, the activity feed on a busy team, list paging and run counts), accounts 17 (sign-up modes and rules, invitations, password resets, account settings, workspaces, removal and hand-over). They call the same `handleApi(Request)` the server uses, with real session cookies, against an in-memory SQLite database, so access rules are tested end to end rather than mocked. The model is always stubbed, and the tests never read `.env`.
+- **Browser tests (Playwright), 24 in total:**
   - `demo.spec.ts` (4) is the demo above.
   - `features.spec.ts` (13) covers the rest: the editor's value warning, an invalid AI draft and a clarifying question, Advanced JSON, in-browser file checks, samples and parameters, details-only saves and versions, runs from another recipe, large results, CSV escaping, the command palette, theme, roles, *Delete my results*, the mobile drawer, re-checking a file when the version changes, refusing a non-UTF-8 file, the in-app 404, wide tables at phone width, and library paging.
-  - `a11y.spec.ts` (2) runs an axe-core WCAG 2.1 AA scan of every page in light and dark mode.
+  - `accounts.spec.ts` (5): a new team signs up, invites a teammate who joins through the link and runs a shared recipe; the workspace switcher (mouse and keyboard); account settings and a password change that signs out another device; forgot-password and dead links; the sign-in pages at phone width.
+  - `a11y.spec.ts` (2) runs an axe-core WCAG 2.1 AA scan of every page, including sign-up, invitations and account settings, in light and dark mode.
 - The browser tests use their own database and a stand-in model (`tests/e2e/mock-model.ts`), so they never spend real credits. Screenshots of each demo stage are saved to `docs/screenshots/`.
 - **Model quality:** `npm run eval:model`, described above.
 
@@ -262,6 +292,11 @@ npm run typecheck
 |---|---|---|
 | `DATABASE_PATH` | `./data/flowpilot.db` | SQLite file |
 | `SEED_PASSWORD` | `flowpilot-demo` | Password for the demo accounts, set at seed time |
+| `DEMO_MODE` | on in development, off in production | One-click demo accounts on the sign-in page; in production also seeds them into an empty database |
+| `REGISTRATION` | `open` | `open`, `invite-only` (only through an invite link) or `closed` |
+| `APP_URL` | the request's origin | Public URL used in emailed links |
+| `TRUST_PROXY` | `false` | Believe `Fly-Client-IP` / `X-Forwarded-For` for rate limits (only behind a proxy you control) |
+| `RESEND_API_KEY` / `MAIL_FROM` | none | Send invite and reset emails through Resend; without them the emails are written to the server log |
 | `MODEL_PROVIDER` | inferred from whichever key is set | `anthropic`, `openai` or `openrouter` |
 | `MODEL_NAME` | `claude-sonnet-5` · `gpt-5` · `openai/gpt-6-luna` | Model for the chosen provider |
 | `OPENROUTER_API_KEY` / `ANTHROPIC_API_KEY` / `OPENAI_API_KEY` | none | Turns on AI drafting |
@@ -294,17 +329,19 @@ npm start            # node .output/server/index.mjs (PORT defaults to 3000)
 | “This file separates values with semicolons” (or tabs) | Excel in many locales saves with semicolons. Save as *CSV UTF-8 (Comma delimited)* |
 | “Missing required column: status (the file has "Status")” | Column names must match exactly, including capitals: rename the header in the file |
 | E2E tests can't find a browser | `npx playwright install chromium` |
+| A password-reset or invite email never arrives | Without `RESEND_API_KEY` and `MAIL_FROM` the email is written to the server log instead: copy the link from there |
+| "Too many accounts were created from here recently" | Sign-ups are limited to 20 an hour per address; behind a proxy set `TRUST_PROXY=true` so each visitor counts separately |
 | You want a clean slate | `npm run seed:reset` |
 
 ## Project structure
 
 ```
 src/lib/workflow/     the recipe language: schema, validate, execute, describe, draft, examples
-src/lib/              csv, policy, samples, api client, shared types, formatting, session server functions
-src/server/           db + migrations (triggers), auth, repo, audit events, rate limits, seed, http helpers
+src/lib/              csv, policy, account rules, samples, api client, shared types, formatting, redirects, session server functions
+src/server/           db + migrations (triggers), auth, accounts, repo, audit events, rate limits, mail, config, boot, seed, http helpers
 src/server/api/       the dispatcher (router.ts) and one file per resource
 src/server/ai/        model config and the generate loop (Anthropic, OpenAI, OpenRouter)
-src/routes/           login, _app (guard + shell), dashboard, library, editor, recipe, runs, access, system design, api/$
+src/routes/           login, signup, invite, forgot/reset password, _app (guard + shell), dashboard, library, editor, recipe, runs, access, account, system design, api/$
 src/components/       UI kit, shell, command palette, editor, results grid, run chart, diagrams, dialogs
 src/start.ts          global middleware: security headers, server-function CSRF
 tests/                Vitest suites · tests/e2e: Playwright specs and the mock model
@@ -320,8 +357,8 @@ This is a working prototype, not a production platform:
 - **Single node.** SQLite suits one server process. The next step is Postgres with row-level security mirroring `lib/policy.ts`.
 - **Small, synchronous runs.** Up to 1 MiB, 5,000 rows and 50 columns per file, run inside the request with a 30-second deadline. There is no queue, scheduling or retry.
 - **Two operations.** Filter and group-and-sum only: no joins, averages, counts or charts. The AI says so instead of pretending.
-- **Seeded accounts.** There are no sign-ups, invitations, password resets or SSO, and new recipes go to your first workspace.
-- **In-memory limits.** The login throttle and drafting limits reset on restart. The login throttle counts per email, so someone could lock an address out for 10 minutes.
+- **Accounts.** Email and password only: no SSO, two-factor sign-in or email verification yet, and accounts can't be deleted from the UI.
+- **In-memory limits.** Sign-in, sign-up, reset and drafting limits live in the server's memory, so they reset on restart and aren't shared between servers (Redis would fix both).
 - **No deleting recipes.** Versions are immutable by design.
 - **Other small gaps:**
   - Dashboard days are in UTC.

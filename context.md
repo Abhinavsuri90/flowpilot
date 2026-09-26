@@ -1,5 +1,5 @@
 # FlowPilot: context
-_Last updated: 2026-09-26 15:05 · Phase 10 (second evaluation) · Complete: 17 findings fixed; 97 unit + 19 browser tests green. Next: phase 11 (accounts and teams)_
+_Last updated: 2026-09-26 17:40 · Phase 11 (accounts and teams) · Complete: sign-up, invites, resets, account settings, workspaces; 114 unit + 24 browser tests green. Next: phase 12 (recipe language v2, archive, audit log)_
 
 ## What this is
 FlowPilot turns a one-sentence description of a repetitive CSV report into a saved, versioned recipe that a workspace can run on their own files, share and fork. AI drafts; a deterministic server executes; one access policy guards every request.
@@ -7,8 +7,8 @@ Stack: TanStack Start 1.168 (React 19.3, Vite 8, Nitro 3 beta), TanStack Router/
 Run: `npm install && npm run dev` → http://localhost:3000 (demo password `flowpilot-demo`)
 
 ## Current status
-- Phase: 10 second evaluation (owner: "run fully, find more problems, solve each"). Status: done
-- Tests: 97/97 (`npm test`: engine 13, csv 18, validator 13, access 20, demo-loop 12, ai 9, hardening 12) · Browser 19/19 (`npm run test:e2e`: demo 4, features 13, a11y 2) · Model eval 14/14 (phase 9; AI code unchanged since) · Typecheck: pass, also with --noUnusedLocals/--noUnusedParameters · Build: pass (prod smoke with live gpt-6-luna: South ₹40,000 · West ₹70,000)
+- Phase: 11 accounts and teams (owner: "not MVP/demo: add login, sign-in, register; make it useful for companies; then deploy"). Status: done
+- Tests: 114/114 (`npm test`: engine 13, csv 18, validator 13, access 20, demo-loop 12, ai 9, hardening 12, accounts 17) · Browser 24/24 (`npm run test:e2e`: demo 4, features 13, accounts 5, a11y 2) · Model eval 14/14 (phase 9; AI code unchanged since) · Typecheck: pass (also --noUnusedLocals/--noUnusedParameters)
 - App runs with: `npm install && npm run dev` → http://localhost:3000
 
 ## Done (with evidence)
@@ -38,6 +38,18 @@ UI (evidence screenshots in `docs/screenshots/`)
 - [x] Recipe page: version picker + "latest is M" banner, run panel with header pre-check and parameter reset, results (summary chips, Table v9 sorting, funnel, CSV), my runs + delete, who has access, share + copy dialogs. Evidence: `02`–`05`
 - [x] Library, My runs, Access (matrix from `policy.ts`, roles, one-click sharing, principles), Dashboard (checklist, stats, validated run chart with table view, activity), System design (interactive diagrams, live schema). Evidence: `06`, `08`, `09`, `10-dashboard-dark.png`
 - [x] No horizontal overflow at 390px on the main pages; light and dark themes
+
+Phase 11: accounts and teams (evidence: `tests/accounts.test.ts` 17, `tests/e2e/accounts.spec.ts` 5, a11y scans of the new pages)
+- [x] Sign-up (`/signup`): account + workspace (you're admin), or join through an invite; `REGISTRATION` open / invite-only / closed; shared password rules (≥10 chars, not common, not your email) with a strength meter; 20 sign-ups/hour/address
+- [x] Invitations: admins create links (role, optional email lock → single use; else 25 uses), 7-day expiry, revoke, hash-only storage, emailed when mail is configured; `/invite/$token` landing (sign up, sign in, join, wrong-account and already-member states)
+- [x] Password reset: `/forgot-password` (same answer for every email, mail sent without awaiting so timing can't tell), single-use 1-hour links, signs out every device; Resend or server-log mailer (`src/server/mail.ts`)
+- [x] Account settings (`/account`): name, password change (needs current; signs out other devices; throttled like sign-in), signed-in devices + "sign out everywhere else", workspaces (switch, create, leave)
+- [x] Workspaces: per-session current workspace (switcher in the sidebar; create from there); lists, dashboard, activity, Access page and new recipes follow it
+- [x] People: admins rename the workspace and remove members; leaving/removal hands recipes to an admin (migration 3 trigger allows owner changes only to an admin/member of the workspace); owners can transfer a recipe (`POST /api/workflows/:id/transfer`)
+- [x] Login throttle per email+address (10), per email (50), per address (100): one attacker can't lock someone out
+- [x] Demo mode: demo accounts only when `DEMO_MODE` (default on in dev, off in prod; prod seeds an empty DB on first request); demo accounts can't change password/name, invite, join or leave (`users.is_demo`)
+- [x] New-workspace onboarding: "Invite your team" step for admins, no-workspace dashboard with "Create a workspace"
+- [x] Fixed while testing: version switch to an uncached version remounted the run panel and dropped the chosen file (now keeps the page via placeholderData, Run disabled mid-switch); the greeting flickered "Welcome back"→"Welcome" (now a steady "Welcome, name")
 
 Phase 10: second evaluation, 17 findings fixed (evidence: `tests/hardening.test.ts`, `tests/csv.test.ts`, last 5 tests of `tests/e2e/features.spec.ts`; each unit test was checked to fail against the old code)
 - [x] Run panel kept a stale header check after a version switch ("region found" for a file without it; server then 422) → check tagged with its version, re-run on switch, file kept
@@ -77,14 +89,13 @@ Phase 8 hardening
 - [x] README: quick start, AI setup, OpenRouter model comparison, demo script, architecture, security, tests, limitations
 
 ## In progress
-- Nothing mid-change. Owner asked (after phase 10) for: every endpoint and error smoke-tested, real sign-up/sign-in (not demo-only), company-grade features, a stronger system design, then deployment.
+- Nothing mid-change. Owner's remaining asks: company-grade features, every endpoint and error smoke-tested, a stronger system design, then deployment.
 
 ## Next steps (ordered)
-1. Phase 11: accounts and teams: sign-up (creates a workspace), invitations with roles, account settings, password reset links, workspace switcher, member removal, demo accounts only in DEMO_MODE
-2. Phase 12: recipe language v2 (count/avg/min/max, sort, top N, column select/rename, more filter operators), archive recipes, admin audit log
-3. Phase 13: `npm run smoke` against any URL (every endpoint and error code); system design page + docs upgrade
-4. Phase 14: deploy (recommended: Fly.io, Mumbai region, SQLite on a volume); needs the owner's account login
-5. Owner: rotate the OpenRouter key that was shared in chat
+1. Phase 12: recipe language v2 (count/avg/min/max, sort, top N, column select/rename, more filter operators), archive recipes, admin audit log
+2. Phase 13: `npm run smoke` against any URL (every endpoint and error code); system design page + docs upgrade
+3. Phase 14: deploy (recommended: Fly.io, Mumbai region, SQLite on a volume); needs the owner's account login
+4. Owner: rotate the OpenRouter key that was shared in chat
 
 ## Decisions log
 | Date | Decision | Why | Alternatives rejected |
@@ -126,6 +137,15 @@ Phase 8 hardening
 | 2026-09-26 | Unknown app URLs: `_app/$` splat is its own not-found boundary | A boundary on `_app` replaces the shell itself | Root-only 404 |
 | 2026-09-26 | Tables scroll inside a `relative` wrapper | sr-only labels are absolutely positioned; without a containing block they widen the page | `min-w-0` on grid items (tested: not the cause) |
 | 2026-09-26 | Commits end with a Co-Authored-By trailer from phase 10 on | Current tool guidance; the brief fixes only the subject format | — |
+| 2026-09-26 | Current workspace stored per session (`sessions.workspace_id`); new recipes go there | Brief: workspace from the session, never the body; per-device choice | `workspaceId` in request bodies; per-user setting |
+| 2026-09-26 | Lists, dashboard, activity and Access scoped to the current workspace; recipe URLs still open across your workspaces | Company tools separate teams; links keep working | Mixing all workspaces in one library |
+| 2026-09-26 | Recipes change owner only to an admin/member of their workspace (trigger); leaving/removal hands them to an admin | Company data must outlive employees; triggers still block everything else | Orphaned private recipes |
+| 2026-09-26 | Invite/reset tokens hashed like sessions; invite links shown once | A database leak must not let anyone join or take over accounts | Plaintext tokens (re-copyable) |
+| 2026-09-26 | Email through Resend's HTTP API, else logged to the server | No SDK or SMTP dependency; self-hosting still works | SMTP |
+| 2026-09-26 | Sign-up reveals a taken email (409); forgot-password never does | Standard trade-off; the throttles bound enumeration | Silent sign-up failure |
+| 2026-09-26 | Login throttle keyed three ways (email+address, email, address) | Per-email only let anyone lock an account for 10 minutes | Per-address only (distributed guessing) |
+| 2026-09-26 | `DEMO_MODE` default on in dev, off in prod; demo users flagged `is_demo` and locked | A public demo must not be hijackable; production has no demo accounts by default | Removing demo accounts |
+| 2026-09-26 | Admin-issued password resets not offered | An admin of one workspace could take over a member's other workspaces | Admin reset links |
 
 ## Deviations from the brief
 - Added optional `ANTHROPIC_BASE_URL` / `OPENAI_BASE_URL` / `OPENROUTER_BASE_URL` · the browser test needs a local mock model (the model call is server-side) · no change when unset
@@ -140,7 +160,8 @@ Phase 8 hardening
 - Fixed: dark-theme chart red failed the palette lightness band
 - Fixed in phase 9: title-only edits created versions; `?run=` from another recipe rendered as this recipe's result; the AI could copy sentence-initial capitals ("Paid"); faint text failed WCAG contrast
 - Fixed in phase 10: see "Phase 10" under Done (17 items)
-- Open (low): login throttle and drafting limits are in memory (reset on restart); the login throttle is per email, so an address can be locked out for 10 minutes · documented
+- Open (low): sign-in, sign-up, reset and drafting limits are in memory (reset on restart, not shared across servers) · documented
+- Open (low): no SSO, 2FA or email verification; accounts can't be deleted from the UI · documented
 - By design: CSV line numbers count records (= spreadsheet row numbers); only in a text editor does a quoted newline shift them · documented
 - Open (cosmetic): build prints rolldown "use client" warnings from lucide-react; npm warns that Vitest's engines omit Node 25 (tests pass)
 - Open (cosmetic): react-hooks lint (not installed in the repo) flags 10 intentional client-only effects (hydration flag, theme, platform, dialog resets); reviewed, no bug (the fork dialog reset was probed in a browser: no reset on refetch)
@@ -155,18 +176,18 @@ Phase 8 hardening
 - Screenshots: `npx tsx scripts/screenshots.ts --as asha --theme both / /library` (dev server running)
 
 ## Environment variables (names only)
-DATABASE_PATH, SEED_PASSWORD, MODEL_PROVIDER, MODEL_NAME, ANTHROPIC_API_KEY, OPENAI_API_KEY, OPENROUTER_API_KEY (+ optional ANTHROPIC_BASE_URL, OPENAI_BASE_URL, OPENROUTER_BASE_URL). The local git-ignored `.env` sets MODEL_PROVIDER=openrouter and OPENROUTER_API_KEY.
+DATABASE_PATH, SEED_PASSWORD, DEMO_MODE, REGISTRATION, APP_URL, TRUST_PROXY, RESEND_API_KEY, MAIL_FROM, MODEL_PROVIDER, MODEL_NAME, ANTHROPIC_API_KEY, OPENAI_API_KEY, OPENROUTER_API_KEY (+ optional ANTHROPIC_BASE_URL, OPENAI_BASE_URL, OPENROUTER_BASE_URL). The local git-ignored `.env` sets MODEL_PROVIDER=openrouter and OPENROUTER_API_KEY.
 
 ## File map
 - `src/lib/workflow/`: `schema.ts` (contract, LIMITS) · `validate.ts` (validateDefinition, analyze, resolveParameters) · `execute.ts` (engine) · `describe.ts` (INR, steps, summary) · `draft.ts` (editor model) · `examples.ts`
-- `src/lib/`: `csv.ts` · `policy.ts` (pure access policy + matrix) · `api.ts` (client + query keys) · `types.ts` · `format.ts` · `session.ts` (server fns) · `demo.ts` · `redirect.ts` (safe post-login paths)
-- `src/server/`: `migrations.ts` (schema + triggers) · `db.ts` · `auth.ts` · `repo.ts` (access-aware queries, transactions, stale reaper) · `events.ts` (audit + feed) · `seed.ts` · `http.ts` · `env.ts` · `ids.ts`
-- `src/server/api/`: `router.ts` (dispatcher) · `auth.ts` · `workflows.ts` · `runs.ts` · `generate.ts` · `workspace.ts` · `dashboard.ts` · `system.ts`
+- `src/lib/`: `csv.ts` · `policy.ts` (pure access policy + matrix) · `account.ts` (name/email/password rules) · `api.ts` (client + query keys) · `types.ts` · `format.ts` · `session.ts` (server fns) · `demo.ts` · `redirect.ts` (safe post-login paths)
+- `src/server/`: `migrations.ts` (schema + triggers, 3 migrations) · `db.ts` · `auth.ts` (sessions, throttle) · `accounts.ts` (users, workspaces, invites, resets) · `repo.ts` (access-aware queries, stale reaper) · `events.ts` (audit + feed) · `config.ts` (env settings, client address) · `mail.ts` · `boot.ts` (first-request setup) · `seed.ts` · `http.ts` · `env.ts` · `ids.ts`
+- `src/server/api/`: `router.ts` (dispatcher, 40 routes) · `auth.ts` · `account.ts` (register, resets, me, workspaces) · `invites.ts` · `workflows.ts` · `runs.ts` · `generate.ts` · `workspace.ts` · `dashboard.ts` · `system.ts`
 - `src/server/ai/`: `config.ts` (providers, env) · `generate.ts` (prompt, schema, adapters, repair loop)
-- `src/routes/`: `__root.tsx` · `login.tsx` · `_app.tsx` (guard + shell) · `_app/{index,library,runs,access,system-design,workflows.new,w.$workflowId.index,w.$workflowId.edit}.tsx` · `_app/$.tsx` (in-app 404) · `api/$.ts`
-- `src/components/`: `ui.tsx` · `shell.tsx` · `command.tsx` · `editor.tsx` · `results.tsx` · `charts.tsx` · `workflow-bits.tsx` · `file-drop.tsx` · `share-dialog.tsx` · `fork-dialog.tsx` · `access-panel.tsx` · `states.tsx` · `toast.tsx` · `logo.tsx` · `theme.ts` · `diagrams/{architecture,versioning}.tsx`
+- `src/routes/`: `__root.tsx` · `login.tsx` · `signup.tsx` · `invite.$token.tsx` · `forgot-password.tsx` · `reset-password.$token.tsx` · `_app.tsx` (guard + shell) · `_app/{index,library,runs,access,account,system-design,workflows.new,w.$workflowId.index,w.$workflowId.edit}.tsx` · `_app/$.tsx` (in-app 404) · `api/$.ts`
+- `src/components/`: `ui.tsx` (incl. `Menu`) · `shell.tsx` (workspace switcher, create-workspace dialog) · `auth-layout.tsx` (sign-in pages layout, password input) · `command.tsx` · `editor.tsx` · `results.tsx` · `charts.tsx` · `workflow-bits.tsx` · `file-drop.tsx` · `share-dialog.tsx` · `fork-dialog.tsx` · `access-panel.tsx` · `states.tsx` · `toast.tsx` · `logo.tsx` · `theme.ts` · `diagrams/{architecture,versioning}.tsx`
 - `src/start.ts`: global request middleware (security headers, server-fn CSRF)
-- `tests/`: 7 Vitest suites (incl. `hardening.test.ts`) + `helpers/` · `tests/e2e/`: `demo.spec.ts`, `features.spec.ts`, `a11y.spec.ts`, `mock-model.ts` · `playwright.config.ts`
+- `tests/`: 8 Vitest suites (incl. `hardening.test.ts`, `accounts.test.ts`) + `helpers/` · `tests/e2e/`: `demo.spec.ts`, `features.spec.ts`, `accounts.spec.ts`, `a11y.spec.ts`, `mock-model.ts` · `playwright.config.ts`
 - `scripts/`: `seed.ts`, `check-model.ts`, `eval-model.ts`, `screenshots.ts` · `fixtures/`, `public/samples/`, `docs/screenshots/`
 - `src/lib/samples.ts` (sample catalogue) · `src/server/ratelimit.ts` (drafting limits)
 

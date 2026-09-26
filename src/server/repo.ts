@@ -252,11 +252,13 @@ export function toSummary(db: DB, caller: Caller, wf: WorkflowRow, current?: Ver
 
 export type Scope = 'mine' | 'team' | 'all'
 
-function scopeSql(scope: Scope): string {
+/** Which recipes a list shows. `workspaceId` narrows it to one workspace (the one the caller is working in). */
+export type ListFilter = { scope: Scope; q?: string; workspaceId?: string | null }
+
+function scopeSql(filter: ListFilter): string {
   const team = `(w.visibility = 'team' AND w.workspace_id IN (SELECT workspace_id FROM workspace_members WHERE user_id = @me))`
-  if (scope === 'mine') return 'w.owner_id = @me'
-  if (scope === 'team') return team
-  return `(w.owner_id = @me OR ${team})`
+  const scope = filter.scope === 'mine' ? 'w.owner_id = @me' : filter.scope === 'team' ? team : `(w.owner_id = @me OR ${team})`
+  return filter.workspaceId ? `${scope} AND w.workspace_id = @ws` : scope
 }
 
 function searchSql(q: string): { sql: string; pattern: string | null } {
@@ -272,28 +274,22 @@ export const WORKFLOW_PAGE = { default: 60, max: 200 } as const
  * Recipes the caller can read: their own ("mine") or shared with one of their
  * workspaces ("team"), newest first, one page at a time.
  */
-export function listWorkflows(
-  db: DB,
-  caller: Caller,
-  scope: Scope,
-  q = '',
-  page: { limit?: number; offset?: number } = {},
-): WorkflowSummary[] {
-  const search = searchSql(q)
-  const limit = Math.min(Math.max(Math.trunc(page.limit ?? WORKFLOW_PAGE.default), 1), WORKFLOW_PAGE.max)
-  const offset = Math.max(Math.trunc(page.offset ?? 0), 0)
+export function listWorkflows(db: DB, caller: Caller, filter: ListFilter & { limit?: number; offset?: number }): WorkflowSummary[] {
+  const search = searchSql(filter.q ?? '')
+  const limit = Math.min(Math.max(Math.trunc(filter.limit ?? WORKFLOW_PAGE.default), 1), WORKFLOW_PAGE.max)
+  const offset = Math.max(Math.trunc(filter.offset ?? 0), 0)
   const rows = db
-    .prepare(`SELECT w.* FROM workflows w WHERE ${scopeSql(scope)}${search.sql} ORDER BY w.updated_at DESC, w.id LIMIT @limit OFFSET @offset`)
-    .all({ me: caller.id, q: search.pattern, limit, offset }) as WorkflowRow[]
+    .prepare(`SELECT w.* FROM workflows w WHERE ${scopeSql(filter)}${search.sql} ORDER BY w.updated_at DESC, w.id LIMIT @limit OFFSET @offset`)
+    .all({ me: caller.id, ws: filter.workspaceId ?? null, q: search.pattern, limit, offset }) as WorkflowRow[]
   return rows.map((wf) => toSummary(db, caller, wf))
 }
 
-export function countWorkflows(db: DB, caller: Caller, scope: Scope, q = ''): number {
-  const search = searchSql(q)
+export function countWorkflows(db: DB, caller: Caller, filter: ListFilter): number {
+  const search = searchSql(filter.q ?? '')
   return db
-    .prepare(`SELECT COUNT(*) FROM workflows w WHERE ${scopeSql(scope)}${search.sql}`)
+    .prepare(`SELECT COUNT(*) FROM workflows w WHERE ${scopeSql(filter)}${search.sql}`)
     .pluck()
-    .get({ me: caller.id, q: search.pattern }) as number
+    .get({ me: caller.id, ws: filter.workspaceId ?? null, q: search.pattern }) as number
 }
 
 // ----- runs ------------------------------------------------------------------------

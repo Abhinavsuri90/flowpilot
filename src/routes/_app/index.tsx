@@ -1,3 +1,4 @@
+import * as React from 'react'
 import { Link, createFileRoute } from '@tanstack/react-router'
 import { useQuery } from '@tanstack/react-query'
 import {
@@ -14,6 +15,7 @@ import {
   Plus,
   Share2,
   Sparkles,
+  UserPlus,
   Users,
   Workflow,
 } from 'lucide-react'
@@ -21,7 +23,8 @@ import { api, qk } from '~/lib/api'
 import { canCreateInWorkspace } from '~/lib/policy'
 import { timeAgo } from '~/lib/format'
 import type { Dashboard as DashboardData, Me } from '~/lib/types'
-import { Avatar, Card, CardHeader, Skeleton, buttonClass, cn } from '~/components/ui'
+import { Avatar, Button, Card, CardHeader, Skeleton, buttonClass, cn } from '~/components/ui'
+import { CreateWorkspaceDialog } from '~/components/shell'
 import { RunStatusBadge } from '~/components/workflow-bits'
 import { RunChart } from '~/components/charts'
 import { ErrorState } from '~/components/states'
@@ -62,14 +65,33 @@ function Dashboard() {
 
 // ----- Hero + reuse-loop checklist -----------------------------------------------------
 
+function NoWorkspaceHero({ me }: { me: Me }) {
+  const [createOpen, setCreateOpen] = React.useState(false)
+  return (
+    <section className="animate-rise rounded-3xl border border-line bg-surface p-6 shadow-card sm:p-8">
+      <h1 className="text-[28px] font-semibold tracking-tight text-ink">Welcome, {me.user.name.split(' ')[0]}</h1>
+      <p className="mt-2 max-w-xl text-[15px] text-muted">
+        You’re not in a workspace yet. Create one for your team, or open an invite link a teammate sent you.
+      </p>
+      <Button variant="brand" size="lg" className="mt-5" icon={<Plus className="size-4" />} onClick={() => setCreateOpen(true)}>
+        Create a workspace
+      </Button>
+      <CreateWorkspaceDialog open={createOpen} onClose={() => setCreateOpen(false)} />
+    </section>
+  )
+}
+
 function Hero({ me, data }: { me: Me; data?: DashboardData }) {
   const canCreate = canCreateInWorkspace(me.workspace?.role ?? null)
+  const isAdmin = me.workspace?.role === 'admin' && !me.user.isDemo
   const ws = me.workspace?.workspaceName ?? 'your workspace'
-  // Viewers can't create or copy, so their loop is the part they can do.
+  // Viewers can't create or copy, so their loop is the part they can do. Admins
+  // of a new workspace start by inviting the team the loop depends on.
   const steps = canCreate
     ? [
         { done: data?.checklist.created, icon: <Sparkles />, label: 'Describe and save a recipe', hint: 'AI drafts, you review' },
         { done: data?.checklist.ran, icon: <Play />, label: 'Run it on a file', hint: 'No AI on reruns' },
+        ...(isAdmin ? [{ done: data?.checklist.invited, icon: <UserPlus />, label: 'Invite your team', hint: 'From the Access page' }] : []),
         { done: data?.checklist.shared, icon: <Share2 />, label: `Share it with ${ws}`, hint: 'A link is a pointer, not a grant' },
         { done: data?.checklist.copied, icon: <CopyPlus />, label: 'A teammate makes a copy', hint: 'Their copy never changes yours' },
       ]
@@ -78,6 +100,7 @@ function Hero({ me, data }: { me: Me; data?: DashboardData }) {
         { done: data?.checklist.ran, icon: <Play />, label: 'Run it on your own file', hint: 'Results stay private to you' },
       ]
   const doneCount = steps.filter((s) => s.done).length
+  if (!me.workspace) return <NoWorkspaceHero me={me} />
 
   return (
     <section className="animate-rise relative overflow-hidden rounded-3xl border border-line bg-surface shadow-card">
@@ -90,7 +113,7 @@ function Hero({ me, data }: { me: Me; data?: DashboardData }) {
             {ws} · {me.workspace?.role ?? 'no role'}
           </div>
           <h1 className="mt-2 text-balance text-[28px] font-semibold tracking-tight text-ink sm:text-[34px]">
-            Welcome back, {me.user.name.split(' ')[0]}
+            Welcome, {me.user.name.split(' ')[0]}
           </h1>
           <p className="mt-2 max-w-xl text-[15px] leading-relaxed text-muted">
             Build a report recipe once. Anyone in {ws} can run it on their own file, or make an independent copy, and the
@@ -105,6 +128,11 @@ function Hero({ me, data }: { me: Me; data?: DashboardData }) {
             <Link to="/library" search={{ tab: 'team' }} className={buttonClass('secondary', 'lg')}>
               <Users className="size-4" /> Team library
             </Link>
+            {isAdmin && data && !data.checklist.invited && (
+              <Link to="/access" className={buttonClass('ghost', 'lg')}>
+                <UserPlus className="size-4" /> Invite your team
+              </Link>
+            )}
           </div>
         </div>
 

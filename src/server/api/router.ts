@@ -1,6 +1,7 @@
 import { getDb } from '../db'
 import { userFromRequest } from '../auth'
 import { loadEnv } from '../env'
+import { ensureReady } from '../boot'
 import { ApiError, errorResponse, json, noContent, unauthorized } from '../http'
 import type { ApiContext, AuthedContext } from './context'
 import * as auth from './auth'
@@ -10,6 +11,8 @@ import * as workspace from './workspace'
 import * as dashboard from './dashboard'
 import * as system from './system'
 import * as generate from './generate'
+import * as account from './account'
+import * as invites from './invites'
 
 type Method = 'GET' | 'POST' | 'PATCH' | 'DELETE'
 
@@ -24,7 +27,17 @@ type Route = {
 const ROUTES: Route[] = [
   { method: 'POST', pattern: '/api/auth/login', auth: false, handler: auth.login },
   { method: 'POST', pattern: '/api/auth/logout', auth: false, handler: auth.logout },
+  { method: 'POST', pattern: '/api/auth/register', auth: false, handler: account.register },
+  { method: 'POST', pattern: '/api/auth/forgot', auth: false, handler: account.forgotPassword },
+  { method: 'GET', pattern: '/api/auth/reset/:token', auth: false, handler: account.resetInfo },
+  { method: 'POST', pattern: '/api/auth/reset', auth: false, handler: account.resetPassword },
   { method: 'GET', pattern: '/api/me', auth: true, handler: auth.me },
+  { method: 'PATCH', pattern: '/api/me', auth: true, handler: account.updateMe },
+  { method: 'POST', pattern: '/api/me/password', auth: true, handler: account.changePassword },
+  { method: 'GET', pattern: '/api/me/sessions', auth: true, handler: account.sessions },
+  { method: 'DELETE', pattern: '/api/me/sessions', auth: true, handler: account.signOutOthers },
+  { method: 'POST', pattern: '/api/me/workspace', auth: true, handler: account.switchWorkspace },
+  { method: 'POST', pattern: '/api/workspaces', auth: true, handler: account.createWorkspaceHandler },
   { method: 'GET', pattern: '/api/health', auth: false, handler: ({ db }) => json({ status: db.prepare('SELECT 1').pluck().get() === 1 ? 'ok' : 'degraded' }) },
   { method: 'GET', pattern: '/api/dashboard', auth: true, handler: dashboard.get },
   { method: 'GET', pattern: '/api/workflows', auth: true, handler: workflows.list },
@@ -34,6 +47,7 @@ const ROUTES: Route[] = [
   { method: 'POST', pattern: '/api/workflows/:id/versions', auth: true, handler: workflows.saveVersion },
   { method: 'POST', pattern: '/api/workflows/:id/fork', auth: true, handler: workflows.fork },
   { method: 'GET', pattern: '/api/workflows/:id/access', auth: true, handler: workflows.access },
+  { method: 'POST', pattern: '/api/workflows/:id/transfer', auth: true, handler: workflows.transfer },
   { method: 'POST', pattern: '/api/generate', auth: true, handler: generate.create },
   { method: 'POST', pattern: '/api/runs', auth: true, handler: runs.create },
   { method: 'GET', pattern: '/api/runs', auth: true, handler: runs.list },
@@ -41,7 +55,15 @@ const ROUTES: Route[] = [
   { method: 'GET', pattern: '/api/runs/:id', auth: true, handler: runs.detail },
   { method: 'GET', pattern: '/api/runs/:id/csv', auth: true, handler: runs.csv },
   { method: 'GET', pattern: '/api/workspace', auth: true, handler: workspace.get },
+  { method: 'PATCH', pattern: '/api/workspace', auth: true, handler: workspace.rename },
+  { method: 'POST', pattern: '/api/workspace/leave', auth: true, handler: workspace.leave },
   { method: 'PATCH', pattern: '/api/workspace/members/:userId', auth: true, handler: workspace.setRole },
+  { method: 'DELETE', pattern: '/api/workspace/members/:userId', auth: true, handler: workspace.removeMember },
+  { method: 'GET', pattern: '/api/workspace/invites', auth: true, handler: invites.list },
+  { method: 'POST', pattern: '/api/workspace/invites', auth: true, handler: invites.create },
+  { method: 'DELETE', pattern: '/api/workspace/invites/:id', auth: true, handler: invites.revoke },
+  { method: 'GET', pattern: '/api/invites/:token', auth: false, handler: invites.info },
+  { method: 'POST', pattern: '/api/invites/:token/accept', auth: true, handler: invites.accept },
   { method: 'GET', pattern: '/api/system', auth: true, handler: (ctx) => system.get(ctx, API_ROUTES) },
 ]
 
@@ -129,6 +151,7 @@ function pathParams(keys: string[], match: RegExpExecArray): Record<string, stri
 /** The single entry point for the REST API. Tests call it directly with real cookies. */
 export async function handleApi(request: Request): Promise<Response> {
   loadEnv()
+  await ensureReady()
   const isHead = request.method.toUpperCase() === 'HEAD'
   const response = await dispatch(request, isHead ? 'GET' : request.method.toUpperCase())
   // HEAD: the GET response's status and headers, without the body.

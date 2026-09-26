@@ -1,14 +1,33 @@
 import * as React from 'react'
-import { Link, useRouter, useRouterState } from '@tanstack/react-router'
+import { Link, useNavigate, useRouter, useRouterState } from '@tanstack/react-router'
 import { useMutation, useQueryClient } from '@tanstack/react-query'
-import { BookMarked, History, LayoutDashboard, LogOut, Menu, Moon, Network, Plus, Search, ShieldCheck, Sparkles, Sun, X } from 'lucide-react'
-import { api } from '~/lib/api'
+import {
+  BookMarked,
+  Building2,
+  ChevronsUpDown,
+  History,
+  LayoutDashboard,
+  LogOut,
+  Menu as MenuIcon,
+  Moon,
+  Network,
+  Plus,
+  Search,
+  ShieldCheck,
+  Sparkles,
+  Sun,
+  UserRound,
+  X,
+} from 'lucide-react'
+import { api, ApiError } from '~/lib/api'
 import { canCreateInWorkspace } from '~/lib/policy'
+import { workspaceNameProblem } from '~/lib/account'
 import type { Me } from '~/lib/types'
 import { Logo } from './logo'
 import { useTheme } from './theme'
 import { CommandPalette, type PaletteLink } from './command'
-import { Avatar, Badge, Button, Kbd, Tip, buttonClass, cn } from './ui'
+import { useToast } from './toast'
+import { Avatar, Badge, Button, Callout, Dialog, Field, Input, Kbd, Menu, MenuItem, MenuLabel, MenuSeparator, Tip, buttonClass, cn } from './ui'
 
 type NavTo = '/' | '/library' | '/runs' | '/access' | '/system-design'
 type NavItem = { to: NavTo; label: string; icon: React.ReactNode; exact?: boolean }
@@ -100,10 +119,134 @@ function AiStatus({ model }: { model: Me['model'] }) {
   )
 }
 
-function SidebarContent({ me, onNavigate }: { me: Me; onNavigate?: () => void }) {
+/** After switching or creating a workspace: drop cached data and reload the session context. */
+function useWorkspaceChanged() {
+  const queryClient = useQueryClient()
+  const router = useRouter()
+  return async () => {
+    queryClient.clear()
+    await router.invalidate()
+  }
+}
+
+function WorkspaceSwitcher({ me, onCreate, onNavigate }: { me: Me; onCreate: () => void; onNavigate?: () => void }) {
+  const ws = me.workspace
+  const changed = useWorkspaceChanged()
+  const toast = useToast()
+  const switchTo = useMutation({
+    mutationFn: (workspaceId: string) => api.post<Me>('/api/me/workspace', { workspaceId }),
+    onSuccess: async (next) => {
+      await changed()
+      onNavigate?.()
+      toast.show({ tone: 'ok', title: `Now working in ${next.workspace?.workspaceName}`, description: 'The library, dashboard and Access page show this workspace.' })
+    },
+    onError: (err) => toast.show({ tone: 'bad', title: 'Could not switch workspace', description: err instanceof ApiError ? err.message : String(err) }),
+  })
+
+  const box = (
+    <div className="flex items-center gap-2 rounded-xl border border-sidebar-line bg-sidebar-2 px-3 py-2.5 transition-colors hover:bg-white/[0.06]">
+      <div className="min-w-0 flex-1">
+        <div className="text-[11px] font-medium tracking-wide text-sidebar-muted uppercase">Workspace</div>
+        <div className="mt-0.5 flex items-center gap-2">
+          <span className="truncate text-sm font-semibold text-white">{ws ? ws.workspaceName : 'No workspace yet'}</span>
+          {ws && (
+            <Badge tone={ROLE_TONE[ws.role]} className="!bg-white/10 !text-sidebar-ink">
+              {ws.role}
+            </Badge>
+          )}
+        </div>
+      </div>
+      <ChevronsUpDown className="size-4 shrink-0 text-sidebar-muted" aria-hidden />
+    </div>
+  )
+
+  return (
+    <Menu label={ws ? `Workspace: ${ws.workspaceName}. Switch or create a workspace` : 'Create a workspace'} trigger={box}>
+      {me.memberships.length > 0 && <MenuLabel>Your workspaces</MenuLabel>}
+      {me.memberships.map((m) => (
+        <MenuItem
+          key={m.workspaceId}
+          icon={<Building2 />}
+          checked={m.workspaceId === ws?.workspaceId}
+          hint={m.role}
+          disabled={switchTo.isPending}
+          onSelect={() => {
+            if (m.workspaceId !== ws?.workspaceId) switchTo.mutate(m.workspaceId)
+          }}
+        >
+          {m.workspaceName}
+        </MenuItem>
+      ))}
+      {me.memberships.length > 0 && <MenuSeparator />}
+      <MenuItem icon={<Plus />} onSelect={onCreate} hint="You'll be its admin">
+        Create a workspace
+      </MenuItem>
+    </Menu>
+  )
+}
+
+/** A new workspace with you as its admin; this browser switches to it. */
+export function CreateWorkspaceDialog({ open, onClose }: { open: boolean; onClose: () => void }) {
+  const [name, setName] = React.useState('')
+  const [touched, setTouched] = React.useState(false)
+  const changed = useWorkspaceChanged()
+  const navigate = useNavigate()
+  const toast = useToast()
+  const create = useMutation({
+    mutationFn: () => api.post<Me>('/api/workspaces', { name: name.trim() }),
+    onSuccess: async (next) => {
+      onClose()
+      setName('')
+      setTouched(false)
+      await changed()
+      await navigate({ to: '/' })
+      toast.show({ tone: 'ok', title: `${next.workspace?.workspaceName} is ready`, description: 'Invite your team from the Access page.' })
+    },
+  })
+  const problem = workspaceNameProblem(name)
+  const error = create.error instanceof ApiError ? create.error.message : null
+  return (
+    <Dialog
+      open={open}
+      onClose={onClose}
+      icon={<Building2 />}
+      title="Create a workspace"
+      description="A separate space for another team or client, with its own recipes and members. You'll be its admin."
+      size="sm"
+      footer={
+        <>
+          <Button variant="ghost" onClick={onClose}>
+            Cancel
+          </Button>
+          <Button variant="brand" loading={create.isPending} disabled={!!problem} onClick={() => create.mutate()}>
+            Create workspace
+          </Button>
+        </>
+      }
+    >
+      <form
+        onSubmit={(e) => {
+          e.preventDefault()
+          setTouched(true)
+          if (!problem) create.mutate()
+        }}
+      >
+        <Field label="Workspace name" htmlFor="new-workspace-name" error={touched && problem ? problem : undefined} hint="Your team, department or company">
+          <Input id="new-workspace-name" value={name} maxLength={80} onChange={(e) => setName(e.target.value)} onBlur={() => setTouched(true)} placeholder="e.g. Finance team" />
+        </Field>
+      </form>
+      {error && (
+        <Callout tone="bad" className="mt-3">
+          {error}
+        </Callout>
+      )}
+    </Dialog>
+  )
+}
+
+function SidebarContent({ me, onNavigate, onCreateWorkspace }: { me: Me; onNavigate?: () => void; onCreateWorkspace: () => void }) {
   const pathname = useRouterState({ select: (s) => s.location.pathname })
   const signOut = useSignOut()
-  const ws = me.workspace
 
   return (
     <div className="flex h-full flex-col gap-5 px-3.5 py-5">
@@ -111,21 +254,7 @@ function SidebarContent({ me, onNavigate }: { me: Me; onNavigate?: () => void })
         <Logo inverted />
       </Link>
 
-      {ws ? (
-        <div className="rounded-xl border border-sidebar-line bg-sidebar-2 px-3 py-2.5">
-          <div className="text-[11px] font-medium tracking-wide text-sidebar-muted uppercase">Workspace</div>
-          <div className="mt-0.5 flex items-center justify-between gap-2">
-            <span className="truncate text-sm font-semibold text-white">{ws.workspaceName}</span>
-            <Badge tone={ROLE_TONE[ws.role]} className="!bg-white/10 !text-sidebar-ink">
-              {ws.role}
-            </Badge>
-          </div>
-        </div>
-      ) : (
-        <div className="rounded-xl border border-sidebar-line bg-sidebar-2 px-3 py-2.5 text-[12.5px] text-sidebar-muted">
-          You don't belong to a workspace yet.
-        </div>
-      )}
+      <WorkspaceSwitcher me={me} onCreate={onCreateWorkspace} onNavigate={onNavigate} />
 
       <NewRecipeButton me={me} onNavigate={onNavigate} className="w-full" />
 
@@ -162,12 +291,19 @@ function SidebarContent({ me, onNavigate }: { me: Me; onNavigate?: () => void })
 
       <div className="space-y-2.5">
         <AiStatus model={me.model} />
-        <div className="flex items-center gap-2.5 rounded-xl border border-sidebar-line bg-sidebar-2 p-2.5">
-          <Avatar name={me.user.name} hue={me.user.hue} size={32} />
-          <div className="min-w-0 flex-1">
-            <div className="truncate text-[13px] font-semibold text-white">{me.user.name}</div>
-            <div className="truncate text-[11.5px] text-sidebar-muted">{me.user.email}</div>
-          </div>
+        <div className="flex items-center gap-1 rounded-xl border border-sidebar-line bg-sidebar-2 p-1.5">
+          <Link
+            to="/account"
+            onClick={onNavigate}
+            aria-label="Account settings"
+            className="flex min-w-0 flex-1 items-center gap-2.5 rounded-lg p-1 hover:bg-white/[0.06]"
+          >
+            <Avatar name={me.user.name} hue={me.user.hue} size={32} />
+            <span className="min-w-0 flex-1">
+              <span className="block truncate text-[13px] font-semibold text-white">{me.user.name}</span>
+              <span className="block truncate text-[11.5px] text-sidebar-muted">{me.user.email}</span>
+            </span>
+          </Link>
           <button
             type="button"
             onClick={() => signOut.mutate()}
@@ -213,6 +349,7 @@ export function AppShell({ me, children }: { me: Me; children: React.ReactNode }
   const modifier = useModifierLabel()
   const [drawerOpen, setDrawerOpen] = React.useState(false)
   const [paletteOpen, setPaletteOpen] = React.useState(false)
+  const [createOpen, setCreateOpen] = React.useState(false)
   const pathname = useRouterState({ select: (s) => s.location.pathname })
   React.useEffect(() => setDrawerOpen(false), [pathname])
 
@@ -233,6 +370,7 @@ export function AppShell({ me, children }: { me: Me; children: React.ReactNode }
       ...(canCreateInWorkspace(me.workspace?.role ?? null)
         ? [{ label: 'New recipe', to: '/workflows/new', icon: <Plus />, hint: 'Describe a report and turn it into steps' }]
         : []),
+      { label: 'Account settings', to: '/account', icon: <UserRound />, hint: 'Name, password and signed-in devices' },
     ],
     [me.workspace?.role],
   )
@@ -240,7 +378,7 @@ export function AppShell({ me, children }: { me: Me; children: React.ReactNode }
   return (
     <div className="min-h-dvh">
       <aside className="fixed inset-y-0 left-0 z-30 hidden w-64 overflow-y-auto bg-sidebar lg:block">
-        <SidebarContent me={me} />
+        <SidebarContent me={me} onCreateWorkspace={() => setCreateOpen(true)} />
       </aside>
 
       {drawerOpen && (
@@ -255,7 +393,14 @@ export function AppShell({ me, children }: { me: Me; children: React.ReactNode }
             >
               <X className="size-4" />
             </button>
-            <SidebarContent me={me} onNavigate={() => setDrawerOpen(false)} />
+            <SidebarContent
+              me={me}
+              onNavigate={() => setDrawerOpen(false)}
+              onCreateWorkspace={() => {
+                setDrawerOpen(false)
+                setCreateOpen(true)
+              }}
+            />
           </aside>
         </div>
       )}
@@ -269,7 +414,7 @@ export function AppShell({ me, children }: { me: Me; children: React.ReactNode }
               className="grid size-9 shrink-0 place-items-center rounded-xl border border-line bg-surface text-ink-2 lg:hidden"
               aria-label="Open menu"
             >
-              <Menu className="size-4" />
+              <MenuIcon className="size-4" />
             </button>
             <button
               type="button"
@@ -294,6 +439,7 @@ export function AppShell({ me, children }: { me: Me; children: React.ReactNode }
       </div>
 
       <CommandPalette open={paletteOpen} onClose={() => setPaletteOpen(false)} pages={pages} />
+      <CreateWorkspaceDialog open={createOpen} onClose={() => setCreateOpen(false)} />
     </div>
   )
 }

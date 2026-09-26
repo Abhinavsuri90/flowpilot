@@ -23,6 +23,11 @@ export function canManageRoles(role: Role | null): boolean {
   return role === 'admin'
 }
 
+/** Inviting people, removing members and renaming the workspace are admin jobs. */
+export function canManageMembers(role: Role | null): boolean {
+  return role === 'admin'
+}
+
 /** 404 hides existence from anyone who can't see the recipe; 403 means "visible, but not yours to change". */
 export function denialStatus(rel: Relation, visibility: Visibility): 403 | 404 {
   return canView(rel, visibility) ? 403 : 404
@@ -92,6 +97,28 @@ export function decideRoleChange(input: {
   return { allowed: true, reason: 'Admins can change other members’ roles' }
 }
 
+/**
+ * Removing someone: admins only, never yourself (leave instead), and never a
+ * shared demo account. Their recipes stay with the workspace.
+ */
+export function decideRemoval(input: { actorId: string; actorRole: Role | null; targetId: string; targetIsDemo: boolean }): Decision {
+  if (input.actorRole === null) return { allowed: false, status: 404, reason: 'You are not a member of this workspace' }
+  if (!canManageMembers(input.actorRole)) return { allowed: false, status: 403, reason: 'Only admins can remove members' }
+  if (input.actorId === input.targetId) return { allowed: false, status: 403, reason: 'To remove yourself, leave the workspace' }
+  if (input.targetIsDemo) return { allowed: false, status: 403, reason: 'Demo accounts stay in their workspace' }
+  return { allowed: true, reason: 'Admins can remove members; their recipes stay with the workspace' }
+}
+
+/** Anyone can leave, except the last admin (the workspace would have nobody to manage it). */
+export function decideLeave(input: { role: Role | null; adminCount: number; isDemo: boolean }): Decision {
+  if (input.role === null) return { allowed: false, status: 404, reason: 'You are not a member of this workspace' }
+  if (input.isDemo) return { allowed: false, status: 403, reason: 'Demo accounts stay in their workspace' }
+  if (input.role === 'admin' && input.adminCount <= 1) {
+    return { allowed: false, status: 403, reason: 'Make someone else an admin before you leave' }
+  }
+  return { allowed: true, reason: 'You can leave; your recipes stay with the workspace' }
+}
+
 // ---------------------------------------------------------------------------
 // The permission matrix shown on the Access page, generated from decide().
 // ---------------------------------------------------------------------------
@@ -113,6 +140,7 @@ export const MATRIX_ROWS = [
   { key: 'others_runs', label: "See someone else's runs" },
   { key: 'create', label: 'Create recipes in the workspace' },
   { key: 'roles', label: "Change members' roles" },
+  { key: 'members', label: 'Invite or remove people' },
 ] as const
 
 export type MatrixCell = { allowed: boolean; label: string; status?: 403 | 404; reason: string }
@@ -135,15 +163,15 @@ export function permissionMatrix(visibility: Visibility): Array<{ key: string; l
       // Workspace-level permissions don't depend on any one recipe.
       if (key === 'owner') return { allowed: false, label: 'n/a', reason: 'Depends on the owner’s role in the workspace' }
       if (rel.role === null) return { allowed: false, label: 'No', reason: 'Outsiders belong to another workspace' }
-      const allowed = row.key === 'create' ? canCreateInWorkspace(rel.role) : canManageRoles(rel.role)
-      return allowed
-        ? { allowed: true, label: 'Yes', reason: row.key === 'create' ? 'Admins and members create recipes' : 'Admins manage roles' }
-        : {
-            allowed: false,
-            label: 'No (403)',
-            status: 403,
-            reason: row.key === 'create' ? 'Viewers can run recipes but not create them' : 'Only admins change roles',
-          }
+      const WORKSPACE_ROWS = {
+        create: { allowed: canCreateInWorkspace(rel.role), yes: 'Admins and members create recipes', no: 'Viewers can run recipes but not create them' },
+        roles: { allowed: canManageRoles(rel.role), yes: 'Admins manage roles', no: 'Only admins change roles' },
+        members: { allowed: canManageMembers(rel.role), yes: 'Admins invite and remove people', no: 'Only admins invite or remove people' },
+      } as const
+      const rule = WORKSPACE_ROWS[row.key]
+      return rule.allowed
+        ? { allowed: true, label: 'Yes', reason: rule.yes }
+        : { allowed: false, label: 'No (403)', status: 403, reason: rule.no }
     }),
   }))
 }

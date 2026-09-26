@@ -23,7 +23,7 @@ async function open(page: Page, path: string) {
 async function signIn(page: Page, name: 'Asha' | 'Vikram' | 'Meera' | 'Olivia') {
   await open(page, '/login')
   await page.getByRole('button', { name: new RegExp(`^${name}\\b`) }).click()
-  await expect(page.getByRole('heading', { name: new RegExp(`Welcome back, ${name}`) })).toBeVisible()
+  await expect(page.getByRole('heading', { name: new RegExp(`Welcome, ${name}`) })).toBeVisible()
 }
 
 async function signOut(page: Page) {

@@ -139,7 +139,7 @@ describe('access control', () => {
     expect(fork.status).toBe(403)
     const create = await meera.post('/api/workflows', { title: 'Mine', definition: ORIGINAL })
     expect(create.status).toBe(403)
-    expect(create.body.error.message).toBe('Viewers can run recipes but cannot create them')
+    expect(create.body.error.message).toBe('Viewers can run recipes but cannot create them in Sales')
   })
 
   it('answers an outsider with 404 everywhere, exactly like a missing id', async () => {
@@ -229,7 +229,9 @@ describe('access control', () => {
     const foreign = await versionOf(asha, seed.examples.paid_by_rep)
     expect(() => db.prepare('UPDATE workflow_versions SET definition = ? WHERE id = ?').run('{}', versionId)).toThrow(/immutable/)
     expect(() => db.prepare('DELETE FROM workflow_versions WHERE id = ?').run(versionId)).toThrow(/cannot be deleted/)
-    expect(() => db.prepare('UPDATE workflows SET owner_id = ? WHERE id = ?').run(seed.users.vikram, id)).toThrow(/cannot change/)
+    // Ownership only moves to an admin or member of the same workspace (never a viewer or an outsider).
+    expect(() => db.prepare('UPDATE workflows SET owner_id = ? WHERE id = ?').run(seed.users.meera, id)).toThrow(/admin or member of its workspace/)
+    expect(() => db.prepare('UPDATE workflows SET owner_id = ? WHERE id = ?').run(seed.users.olivia, id)).toThrow(/admin or member of its workspace/)
     expect(() => db.prepare('UPDATE workflows SET workspace_id = ? WHERE id = ?').run(seed.workspaces.Marketing, id)).toThrow(/cannot change/)
     expect(() => db.prepare('UPDATE workflows SET current_version_id = ? WHERE id = ?').run(foreign, id)).toThrow(/version of this recipe/)
     expect(() => db.prepare(`UPDATE runs SET status = 'failed', error_code = 'X' WHERE id = ?`).run(run.body.id)).toThrow(/final/)
@@ -372,6 +374,7 @@ describe('access control', () => {
       ["See someone else's runs", 'No (404)', 'No (404)', 'No (404)', 'No (404)', 'No (404)'],
       ['Create recipes in the workspace', 'n/a', 'Yes', 'Yes', 'No (403)', 'No'],
       ["Change members' roles", 'n/a', 'Yes', 'No (403)', 'No (403)', 'No'],
+      ['Invite or remove people', 'n/a', 'Yes', 'No (403)', 'No (403)', 'No'],
     ])
     for (const row of labels('private').slice(0, 5)) expect(row.slice(2)).toEqual(['No (404)', 'No (404)', 'No (404)', 'No (404)'])
 

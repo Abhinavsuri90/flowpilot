@@ -1,15 +1,18 @@
 import { z } from 'zod'
 import { forbidden, invalid, json, notFound, readJson } from '../http'
+import { currentMembership } from '../auth'
 import {
   appendVersion,
   countWorkflows,
   createWorkflow,
   forkCountFor,
   getVersion,
+  getWorkflow,
   listVersions,
   listWorkflows,
   loadViewable,
   relationTo,
+  roleIn,
   toSummary,
   updateWorkflowMeta,
   userRef,
@@ -92,11 +95,14 @@ export function list({ db, user, url }: AuthedContext): Response {
   const q = url.searchParams.get('q') ?? ''
   const limit = Math.min(Math.max(intParam(url, 'limit') ?? WORKFLOW_PAGE.default, 1), WORKFLOW_PAGE.max)
   const offset = intParam(url, 'offset') ?? 0
-  const items = listWorkflows(db, user, scope, q, { limit, offset })
-  const total = countWorkflows(db, user, scope, q)
+  // Lists show the workspace the caller is working in (switch it to see another).
+  const workspaceId = currentMembership(user)?.workspaceId
+  if (!workspaceId) return json({ items: [], counts: { mine: 0, team: 0 }, total: 0, nextOffset: null } satisfies WorkflowList)
+  const items = listWorkflows(db, user, { scope, q, workspaceId, limit, offset })
+  const total = countWorkflows(db, user, { scope, q, workspaceId })
   const body: WorkflowList = {
     items,
-    counts: { mine: countWorkflows(db, user, 'mine', q), team: countWorkflows(db, user, 'team', q) },
+    counts: { mine: countWorkflows(db, user, { scope: 'mine', q, workspaceId }), team: countWorkflows(db, user, { scope: 'team', q, workspaceId }) },
     total,
     nextOffset: offset + items.length < total ? offset + items.length : null,
   }
@@ -104,13 +110,10 @@ export function list({ db, user, url }: AuthedContext): Response {
 }
 
 export async function create({ db, user, request }: AuthedContext): Promise<Response> {
-  // The workspace is derived from the session: the first one where the caller may create.
-  const home = user.memberships.find((m) => canCreateInWorkspace(m.role))
-  if (!home) {
-    throw forbidden(
-      user.memberships.length ? 'Viewers can run recipes but cannot create them' : 'You need to belong to a workspace to create recipes',
-    )
-  }
+  // The workspace comes from the session: the one this browser is working in.
+  const home = currentMembership(user)
+  if (!home) throw forbidden('You need to belong to a workspace to create recipes')
+  if (!canCreateInWorkspace(home.role)) throw forbidden(`Viewers can run recipes but cannot create them in ${home.workspaceName}`)
   const body = parseBody(CreateBody, await readJson(request))
   const definition = requireValid(body.definition)
   const { workflow, version } = createWorkflow(db, {
@@ -231,6 +234,27 @@ export async function fork({ db, user, params, request }: AuthedContext): Promis
     detail: { sourceVersionId: source.id, sourceVersionNumber: source.version_number, copyId: workflow.id },
   })
   return json({ workflow: toSummary(db, user, workflow, version), version: { id: version.id, number: 1 } }, { status: 201 })
+}
+
+const TransferBody = z.strictObject({ userId: z.string().min(1).max(64) })
+
+/**
+ * POST /api/workflows/:id/transfer: the owner hands the recipe to another admin
+ * or member of its workspace (a trigger enforces the same rule). A private recipe
+ * then becomes invisible to its former owner.
+ */
+export async function transfer({ db, user, params, request }: AuthedContext): Promise<Response> {
+  const { wf, rel } = loadViewable(db, user, params.id!)
+  if (!rel.isOwner) throw forbidden('Only the owner can hand a recipe over')
+  const body = parseBody(TransferBody, await readJson(request))
+  if (body.userId === user.id) throw invalid('You already own this recipe')
+  const role = roleIn(db, wf.workspace_id, body.userId)
+  if (role !== 'admin' && role !== 'member') {
+    throw invalid(`Recipes can only be handed to admins or members of ${workspaceName(db, wf.workspace_id)}`)
+  }
+  db.prepare('UPDATE workflows SET owner_id = ?, updated_at = ? WHERE id = ?').run(body.userId, new Date().toISOString(), wf.id)
+  recordEvent(db, { workspaceId: wf.workspace_id, actorId: user.id, type: 'workflow.transferred', workflowId: wf.id, detail: { fromUserId: user.id, toUserId: body.userId } })
+  return json({ workflow: toSummary(db, user, getWorkflow(db, wf.id)!) })
 }
 
 export function access({ db, user, params }: AuthedContext): Response {

@@ -10,14 +10,19 @@
 
 import { Route as rootRouteImport } from './routes/__root'
 import { Route as AppRouteImport } from './routes/_app'
+import { Route as ForgotPasswordRouteImport } from './routes/forgot-password'
 import { Route as LoginRouteImport } from './routes/login'
+import { Route as SignupRouteImport } from './routes/signup'
 import { Route as AppIndexRouteImport } from './routes/_app/index'
 import { Route as AppSplatRouteImport } from './routes/_app/$'
 import { Route as AppAccessRouteImport } from './routes/_app/access'
+import { Route as AppAccountRouteImport } from './routes/_app/account'
 import { Route as AppLibraryRouteImport } from './routes/_app/library'
 import { Route as AppRunsRouteImport } from './routes/_app/runs'
 import { Route as AppSystemDesignRouteImport } from './routes/_app/system-design'
 import { Route as ApiSplatRouteImport } from './routes/api/$'
+import { Route as InviteTokenRouteImport } from './routes/invite.$token'
+import { Route as ResetPasswordTokenRouteImport } from './routes/reset-password.$token'
 import { Route as AppWorkflowsNewRouteImport } from './routes/_app/workflows.new'
 import { Route as AppWWorkflowIdIndexRouteImport } from './routes/_app/w.$workflowId.index'
 import { Route as AppWWorkflowIdEditRouteImport } from './routes/_app/w.$workflowId.edit'
@@ -26,9 +31,19 @@ const AppRoute = AppRouteImport.update({
   id: '/_app',
   getParentRoute: () => rootRouteImport,
 } as any)
+const ForgotPasswordRoute = ForgotPasswordRouteImport.update({
+  id: '/forgot-password',
+  path: '/forgot-password',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const LoginRoute = LoginRouteImport.update({
   id: '/login',
   path: '/login',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const SignupRoute = SignupRouteImport.update({
+  id: '/signup',
+  path: '/signup',
   getParentRoute: () => rootRouteImport,
 } as any)
 const AppIndexRoute = AppIndexRouteImport.update({
@@ -44,6 +59,11 @@ const AppSplatRoute = AppSplatRouteImport.update({
 const AppAccessRoute = AppAccessRouteImport.update({
   id: '/access',
   path: '/access',
+  getParentRoute: () => AppRoute,
+} as any)
+const AppAccountRoute = AppAccountRouteImport.update({
+  id: '/account',
+  path: '/account',
   getParentRoute: () => AppRoute,
 } as any)
 const AppLibraryRoute = AppLibraryRouteImport.update({
@@ -66,6 +86,16 @@ const ApiSplatRoute = ApiSplatRouteImport.update({
   path: '/api/$',
   getParentRoute: () => rootRouteImport,
 } as any)
+const InviteTokenRoute = InviteTokenRouteImport.update({
+  id: '/invite/$token',
+  path: '/invite/$token',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const ResetPasswordTokenRoute = ResetPasswordTokenRouteImport.update({
+  id: '/reset-password/$token',
+  path: '/reset-password/$token',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const AppWorkflowsNewRoute = AppWorkflowsNewRouteImport.update({
   id: '/workflows/new',
   path: '/workflows/new',
@@ -84,25 +114,35 @@ const AppWWorkflowIdEditRoute = AppWWorkflowIdEditRouteImport.update({
 
 export interface FileRoutesByFullPath {
   '/': typeof AppIndexRoute
+  '/forgot-password': typeof ForgotPasswordRoute
   '/login': typeof LoginRoute
+  '/signup': typeof SignupRoute
   '/$': typeof AppSplatRoute
   '/access': typeof AppAccessRoute
+  '/account': typeof AppAccountRoute
   '/library': typeof AppLibraryRoute
   '/runs': typeof AppRunsRoute
   '/system-design': typeof AppSystemDesignRoute
   '/api/$': typeof ApiSplatRoute
+  '/invite/$token': typeof InviteTokenRoute
+  '/reset-password/$token': typeof ResetPasswordTokenRoute
   '/workflows/new': typeof AppWorkflowsNewRoute
   '/w/$workflowId/edit': typeof AppWWorkflowIdEditRoute
   '/w/$workflowId/': typeof AppWWorkflowIdIndexRoute
 }
 export interface FileRoutesByTo {
+  '/forgot-password': typeof ForgotPasswordRoute
   '/login': typeof LoginRoute
+  '/signup': typeof SignupRoute
   '/$': typeof AppSplatRoute
   '/access': typeof AppAccessRoute
+  '/account': typeof AppAccountRoute
   '/library': typeof AppLibraryRoute
   '/runs': typeof AppRunsRoute
   '/system-design': typeof AppSystemDesignRoute
   '/api/$': typeof ApiSplatRoute
+  '/invite/$token': typeof InviteTokenRoute
+  '/reset-password/$token': typeof ResetPasswordTokenRoute
   '/': typeof AppIndexRoute
   '/workflows/new': typeof AppWorkflowsNewRoute
   '/w/$workflowId/edit': typeof AppWWorkflowIdEditRoute
@@ -111,13 +151,18 @@ export interface FileRoutesByTo {
 export interface FileRoutesById {
   __root__: typeof rootRouteImport
   '/_app': typeof AppRouteWithChildren
+  '/forgot-password': typeof ForgotPasswordRoute
   '/login': typeof LoginRoute
+  '/signup': typeof SignupRoute
   '/_app/$': typeof AppSplatRoute
   '/_app/access': typeof AppAccessRoute
+  '/_app/account': typeof AppAccountRoute
   '/_app/library': typeof AppLibraryRoute
   '/_app/runs': typeof AppRunsRoute
   '/_app/system-design': typeof AppSystemDesignRoute
   '/api/$': typeof ApiSplatRoute
+  '/invite/$token': typeof InviteTokenRoute
+  '/reset-password/$token': typeof ResetPasswordTokenRoute
   '/_app/': typeof AppIndexRoute
   '/_app/workflows/new': typeof AppWorkflowsNewRoute
   '/_app/w/$workflowId/edit': typeof AppWWorkflowIdEditRoute
@@ -127,25 +172,35 @@ export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
   fullPaths:
     | '/'
+    | '/forgot-password'
     | '/login'
+    | '/signup'
     | '/$'
     | '/access'
+    | '/account'
     | '/library'
     | '/runs'
     | '/system-design'
     | '/api/$'
+    | '/invite/$token'
+    | '/reset-password/$token'
     | '/workflows/new'
     | '/w/$workflowId/edit'
     | '/w/$workflowId/'
   fileRoutesByTo: FileRoutesByTo
   to:
+    | '/forgot-password'
     | '/login'
+    | '/signup'
     | '/$'
     | '/access'
+    | '/account'
     | '/library'
     | '/runs'
     | '/system-design'
     | '/api/$'
+    | '/invite/$token'
+    | '/reset-password/$token'
     | '/'
     | '/workflows/new'
     | '/w/$workflowId/edit'
@@ -153,13 +208,18 @@ export interface FileRouteTypes {
   id:
     | '__root__'
     | '/_app'
+    | '/forgot-password'
     | '/login'
+    | '/signup'
     | '/_app/$'
     | '/_app/access'
+    | '/_app/account'
     | '/_app/library'
     | '/_app/runs'
     | '/_app/system-design'
     | '/api/$'
+    | '/invite/$token'
+    | '/reset-password/$token'
     | '/_app/'
     | '/_app/workflows/new'
     | '/_app/w/$workflowId/edit'
@@ -168,8 +228,12 @@ export interface FileRouteTypes {
 }
 export interface RootRouteChildren {
   AppRoute: typeof AppRouteWithChildren
+  ForgotPasswordRoute: typeof ForgotPasswordRoute
   LoginRoute: typeof LoginRoute
+  SignupRoute: typeof SignupRoute
   ApiSplatRoute: typeof ApiSplatRoute
+  InviteTokenRoute: typeof InviteTokenRoute
+  ResetPasswordTokenRoute: typeof ResetPasswordTokenRoute
 }
 
 declare module '@tanstack/react-router' {
@@ -181,11 +245,25 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof AppRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/forgot-password': {
+      id: '/forgot-password'
+      path: '/forgot-password'
+      fullPath: '/forgot-password'
+      preLoaderRoute: typeof ForgotPasswordRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/login': {
       id: '/login'
       path: '/login'
       fullPath: '/login'
       preLoaderRoute: typeof LoginRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/signup': {
+      id: '/signup'
+      path: '/signup'
+      fullPath: '/signup'
+      preLoaderRoute: typeof SignupRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/_app/': {
@@ -207,6 +285,13 @@ declare module '@tanstack/react-router' {
       path: '/access'
       fullPath: '/access'
       preLoaderRoute: typeof AppAccessRouteImport
+      parentRoute: typeof AppRoute
+    }
+    '/_app/account': {
+      id: '/_app/account'
+      path: '/account'
+      fullPath: '/account'
+      preLoaderRoute: typeof AppAccountRouteImport
       parentRoute: typeof AppRoute
     }
     '/_app/library': {
@@ -237,6 +322,20 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof ApiSplatRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/invite/$token': {
+      id: '/invite/$token'
+      path: '/invite/$token'
+      fullPath: '/invite/$token'
+      preLoaderRoute: typeof InviteTokenRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/reset-password/$token': {
+      id: '/reset-password/$token'
+      path: '/reset-password/$token'
+      fullPath: '/reset-password/$token'
+      preLoaderRoute: typeof ResetPasswordTokenRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/_app/workflows/new': {
       id: '/_app/workflows/new'
       path: '/workflows/new'
@@ -264,6 +363,7 @@ declare module '@tanstack/react-router' {
 interface AppRouteChildren {
   AppSplatRoute: typeof AppSplatRoute
   AppAccessRoute: typeof AppAccessRoute
+  AppAccountRoute: typeof AppAccountRoute
   AppLibraryRoute: typeof AppLibraryRoute
   AppRunsRoute: typeof AppRunsRoute
   AppSystemDesignRoute: typeof AppSystemDesignRoute
@@ -276,6 +376,7 @@ interface AppRouteChildren {
 const AppRouteChildren: AppRouteChildren = {
   AppSplatRoute: AppSplatRoute,
   AppAccessRoute: AppAccessRoute,
+  AppAccountRoute: AppAccountRoute,
   AppLibraryRoute: AppLibraryRoute,
   AppRunsRoute: AppRunsRoute,
   AppSystemDesignRoute: AppSystemDesignRoute,
@@ -289,8 +390,12 @@ const AppRouteWithChildren = AppRoute._addFileChildren(AppRouteChildren)
 
 const rootRouteChildren: RootRouteChildren = {
   AppRoute: AppRouteWithChildren,
+  ForgotPasswordRoute: ForgotPasswordRoute,
   LoginRoute: LoginRoute,
+  SignupRoute: SignupRoute,
   ApiSplatRoute: ApiSplatRoute,
+  InviteTokenRoute: InviteTokenRoute,
+  ResetPasswordTokenRoute: ResetPasswordTokenRoute,
 }
 export const routeTree = rootRouteImport
   ._addFileChildren(rootRouteChildren)

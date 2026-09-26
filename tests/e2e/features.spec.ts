@@ -16,7 +16,7 @@ async function signIn(page: Page, name: 'Asha' | 'Vikram' | 'Meera') {
   await page.context().clearCookies()
   await open(page, '/login')
   await page.getByRole('button', { name: new RegExp(`^${name}\\b`) }).click()
-  await expect(page.getByRole('heading', { name: new RegExp(`Welcome back, ${name}`) })).toBeVisible()
+  await expect(page.getByRole('heading', { name: new RegExp(`Welcome, ${name}`) })).toBeVisible()
 }
 
 /** Creates a recipe as the signed-in user and returns its id and first version id. */
@@ -204,7 +204,7 @@ test('command palette, theme, roles, my runs and the mobile drawer all work', as
   await page.getByRole('button', { name: 'Open menu' }).click()
   await page.getByRole('navigation', { name: 'Main' }).getByRole('link', { name: 'System design' }).click()
   await expect(page.getByText('Live schema and triggers')).toBeVisible()
-  await expect(page.getByText('12 triggers')).toBeVisible()
+  await expect(page.getByText('13 triggers')).toBeVisible()
   expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBeLessThanOrEqual(390)
 })
 
@@ -226,29 +226,31 @@ const BY_REGION = {
   steps: [BY_REP.steps[0], { id: 's2', type: 'group_sum', groupBy: 'region', valueColumn: 'amount', as: 'total' }],
 }
 
-test('switching versions re-checks the chosen file against that version', async ({ page }) => {
+test('switching versions keeps the chosen file and re-checks it against that version', async ({ page }) => {
   await signIn(page, 'Asha')
   const { id, versionId: v1 } = await createRecipe(page, 'QA version switch', BY_REP)
   const origin = new URL(page.url()).origin
   const saved = await page.request.post(`/api/workflows/${id}/versions`, { headers: { origin }, data: { definition: BY_REGION } })
   const v2 = (await saved.json()).version.id as string
-
-  // v2 first, so it is cached when we come back to it (the case that used to go stale).
-  await open(page, `/w/${id}`)
-  await page.getByLabel('Version').selectOption(v1)
-  await page.locator('#run-file').setInputFiles({ name: 'no_region.csv', mimeType: 'text/csv', buffer: Buffer.from('status,sales_rep,amount\npaid,Ravi,100\n') })
-  await expect(page.getByText('Header check')).toBeVisible()
   const run = page.getByRole('button', { name: 'Run recipe' })
+
+  // On v2 (latest), a file without "region" can't run.
+  await open(page, `/w/${id}`)
+  await page.locator('#run-file').setInputFiles({ name: 'no_region.csv', mimeType: 'text/csv', buffer: Buffer.from('status,sales_rep,amount\npaid,Ravi,100\n') })
+  await expect(page.getByText('Missing required column: region')).toBeVisible()
+  await expect(run).toBeDisabled()
+
+  // v1 isn't loaded yet: the page (and the file) stay while it loads, then the file is re-checked.
+  await page.getByLabel('Version').selectOption(v1)
+  await expect(page.getByText("You're viewing version 1")).toBeVisible()
+  await expect(page.getByText('no_region.csv')).toBeVisible()
+  await expect(page.getByText('Missing required column: region')).toHaveCount(0)
   await expect(run).toBeEnabled()
 
+  // Back to v2, now cached: the check follows immediately.
   await page.getByLabel('Version').selectOption(v2)
   await expect(page.getByText('Missing required column: region')).toBeVisible()
   await expect(run).toBeDisabled()
-  await expect(page.getByText('no_region.csv')).toBeVisible() // the file stays chosen
-
-  await page.getByLabel('Version').selectOption(v1)
-  await expect(page.getByText('Missing required column: region')).toHaveCount(0)
-  await expect(run).toBeEnabled()
 })
 
 test('the run panel refuses a file that is not UTF-8 before anything is uploaded', async ({ page }) => {
@@ -297,7 +299,7 @@ test('wide tables scroll inside their card: no page scrolls sideways on a phone,
   expect(result!.x + result!.width).toBeLessThanOrEqual(panel!.x)
 
   await page.setViewportSize({ width: 390, height: 844 })
-  for (const path of ['/', '/library', '/runs', '/access', '/system-design', '/workflows/new', page.url().replace(/^https?:\/\/[^/]+/, ''), `/w/${id}/edit`]) {
+  for (const path of ['/', '/library', '/runs', '/access', '/account', '/system-design', '/workflows/new', page.url().replace(/^https?:\/\/[^/]+/, ''), `/w/${id}/edit`]) {
     await open(page, path)
     await page.waitForLoadState('networkidle')
     expect(await page.evaluate(() => document.documentElement.scrollWidth), path).toBeLessThanOrEqual(390)

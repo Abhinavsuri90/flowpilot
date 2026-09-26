@@ -1,4 +1,5 @@
 import { json } from '../http'
+import { currentMembership } from '../auth'
 import { countWorkflows, listRuns, reapStaleRuns, toRunSummary } from '../repo'
 import { listActivity } from '../events'
 import { modelStatus } from '../ai/config'
@@ -12,25 +13,32 @@ export function get({ db, user }: AuthedContext): Response {
   reapStaleRuns(db)
   const now = Date.now()
   const since7 = new Date(now - 7 * DAY).toISOString()
+  // Recipe numbers and activity are for the workspace in use; runs are personal.
+  const workspaceId = currentMembership(user)?.workspaceId ?? null
 
   const myRuns7d = db.prepare('SELECT COUNT(*) FROM runs WHERE runner_id = ? AND created_at >= ?').pluck().get(user.id, since7) as number
   const succeeded7d = db
     .prepare(`SELECT COUNT(*) FROM runs WHERE runner_id = ? AND created_at >= ? AND status = 'succeeded'`)
     .pluck()
     .get(user.id, since7) as number
-  const sharedByMe = db.prepare(`SELECT COUNT(*) FROM workflows WHERE owner_id = ? AND visibility = 'team'`).pluck().get(user.id) as number
+  const sharedByMe = db
+    .prepare(`SELECT COUNT(*) FROM workflows WHERE owner_id = ? AND workspace_id IS ? AND visibility = 'team'`)
+    .pluck()
+    .get(user.id, workspaceId) as number
   // Copies other people made of my recipes: a count only, never who or what.
   const copiesOfMine = db
     .prepare(
       `SELECT COUNT(*) FROM workflows f
          JOIN workflow_versions v ON v.id = f.forked_from_version_id
          JOIN workflows src ON src.id = v.workflow_id
-        WHERE src.owner_id = @me AND f.owner_id <> @me`,
+        WHERE src.owner_id = @me AND f.owner_id <> @me AND src.workspace_id IS @ws`,
     )
     .pluck()
-    .get({ me: user.id }) as number
-  const createdAny = (db.prepare('SELECT COUNT(*) FROM workflows WHERE owner_id = ? AND is_example = 0').pluck().get(user.id) as number) > 0
+    .get({ me: user.id, ws: workspaceId }) as number
+  const createdAny =
+    (db.prepare('SELECT COUNT(*) FROM workflows WHERE owner_id = ? AND workspace_id IS ? AND is_example = 0').pluck().get(user.id, workspaceId) as number) > 0
   const ranAny = (db.prepare('SELECT COUNT(*) FROM runs WHERE runner_id = ?').pluck().get(user.id) as number) > 0
+  const teamSize = workspaceId ? (db.prepare('SELECT COUNT(*) FROM workspace_members WHERE workspace_id = ?').pluck().get(workspaceId) as number) : 0
 
   // 14 UTC days, oldest first.
   const today = new Date(now)
@@ -51,18 +59,18 @@ export function get({ db, user }: AuthedContext): Response {
 
   const body: Dashboard = {
     stats: {
-      myRecipes: countWorkflows(db, user, 'mine'),
+      myRecipes: workspaceId ? countWorkflows(db, user, { scope: 'mine', workspaceId }) : 0,
       sharedByMe,
-      teamRecipes: countWorkflows(db, user, 'team'),
+      teamRecipes: workspaceId ? countWorkflows(db, user, { scope: 'team', workspaceId }) : 0,
       myRuns7d,
       succeeded7d,
       copiesOfMine,
     },
     runsByDay,
     recentRuns: listRuns(db, user.id, { limit: 6 }).map((run) => toRunSummary(db, user, run)),
-    activity: listActivity(db, user, 12),
+    activity: listActivity(db, user, workspaceId, 12),
     model: modelStatus(),
-    checklist: { created: createdAny, ran: ranAny, shared: sharedByMe > 0, copied: copiesOfMine > 0 },
+    checklist: { created: createdAny, ran: ranAny, shared: sharedByMe > 0, copied: copiesOfMine > 0, invited: teamSize > 1 },
   }
   return json(body)
 }

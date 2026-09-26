@@ -152,7 +152,7 @@ describe.sequential('the demo loop', () => {
     expect(JSON.stringify(dashboard)).not.toContain(copyId)
     expect(texts.some((t: string) => t.startsWith('Vikram Nair ran'))).toBe(false)
     expect(dashboard.stats).toMatchObject({ myRecipes: 1, sharedByMe: 1, copiesOfMine: 1, myRuns7d: 2, succeeded7d: 2 })
-    expect(dashboard.checklist).toEqual({ created: true, ran: true, shared: true, copied: true })
+    expect(dashboard.checklist).toEqual({ created: true, ran: true, shared: true, copied: true, invited: true })
 
     const vikramFeed = (await vikram.get('/api/dashboard')).body.activity.map((a: { text: string }) => a.text)
     expect(vikramFeed).toContain('You made a private copy of Regional revenue exceptions v1 as Rep revenue exceptions')

@@ -40,8 +40,9 @@ export async function seedDatabase(db: DB, opts: { password?: string } = {}): Pr
     const insertWorkspace = db.prepare('INSERT INTO workspaces (id, name) VALUES (?, ?)')
     for (const [name, id] of Object.entries(result.workspaces)) insertWorkspace.run(id, name)
 
+    // Demo accounts are shared, so they can't change their password, name or memberships.
     const insertUser = db.prepare(
-      'INSERT INTO users (id, email, display_name, password_hash, avatar_hue) VALUES (?, ?, ?, ?, ?)',
+      'INSERT INTO users (id, email, display_name, password_hash, avatar_hue, is_demo) VALUES (?, ?, ?, ?, ?, 1)',
     )
     const insertMember = db.prepare('INSERT INTO workspace_members (workspace_id, user_id, role) VALUES (?, ?, ?)')
     DEMO_PEOPLE.forEach((person, i) => {

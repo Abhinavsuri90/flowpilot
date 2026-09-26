@@ -14,9 +14,17 @@ export type EventType =
   | 'workflow.shared'
   | 'workflow.unshared'
   | 'workflow.forked'
+  | 'workflow.transferred'
   | 'run.succeeded'
   | 'run.failed'
   | 'role.changed'
+  | 'workspace.created'
+  | 'workspace.renamed'
+  | 'member.joined'
+  | 'member.left'
+  | 'member.removed'
+  | 'invite.created'
+  | 'invite.revoked'
 
 export function recordEvent(
   db: DB,
@@ -51,26 +59,28 @@ const ACTIVITY_BATCH = 200
 /** Upper bound on events read per feed, however little of it is relevant. */
 const ACTIVITY_MAX_SCANNED = 2_000
 
-export function listActivity(db: DB, viewer: { id: string }, limit = 12): ActivityItem[] {
+/** The activity feed of one workspace, as the viewer is allowed to see it. */
+export function listActivity(db: DB, viewer: { id: string }, workspaceId: string | null, limit = 12): ActivityItem[] {
+  if (!workspaceId) return []
   // Rules that need no lookups run in SQL (other people's runs are private; a copy
-  // is news only to its maker and the source owner), so a busy workspace can't
-  // push everything relevant out of the window. The rest is checked per row,
-  // reading further back in batches until the feed is full.
+  // is news only to its maker and the source owner; invites are for admins), so a
+  // busy workspace can't push everything relevant out of the window. The rest is
+  // checked per row, reading further back in batches until the feed is full.
+  const isAdmin = roleOf(db, workspaceId, viewer.id) === 'admin' ? 1 : 0
   const page = db.prepare(
     `SELECT * FROM events
       WHERE id < @before
-        AND (workspace_id IN (SELECT workspace_id FROM workspace_members WHERE user_id = @me)
-             OR actor_id = @me
-             OR workflow_id IN (SELECT id FROM workflows WHERE owner_id = @me))
+        AND workspace_id = @ws
         AND (type NOT IN ('run.succeeded', 'run.failed') OR actor_id = @me)
         AND (type <> 'workflow.forked' OR actor_id = @me OR workflow_id IN (SELECT id FROM workflows WHERE owner_id = @me))
+        AND (type NOT IN ('invite.created', 'invite.revoked') OR @admin = 1)
       ORDER BY id DESC
       LIMIT @batch`,
   )
   const items: ActivityItem[] = []
   let before = Number.MAX_SAFE_INTEGER
   for (let scanned = 0; items.length < limit && scanned < ACTIVITY_MAX_SCANNED; ) {
-    const rows = page.all({ me: viewer.id, before, batch: ACTIVITY_BATCH }) as EventRow[]
+    const rows = page.all({ me: viewer.id, ws: workspaceId, admin: isAdmin, before, batch: ACTIVITY_BATCH }) as EventRow[]
     for (const row of rows) {
       const item = describeEvent(db, viewer, row)
       if (item) items.push(item)
@@ -116,6 +126,30 @@ function describeEvent(db: DB, viewer: { id: string }, row: EventRow): ActivityI
     return { ...base, text: `${who} changed ${target} role to ${String(detail.to)} in ${workspaceName(db, row.workspace_id)}` }
   }
 
+  // Workspace events: only for current members.
+  if (row.type.startsWith('workspace.') || row.type.startsWith('member.') || row.type.startsWith('invite.')) {
+    if (!roleOf(db, row.workspace_id, viewer.id)) return null
+    const target = typeof detail.targetUserId === 'string' ? (detail.targetUserId === viewer.id ? 'you' : userRef(db, detail.targetUserId).name) : 'someone'
+    switch (row.type) {
+      case 'workspace.created':
+        return { ...base, text: `${who} created the workspace ${String(detail.name ?? workspaceName(db, row.workspace_id))}` }
+      case 'workspace.renamed':
+        return { ...base, text: `${who} renamed the workspace to ${String(detail.to)}` }
+      case 'member.joined':
+        return { ...base, text: `${who} joined ${workspaceName(db, row.workspace_id)} as ${String(detail.role)}` }
+      case 'member.left':
+        return { ...base, text: `${who} left ${workspaceName(db, row.workspace_id)}` }
+      case 'member.removed':
+        return { ...base, text: `${who} removed ${target} from ${workspaceName(db, row.workspace_id)}` }
+      case 'invite.created':
+        return { ...base, text: `${who} created an invite link for ${detail.email ? String(detail.email) : 'anyone with the link'} (${String(detail.role)})` }
+      case 'invite.revoked':
+        return { ...base, text: `${who} revoked an invite link` }
+      default:
+        return null
+    }
+  }
+
   const wf = row.workflow_id ? getWorkflow(db, row.workflow_id) : undefined
   if (!wf) return null
 
@@ -149,6 +183,11 @@ function describeEvent(db: DB, viewer: { id: string }, row: EventRow): ActivityI
       return { ...base, text: `${who} made ${wf.title} private`, workflowId: wf.id }
     case 'workflow.updated':
       return { ...base, text: `${who} updated the details of ${wf.title}`, workflowId: wf.id }
+    case 'workflow.transferred': {
+      const toId = String(detail.toUserId ?? '')
+      const to = toId === viewer.id ? 'you' : userRef(db, toId).name
+      return { ...base, text: `${who} handed ${wf.title} over to ${to}`, workflowId: wf.id }
+    }
     default:
       return null
   }

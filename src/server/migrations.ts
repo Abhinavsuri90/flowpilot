@@ -210,4 +210,70 @@ END;
     // Expired sessions are purged on every sign-in.
     sql: `CREATE INDEX sessions_expiry_idx ON sessions(expires_at);`,
   },
+  {
+    id: 3,
+    name: 'accounts_and_teams',
+    sql: /* sql */ `
+-- The workspace a signed-in browser is working in, plus what the account page shows.
+ALTER TABLE sessions ADD COLUMN workspace_id TEXT REFERENCES workspaces(id) ON DELETE SET NULL;
+ALTER TABLE sessions ADD COLUMN user_agent TEXT CHECK (user_agent IS NULL OR length(user_agent) <= 300);
+ALTER TABLE sessions ADD COLUMN last_seen_at TEXT;
+
+-- Shared demo accounts can't have their password, name or membership changed.
+ALTER TABLE users ADD COLUMN is_demo INTEGER NOT NULL DEFAULT 0 CHECK (is_demo IN (0,1));
+UPDATE users SET is_demo = 1 WHERE email LIKE '%@demo.local';
+
+-- Invitations. Only a hash of the link's token is stored, like sessions.
+CREATE TABLE invites (
+  id           TEXT PRIMARY KEY,
+  workspace_id TEXT NOT NULL REFERENCES workspaces(id) ON DELETE CASCADE,
+  token_hash   TEXT NOT NULL UNIQUE CHECK (length(token_hash) = 64),
+  role         TEXT NOT NULL CHECK (role IN ('admin','member','viewer')),
+  email        TEXT COLLATE NOCASE CHECK (email IS NULL OR length(email) BETWEEN 3 AND 254),
+  created_by   TEXT NOT NULL REFERENCES users(id),
+  created_at   TEXT NOT NULL DEFAULT ${NOW},
+  expires_at   TEXT NOT NULL,
+  max_uses     INTEGER NOT NULL CHECK (max_uses BETWEEN 1 AND 1000),
+  uses         INTEGER NOT NULL DEFAULT 0 CHECK (uses >= 0),
+  revoked_at   TEXT,
+  CHECK (uses <= max_uses),
+  CHECK (email IS NULL OR max_uses = 1)
+) STRICT;
+CREATE INDEX invites_workspace_idx ON invites(workspace_id, created_at);
+
+-- Password reset links: single use, short-lived, hash only.
+CREATE TABLE password_resets (
+  token_hash TEXT PRIMARY KEY CHECK (length(token_hash) = 64),
+  user_id    TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  created_at TEXT NOT NULL DEFAULT ${NOW},
+  expires_at TEXT NOT NULL,
+  used_at    TEXT
+) STRICT;
+CREATE INDEX password_resets_user_idx ON password_resets(user_id);
+
+-- A recipe's workspace and fork source never change. Ownership may move, but
+-- only to an admin or member of the same workspace (when someone leaves, their
+-- recipes stay with the team).
+DROP TRIGGER workflows_identity_immutable;
+CREATE TRIGGER workflows_identity_immutable
+BEFORE UPDATE ON workflows
+WHEN NEW.workspace_id IS NOT OLD.workspace_id
+  OR NEW.forked_from_version_id IS NOT OLD.forked_from_version_id
+  OR NEW.created_at IS NOT OLD.created_at
+BEGIN
+  SELECT RAISE(ABORT, 'workspace and fork source of a recipe cannot change');
+END;
+
+CREATE TRIGGER workflows_owner_transfer
+BEFORE UPDATE OF owner_id ON workflows
+WHEN NEW.owner_id IS NOT OLD.owner_id
+  AND NOT EXISTS (
+    SELECT 1 FROM workspace_members m
+     WHERE m.workspace_id = NEW.workspace_id AND m.user_id = NEW.owner_id AND m.role IN ('admin','member')
+  )
+BEGIN
+  SELECT RAISE(ABORT, 'a recipe can only be transferred to an admin or member of its workspace');
+END;
+`,
+  },
 ]

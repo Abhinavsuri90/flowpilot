@@ -608,3 +608,182 @@ export function Tip({ content, children, side = 'top' }: { content: React.ReactN
     </span>
   )
 }
+
+// ---------------------------------------------------------------------------
+// Menu: a button that opens a list of actions (WAI-ARIA menu button pattern).
+// Arrow keys move, Escape or a click outside closes, focus returns to the button.
+// ---------------------------------------------------------------------------
+
+type MenuContextValue = { close: () => void }
+const MenuContext = React.createContext<MenuContextValue>({ close: () => {} })
+
+export function Menu({
+  label,
+  trigger,
+  children,
+  side = 'bottom',
+  align = 'start',
+  className,
+  panelClassName,
+}: {
+  /** Accessible name of the menu button. */
+  label: string
+  /** The button's content. */
+  trigger: React.ReactNode
+  children: React.ReactNode
+  side?: 'top' | 'bottom'
+  align?: 'start' | 'end'
+  className?: string
+  panelClassName?: string
+}) {
+  const [open, setOpen] = React.useState(false)
+  const rootRef = React.useRef<HTMLDivElement>(null)
+  const buttonRef = React.useRef<HTMLButtonElement>(null)
+  const listRef = React.useRef<HTMLDivElement>(null)
+  const menuId = React.useId()
+
+  const items = () =>
+    Array.from(
+      listRef.current?.querySelectorAll<HTMLElement>(
+        '[role="menuitem"]:not([aria-disabled="true"]),[role="menuitemradio"]:not([aria-disabled="true"])',
+      ) ?? [],
+    )
+  const close = React.useCallback((focusButton = true) => {
+    setOpen(false)
+    if (focusButton) buttonRef.current?.focus()
+  }, [])
+
+  React.useEffect(() => {
+    if (!open) return
+    items()[0]?.focus()
+    const onPointer = (e: PointerEvent) => {
+      if (!rootRef.current?.contains(e.target as Node)) close(false)
+    }
+    document.addEventListener('pointerdown', onPointer)
+    return () => document.removeEventListener('pointerdown', onPointer)
+  }, [open, close])
+
+  const onKeyDown = (e: React.KeyboardEvent) => {
+    const list = items()
+    const index = list.indexOf(document.activeElement as HTMLElement)
+    if (e.key === 'Escape') {
+      e.preventDefault()
+      e.stopPropagation()
+      close()
+    } else if (e.key === 'ArrowDown') {
+      e.preventDefault()
+      list[(index + 1) % list.length]?.focus()
+    } else if (e.key === 'ArrowUp') {
+      e.preventDefault()
+      list[(index - 1 + list.length) % list.length]?.focus()
+    } else if (e.key === 'Home' || e.key === 'End') {
+      e.preventDefault()
+      list[e.key === 'Home' ? 0 : list.length - 1]?.focus()
+    } else if (e.key === 'Tab') {
+      close(false)
+    }
+  }
+
+  return (
+    <div ref={rootRef} className={cn('relative', className)}>
+      <button
+        ref={buttonRef}
+        type="button"
+        aria-haspopup="menu"
+        aria-expanded={open}
+        aria-controls={open ? menuId : undefined}
+        aria-label={label}
+        onClick={() => setOpen((o) => !o)}
+        onKeyDown={(e) => {
+          if ((e.key === 'ArrowDown' || e.key === 'ArrowUp') && !open) {
+            e.preventDefault()
+            setOpen(true)
+          }
+        }}
+        className="block w-full text-left"
+      >
+        {trigger}
+      </button>
+      {open && (
+        <MenuContext.Provider value={{ close }}>
+          <div
+            ref={listRef}
+            id={menuId}
+            role="menu"
+            aria-label={label}
+            onKeyDown={onKeyDown}
+            className={cn(
+              'animate-pop absolute z-50 min-w-56 overflow-hidden rounded-xl border border-line bg-surface p-1 shadow-lift',
+              side === 'bottom' ? 'top-full mt-1.5' : 'bottom-full mb-1.5',
+              align === 'start' ? 'left-0' : 'right-0',
+              panelClassName,
+            )}
+          >
+            {children}
+          </div>
+        </MenuContext.Provider>
+      )}
+    </div>
+  )
+}
+
+export function MenuItem({
+  onSelect,
+  children,
+  icon,
+  disabled,
+  hint,
+  checked,
+  tone,
+}: {
+  onSelect: () => void
+  children: React.ReactNode
+  icon?: React.ReactNode
+  disabled?: boolean
+  hint?: React.ReactNode
+  /** Marks the current choice in a list (e.g. the workspace in use). */
+  checked?: boolean
+  tone?: 'danger'
+}) {
+  const { close } = React.useContext(MenuContext)
+  return (
+    <div
+      role={checked === undefined ? 'menuitem' : 'menuitemradio'}
+      aria-checked={checked}
+      aria-disabled={disabled || undefined}
+      tabIndex={-1}
+      onClick={() => {
+        if (disabled) return
+        close()
+        onSelect()
+      }}
+      onKeyDown={(e) => {
+        if ((e.key === 'Enter' || e.key === ' ') && !disabled) {
+          e.preventDefault()
+          close()
+          onSelect()
+        }
+      }}
+      className={cn(
+        'flex cursor-pointer items-center gap-2.5 rounded-lg px-2.5 py-2 text-[13.5px] outline-none select-none [&_svg]:size-4 [&_svg]:shrink-0',
+        tone === 'danger' ? 'text-bad-ink' : 'text-ink',
+        disabled ? 'cursor-not-allowed opacity-50' : 'hover:bg-sunken focus:bg-sunken',
+      )}
+    >
+      {icon && <span className={tone === 'danger' ? '' : 'text-muted'}>{icon}</span>}
+      <span className="min-w-0 flex-1">
+        <span className="block truncate">{children}</span>
+        {hint && <span className="block truncate text-[12px] text-muted">{hint}</span>}
+      </span>
+      {checked && <CheckCircle2 className="text-brand" aria-hidden />}
+    </div>
+  )
+}
+
+export function MenuSeparator() {
+  return <div role="separator" className="my-1 h-px bg-line" />
+}
+
+export function MenuLabel({ children }: { children: React.ReactNode }) {
+  return <div className="px-2.5 pt-1.5 pb-1 text-[11px] font-medium tracking-wide text-faint uppercase">{children}</div>
+}
