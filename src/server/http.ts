@@ -114,6 +114,9 @@ export async function readJson(request: Request): Promise<unknown> {
   }
 }
 
+/** Strict-Transport-Security for responses served over HTTPS (one year). */
+export const HSTS = 'max-age=31536000; includeSubDomains'
+
 export function isSecureRequest(request: Request): boolean {
   const forwarded = request.headers.get('x-forwarded-proto')
   if (forwarded) return forwarded.split(',')[0]!.trim() === 'https'

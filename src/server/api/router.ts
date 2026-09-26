@@ -2,7 +2,7 @@ import { getDb } from '../db'
 import { userFromRequest } from '../auth'
 import { loadEnv } from '../env'
 import { ensureReady } from '../boot'
-import { ApiError, errorResponse, json, noContent, unauthorized } from '../http'
+import { ApiError, HSTS, errorResponse, isSecureRequest, json, noContent, unauthorized } from '../http'
 import type { ApiContext, AuthedContext } from './context'
 import * as auth from './auth'
 import * as workflows from './workflows'
@@ -157,6 +157,7 @@ export async function handleApi(request: Request): Promise<Response> {
   await ensureReady()
   const isHead = request.method.toUpperCase() === 'HEAD'
   const response = await dispatch(request, isHead ? 'GET' : request.method.toUpperCase())
+  if (isSecureRequest(request)) response.headers.set('Strict-Transport-Security', HSTS)
   // HEAD: the GET response's status and headers, without the body.
   return isHead ? new Response(null, { status: response.status, headers: response.headers }) : response
 }

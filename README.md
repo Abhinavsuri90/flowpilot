@@ -288,14 +288,14 @@ Status codes: 401 not signed in · 403 visible but not yours, a cross-site write
 ## Testing
 
 ```bash
-npm test                          # 133 unit and API tests
+npm test                          # 134 unit and API tests
 npx playwright install chromium   # once
 npm run test:e2e                  # 26 browser tests
 npm run typecheck
 npm run smoke                     # every endpoint and error code against a running server (--base <url>)
 ```
 
-- **Unit and API tests (Vitest), 129 in total:** engine 13, CSV 18, validator 13, access 20, demo loop 12, AI 10, hardening 12 (HTTP methods, redirects, sessions, no-op edits, the activity feed on a busy team, list paging and run counts), accounts 17 (sign-up modes and rules, invitations, password resets, account settings, workspaces, removal and hand-over), language 14 (summaries and exact rounding, sort, top N, column choices, *contains* and *is one of*, whole numbers, validation messages, the seeded examples, a top-N run and CSV export through the API), governance 4 (archive and restore, the audit log's privacy rules, filters, paging and CSV). They call the same `handleApi(Request)` the server uses, with real session cookies, against an in-memory SQLite database, so access rules are tested end to end rather than mocked. The model is always stubbed, and the tests never read `.env`.
+- **Unit and API tests (Vitest), 134 in total:** engine 13, CSV 18, validator 13, access 20, demo loop 12, AI 10, hardening 13 (HTTP methods, HSTS, redirects, sessions, no-op edits, the activity feed on a busy team, list paging and run counts), accounts 17 (sign-up modes and rules, invitations, password resets, account settings, workspaces, removal and hand-over), language 14 (summaries and exact rounding, sort, top N, column choices, *contains* and *is one of*, whole numbers, validation messages, the seeded examples, a top-N run and CSV export through the API), governance 4 (archive and restore, the audit log's privacy rules, filters, paging and CSV). They call the same `handleApi(Request)` the server uses, with real session cookies, against an in-memory SQLite database, so access rules are tested end to end rather than mocked. The model is always stubbed, and the tests never read `.env`.
 - **Browser tests (Playwright), 26 in total:**
   - `demo.spec.ts` (4) is the demo above.
   - `features.spec.ts` (15) covers the rest: the editor's value warning, an invalid AI draft and a clarifying question, Advanced JSON, in-browser file checks, samples and parameters, details-only saves and versions, runs from another recipe, large results, CSV escaping, the command palette, theme, roles, *Delete my results*, the mobile drawer, re-checking a file when the version changes, refusing a non-UTF-8 file, the in-app 404, wide tables at phone width, library paging, an AI-drafted top-N summary edited with the new step cards and run, and archiving plus the audit log.
@@ -325,15 +325,34 @@ npm run smoke                     # every endpoint and error code against a runn
 
 ## Deployment
 
+FlowPilot is one Node process plus one SQLite file, so it needs a platform with a **persistent volume**. The repository ships a production `Dockerfile` and a ready `fly.toml` for **Fly.io** (region `bom`, Mumbai, close to its Indian users).
+
 ```bash
-npm run build        # Nitro output in .output/
-npm start            # node .output/server/index.mjs (PORT defaults to 3000)
+# once: install flyctl (brew install flyctl) and sign in
+fly auth login
+fly launch --no-deploy --copy-config --name <your-app>    # then set APP_URL in fly.toml to https://<your-app>.fly.dev
+fly volumes create flowpilot_data --region bom --size 1
+fly secrets set OPENROUTER_API_KEY=<key>                  # optional: AI drafting (runs work without it)
+fly deploy
+npm run smoke -- --base https://<your-app>.fly.dev        # 71 checks against the live app
 ```
 
-- Serve it over **HTTPS**; session cookies become `Secure` automatically.
-- Keep `DATABASE_PATH` on a **persistent disk**. The server is a single process, because SQLite has a single writer.
-- Seed once with a private `SEED_PASSWORD`, or replace the demo accounts; there are no sign-ups yet.
-- Point your platform's health check at **`/api/health`**.
+What the configuration does:
+
+- **HTTPS only** (`force_https`); session cookies become `Secure`, and responses carry `Strict-Transport-Security`.
+- **SQLite on the volume** at `/data/flowpilot.db`, with migrations on start. One machine, because SQLite has a single writer. Fly snapshots volumes daily.
+- **Idle machines stop** and wake on the next request, and `/api/health` is checked every 30 seconds.
+- **`TRUST_PROXY=true`**, so rate limits count each visitor's own address (`Fly-Client-IP`).
+- **Public showcase settings:** `DEMO_MODE=true` (one-click demo accounts, locked against changes, seeded into the empty database) and `REGISTRATION=open`. For a single company, set `DEMO_MODE=false` and `REGISTRATION=invite-only`.
+
+Any other Docker host works the same way:
+
+```bash
+docker build -t flowpilot .
+docker run -p 3000:3000 -v flowpilot-data:/data -e DEMO_MODE=true flowpilot
+```
+
+The container runs as the unprivileged `node` user. Without Docker, `npm run build && npm start` serves `.output/`. Point your platform's health check at `/api/health`, keep `DATABASE_PATH` on a persistent disk, and serve it over HTTPS.
 
 ## Troubleshooting
 

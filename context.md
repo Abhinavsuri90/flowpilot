@@ -1,5 +1,5 @@
 # FlowPilot: context
-_Last updated: 2026-09-26 21:00 · Phase 13 (governance, smoke, system design) · Complete: archive/restore, admin audit log + CSV, `npm run smoke` 71/71 over 42 endpoints, system design page + docs/system-design.md; 133 unit + 26 browser tests green. Next: phase 14 (deploy)_
+_Last updated: 2026-09-26 21:40 · Phase 14 (deploy) · Ready to ship: production Docker image verified locally (smoke 71/71, non-root, volume persistence); fly.toml for Mumbai. Waiting on the owner's Fly.io login and go-ahead to publish_
 
 ## What this is
 FlowPilot turns a one-sentence description of a repetitive CSV report into a saved, versioned recipe that a workspace can run on their own files, share and fork. AI drafts; a deterministic server executes; one access policy guards every request.
@@ -7,8 +7,8 @@ Stack: TanStack Start 1.168 (React 19.3, Vite 8, Nitro 3 beta), TanStack Router/
 Run: `npm install && npm run dev` → http://localhost:3000 (demo password `flowpilot-demo`)
 
 ## Current status
-- Phase: 13 governance + smoke + system design (owner: "check all API errors, all endpoints, smoke; enhance the system design"). Status: done
-- Tests: 133/133 (`npm test`: engine 13, csv 18, validator 13, access 20, demo-loop 12, ai 10, hardening 12, accounts 17, language 14, governance 4) · Browser 26/26 (`npm run test:e2e`: demo 4, features 15, accounts 5, a11y 2) · Smoke 71/71 checks over all 42 endpoints (`npm run smoke`, local dev) · Model eval 21/21 · Typecheck: pass (strict unused) · Build: pass
+- Phase: 14 deploy (owner: "then we deploy it where you say"). Status: ready; waiting on the owner's Fly.io login
+- Tests: 134/134 (`npm test`: engine 13, csv 18, validator 13, access 20, demo-loop 12, ai 10, hardening 13, accounts 17, language 14, governance 4) · Browser 26/26 (`npm run test:e2e`: demo 4, features 15, accounts 5, a11y 2) · Smoke 71/71 checks over all 42 endpoints (`npm run smoke`, local dev) · Model eval 21/21 · Typecheck: pass (strict unused) · Build: pass
 - App runs with: `npm install && npm run dev` → http://localhost:3000
 
 ## Done (with evidence)
@@ -38,6 +38,13 @@ UI (evidence screenshots in `docs/screenshots/`)
 - [x] Recipe page: version picker + "latest is M" banner, run panel with header pre-check and parameter reset, results (summary chips, Table v9 sorting, funnel, CSV), my runs + delete, who has access, share + copy dialogs. Evidence: `02`–`05`
 - [x] Library, My runs, Access (matrix from `policy.ts`, roles, one-click sharing, principles), Dashboard (checklist, stats, validated run chart with table view, activity), System design (interactive diagrams, live schema). Evidence: `06`, `08`, `09`, `10-dashboard-dark.png`
 - [x] No horizontal overflow at 390px on the main pages; light and dark themes
+
+Phase 14: deployment, prepared and verified locally (evidence: `docker build` + `docker run` of the production image; `npm run smoke -- --base http://localhost:3456` 71/71; restart kept all rows; hardening "HSTS" test)
+- [x] `Dockerfile` (node:22-bookworm-slim, two stages, `npm ci --ignore-scripts`, 377 MB), `docker-entrypoint.sh` (chowns the volume, drops to uid 1000 via setpriv), `.dockerignore` (no .env, data or .git)
+- [x] `fly.toml`: region bom, volume `flowpilot_data` at /data, force_https, /api/health check, auto stop/start, 1 shared CPU / 512 MB, DEMO_MODE + REGISTRATION=open + TRUST_PROXY
+- [x] HSTS on HTTPS responses (pages via start.ts middleware, API via the dispatcher); DEMO_MODE seeds an empty production database on first request
+- [x] Git history (13 commits) scanned: no key-shaped strings; only README placeholders `sk-or-...`
+- [x] Found while testing: npm 10 (Node 22 image) ran `node-gyp rebuild` for better-sqlite3 despite `gypfile: false` → `--ignore-scripts` (prebuilt binaries load at runtime)
 
 Phase 13: governance, smoke test, system design (evidence: `tests/governance.test.ts` 4, features "archives and restores…", a11y scans incl. /audit and archived tab, `npm run smoke` 71/71)
 - [x] Archive/restore (owner; `PATCH archived`): out of lists (Archived tab + count), 409 RECIPE_ARCHIVED on run/fork/save, permissions say why, banner + Restore; migration 4 (`archived_at`, indexes)
@@ -105,11 +112,12 @@ Phase 8 hardening
 - [x] README: quick start, AI setup, OpenRouter model comparison, demo script, architecture, security, tests, limitations
 
 ## In progress
-- Nothing mid-change. Owner's remaining asks: company-grade features, every endpoint and error smoke-tested, a stronger system design, then deployment.
+- Phase 14 (deploy): everything that needs no account is done and verified (see Done). Blocked on the owner: install flyctl + `fly auth login` (credential), and a yes to publish (public Fly app; optional public GitHub repo for the resume)
 
 ## Next steps (ordered)
-1. Phase 14: deploy (recommended: Fly.io, Mumbai region, SQLite on a volume); needs the owner's account login
-2. Owner: rotate the OpenRouter key that was shared in chat
+1. Owner: `brew install flyctl` then `fly auth login` (opens a browser); say "deploy" → `fly launch --no-deploy --copy-config --name <unique>`, `fly volumes create flowpilot_data --region bom --size 1`, `fly secrets set OPENROUTER_API_KEY=<new key>`, `fly deploy`, then `npm run smoke -- --base https://<app>.fly.dev`
+2. Owner: rotate the OpenRouter key that was shared in chat (before setting it as a Fly secret)
+3. Optional, for the resume: a public GitHub repo (`brew install gh`, `gh auth login`, then `gh repo create flowpilot --public --source . --push`)
 
 ## Decisions log
 | Date | Decision | Why | Alternatives rejected |
@@ -169,6 +177,9 @@ Phase 8 hardening
 | 2026-09-26 | Archive instead of delete; archived = visible but not runnable/copyable/editable; owner-only | Versions and runs must stay reproducible; a mistaken archive is one click to undo | Hard delete; admin archive |
 | 2026-09-26 | Audit log excludes runs and hides private titles from admins | Keeps "runs are private" and "private means owner only" true for admins too | Full event dump |
 | 2026-09-26 | Smoke test signs up its own throwaway accounts | Works on any deployment without demo data or secrets | Relying on demo accounts |
+| 2026-09-26 | Deploy target: Fly.io, region bom (Mumbai), one machine + volume | SQLite needs a persistent disk and a single writer; users are in India; cheap with auto-stop | Render (disk needs a paid plan), Vercel (no persistent disk), Railway (no India region) |
+| 2026-09-26 | Container runs as uid 1000; entrypoint chowns the volume then drops privileges | Volumes mount as root; least privilege at runtime | Running as root |
+| 2026-09-26 | `npm ci --ignore-scripts` in the image | npm 10 forced a node-gyp build; no dependency needs a script; hermetic builds | Installing python/g++ into the build stage |
 
 ## Deviations from the brief
 - Added optional `ANTHROPIC_BASE_URL` / `OPENAI_BASE_URL` / `OPENROUTER_BASE_URL` · the browser test needs a local mock model (the model call is server-side) · no change when unset

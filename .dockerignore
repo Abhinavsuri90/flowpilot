@@ -1,0 +1,15 @@
+# Keep the build context small and free of secrets and local data.
+node_modules
+.output
+.git
+data
+*.db
+*.db-wal
+*.db-shm
+.env
+.env.*
+!.env.example
+test-results
+playwright-report
+docs/screenshots
+.DS_Store

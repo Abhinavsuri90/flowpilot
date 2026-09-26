@@ -41,6 +41,13 @@ describe('HTTP semantics of the API', () => {
     expect((await asha.call('OPTIONS', '/api/nope')).status).toBe(404)
   })
 
+  it('asks browsers to stay on HTTPS (HSTS) only when served over HTTPS', async () => {
+    const plain = await handleApi(new Request(`${BASE}/api/health`))
+    expect(plain.headers.get('strict-transport-security')).toBeNull()
+    const proxied = await handleApi(new Request(`${BASE}/api/health`, { headers: { 'x-forwarded-proto': 'https' } }))
+    expect(proxied.headers.get('strict-transport-security')).toBe('max-age=31536000; includeSubDomains')
+  })
+
   it('treats malformed percent-encoding in an id as not found, not a server error', async () => {
     const asha = await signIn('asha')
     for (const path of ['/api/workflows/%E0%A4%A', '/api/runs/%ZZ', '/api/runs/%E0/csv']) {
