@@ -1,5 +1,5 @@
 import * as React from 'react'
-import { Link, createFileRoute, useNavigate } from '@tanstack/react-router'
+import { Link, createFileRoute, stripSearchParams, useNavigate } from '@tanstack/react-router'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import {
   createColumnHelper,
@@ -25,6 +25,7 @@ const Search_ = z.object({ status: z.enum(['all', 'succeeded', 'failed', 'runnin
 
 export const Route = createFileRoute('/_app/runs')({
   validateSearch: Search_,
+  search: { middlewares: [stripSearchParams({ status: 'all' })] },
   head: () => ({ meta: [{ title: 'My runs · FlowPilot' }] }),
   component: RunsPage,
 })

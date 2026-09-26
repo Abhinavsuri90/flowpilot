@@ -36,6 +36,8 @@ export const invalid = (message: string, issues?: ApiIssue[], code = 'VALIDATION
 const BASE_HEADERS = {
   'Cache-Control': NO_STORE,
   'X-Content-Type-Options': 'nosniff',
+  'X-Frame-Options': 'DENY',
+  'Referrer-Policy': 'same-origin',
 }
 
 export function json(data: unknown, init: { status?: number; headers?: Record<string, string> } = {}): Response {

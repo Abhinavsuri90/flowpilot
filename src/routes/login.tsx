@@ -8,7 +8,7 @@ import { api, ApiError } from '~/lib/api'
 import { DEMO_PEOPLE } from '~/lib/demo'
 import type { Me } from '~/lib/types'
 import { Logo } from '~/components/logo'
-import { Avatar, Badge, Button, Callout, Field, Input, cn } from '~/components/ui'
+import { Avatar, Badge, Button, Callout, Field, Input, cn, useHydrated } from '~/components/ui'
 
 /** Only same-site paths are allowed as post-login destinations (no open redirects). */
 export function safeRedirect(target: string | undefined): string {
@@ -38,6 +38,9 @@ function LoginPage() {
   const [email, setEmail] = React.useState('')
   const [password, setPassword] = React.useState('')
   const passwordRef = React.useRef<HTMLInputElement>(null)
+  // Until React hydrates, controls stay disabled: a click would do nothing, and a
+  // native submit must never put credentials in a URL (the form is also POST).
+  const hydrated = useHydrated()
 
   const login = useMutation({
     mutationFn: (creds: { email: string; password: string }) => api.post<Me>('/api/auth/login', creds),
@@ -80,7 +83,7 @@ function LoginPage() {
           <h1 className="text-[26px] font-semibold tracking-tight text-ink">Sign in</h1>
           <p className="mt-1.5 text-[14.5px] text-muted">Use your email and password, or pick one of the demo accounts below.</p>
 
-          <form onSubmit={submit} className="mt-7 space-y-4" noValidate>
+          <form onSubmit={submit} method="post" className="mt-7 space-y-4" noValidate>
             <Field label="Email" htmlFor="email">
               <Input
                 id="email"
@@ -114,7 +117,7 @@ function LoginPage() {
               size="lg"
               className="w-full"
               loading={login.isPending}
-              disabled={!email.trim() || !password}
+              disabled={!hydrated || !email.trim() || !password}
             >
               Sign in <ArrowRight className="size-4" />
             </Button>
@@ -132,7 +135,7 @@ function LoginPage() {
                   key={person.key}
                   type="button"
                   onClick={() => signInAs(person.email)}
-                  disabled={login.isPending}
+                  disabled={!hydrated || login.isPending}
                   className={cn(
                     'group flex items-start gap-3 rounded-xl border border-line bg-surface p-3 text-left shadow-soft transition-all',
                     'hover:-translate-y-0.5 hover:border-brand/40 hover:shadow-card disabled:opacity-60',

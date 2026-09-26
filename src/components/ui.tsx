@@ -6,6 +6,13 @@ export function cn(...classes: Array<string | false | null | undefined>): string
   return classes.filter(Boolean).join(' ')
 }
 
+/** False during SSR and until React has hydrated; used to disable controls that need JavaScript. */
+export function useHydrated(): boolean {
+  const [hydrated, setHydrated] = React.useState(false)
+  React.useEffect(() => setHydrated(true), [])
+  return hydrated
+}
+
 // ---------------------------------------------------------------------------
 // Button
 // ---------------------------------------------------------------------------

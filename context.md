@@ -1,150 +1,127 @@
 # FlowPilot: context
-_Last updated: 2026-09-26 12:55 · Phase 7/8 · Dashboard + system design done; starting hardening, e2e, README_
+_Last updated: 2026-09-26 13:20 · Phase 8/8 · Complete: all phases done, unit + browser tests green_
 
 ## What this is
-FlowPilot turns a one-sentence description of a repetitive CSV report into a saved, versioned recipe that a workspace can run on their own files, share and fork.
+FlowPilot turns a one-sentence description of a repetitive CSV report into a saved, versioned recipe that a workspace can run on their own files, share and fork. AI drafts; a deterministic server executes; one access policy guards every request.
 Stack: TanStack Start 1.168 (React 19.3, Vite 8, Nitro 3 beta), TanStack Router/Query/Table v9, Tailwind v4, Zod 4, Papa Parse, SQLite (better-sqlite3 13).
-Run: `npm install && npm run dev` → http://localhost:3000
+Run: `npm install && npm run dev` → http://localhost:3000 (demo password `flowpilot-demo`)
 
 ## Current status
-- Phase: 7 dashboard + system design. Status: done
-- Tests: 77/77 (`npm test`, 2026-09-26: engine 13, csv 12, validator 13, access 19, demo-loop 12, ai 8). Typecheck: pass. Build: pass (phase 1)
+- Phase: 8 hardening, e2e, README. Status: done (project complete)
+- Tests: 77/77 (`npm test`, 2026-09-26: engine 13, csv 12, validator 13, access 19, demo-loop 12, ai 8) · E2E 4/4 (`npm run test:e2e`, Chromium) · Typecheck: pass · Build: pass (prod server smoke-tested with a live OpenRouter model)
 - App runs with: `npm install && npm run dev` → http://localhost:3000
 
 ## Done (with evidence)
-- [x] TanStack Start app boots; SSR guard redirects signed-out visitors to /login. Evidence: `curl /` → 307 `/login?redirect=%2F` (dev and prod)
-- [x] SQLite schema, 8 tables + 12 invariant triggers, migrations tracked in `schema_migrations`. Evidence: `src/server/migrations.ts`; seed run lists all triggers
-- [x] Seed: 4 demo accounts in Sales/Marketing. Evidence: `npm run seed` output
-- [x] Auth: scrypt hashes, SHA-256 session tokens, HttpOnly SameSite=Lax cookie, same-origin check on writes. Evidence: curl login 200 + cookie, cross-site login → 403 BAD_ORIGIN
-- [x] Login page (split brand panel + one-click demo accounts), app shell, light/dark tokens. Evidence: screenshots reviewed in session (scratchpad), to be regenerated under docs/screenshots in phase 8
-- [x] Production build via Nitro, better-sqlite3 traced into `.output/server/node_modules`. Evidence: `node .output/server/index.mjs` served login + /api/me with `private, no-store`
+Foundation
+- [x] TanStack Start app; SSR guard redirects signed-out visitors to /login. Evidence: `curl /` → 307 `/login?redirect=%2F`
+- [x] SQLite schema: 8 tables, 12 invariant triggers, migrations in `schema_migrations`. Evidence: `src/server/migrations.ts`; access "enforces the invariants in the database itself"
+- [x] Auth: scrypt, SHA-256 session tokens, HttpOnly SameSite=Lax cookie, 10-failure throttle, uniform login errors. Evidence: access suite (401s, throttle)
+- [x] Seed: 4 demo accounts, Sales/Marketing, 2 labelled examples. Evidence: access "isolates workspaces"
 
-- [x] Recipe contract: strict Zod schema, LIMITS, types. Evidence: `src/lib/workflow/schema.ts`, validator suite
-- [x] Validator with step-by-step schema tracking (works on partial drafts) + parameter resolution. Evidence: `tests/validator.test.ts` (13), incl. exact "no longer available" message
-- [x] Engine: filter/group_sum, code-point ordering, exact sums, 30 s deadline checked between steps and every 1,024 rows, step log. Evidence: `tests/engine.test.ts` (13): all six demo expectations, lt vs lte, TIMEOUT
-- [x] CSV: 1 MiB/5,000 rows/50 columns, BOM, trimming, duplicates, field counts, 5 bad-amount kinds with line numbers, inference, formula-escaped export. Evidence: `tests/csv.test.ts` (12)
-- [x] Deterministic describe + summary (`2 rows · status = "paid" · grouped by region · total < ₹1,00,000`). Evidence: engine suite
+Recipe language
+- [x] Strict contract (Zod), validator with step-by-step column tracking (also on partial drafts), parameter resolution. Evidence: `tests/validator.test.ts` (13)
+- [x] Engine: filter/group_sum, exact sums, code-point order, 30 s deadline, step log. Evidence: `tests/engine.test.ts` (13), incl. all six demo expectations
+- [x] CSV rules and formula-safe export. Evidence: `tests/csv.test.ts` (12)
+- [x] Deterministic summary (`2 rows · status = "paid" · grouped by region · total < ₹1,00,000`). Evidence: engine + demo-loop suites
 
-- [x] Pure policy (`decide`, `denialStatus`, `decideRoleChange`, `permissionMatrix`). Evidence: access suite "renders the permission matrix from the same policy the API enforces"
-- [x] 19 of 20 REST endpoints through `handleApi` (all but `/api/generate`, phase 5). Evidence: `tests/access.test.ts` (19), `tests/demo-loop.test.ts` (12)
-- [x] 404 hides existence (outsider body identical to a missing id), 403 only for visible-but-not-yours. Evidence: access "outsider 404 everywhere"
-- [x] Runs private to runner (even owner/admin), CSV download formula-escaped with attachment + nosniff. Evidence: access "keeps runs and result downloads private"
-- [x] Versions immutable, forks independent, unshare → 404 while the copy runs with hidden attribution. Evidence: access + demo-loop 8–10
-- [x] DB triggers verified directly (versions, identity, pointer, final runs, append-only events, sequential/owner-only versions, json_valid). Evidence: access "enforces the invariants in the database itself"
-- [x] Activity feed filtered: fork announced to the source owner without the copy's title/id; runs only to the runner. Evidence: demo-loop 11
-- [x] Seed includes labelled examples: "Paid revenue by sales rep" (Vikram, Sales, team) and "Live spend by channel" (Olivia, Marketing). Evidence: access "isolates workspaces"
+API and access
+- [x] All 20 REST endpoints behind one dispatcher `handleApi(Request)` (route → origin → session → handler → errors). Evidence: access (19) + demo-loop (12) + ai (8) suites
+- [x] 404 hides existence; 403 only for visible-but-not-yours; runs private to the runner; unshare → 404 while copies keep running with hidden attribution. Evidence: access suite
+- [x] Activity feed tells a source owner about a copy without revealing it. Evidence: demo-loop 11; e2e test 3
+- [x] AI authoring: flat strict schema, Anthropic forced tool call / OpenAI + OpenRouter strict json_schema, one repair, 422 DRAFT_INVALID with draft, 503 MODEL_UNAVAILABLE, never writes; run path never imports the model client. Evidence: `tests/ai.test.ts` (8)
+- [x] OpenRouter live: `npm run check:model` and the production server both produced a valid demo recipe from `anthropic/claude-sonnet-5` on the first try (7.6 s through prod), then saved and ran it (South ₹40,000 · West ₹70,000). Model comparison in README
 
-- [x] Shell: dark sidebar (workspace card + role, New recipe, nav, AI status pill, user + sign out), sticky top bar (⌘K palette, theme toggle, New recipe), mobile drawer. Evidence: screenshots reviewed in session
-- [x] Library `/library?tab=&q=` (Zod validateSearch, debounced search in URL, tab counts, recipe cards with badges/columns/attribution, Run + Make a copy). Evidence: screenshot as Vikram
-- [x] Editor `/workflows/new` + `/w/$id/edit`: 5 sections, sample CSV parsed in browser, column checklist, step cards with per-step available columns, "Make adjustable", parameters, live validity, columns-through-the-pipeline, Advanced JSON (validated before applying), unsaved-changes guard. Evidence: Playwright walkthrough created "Regional revenue exceptions" through the UI
-- [x] Recipe detail `/w/$id?v=&run=`: version picker + "Version N (latest is M)" banner, recipe card, run panel (drop zone, header pre-check, parameters with reset), result (summary chips, TanStack Table v9 sorting, rows-through-each-step funnel, CSV download, "No rows matched"), my runs + Delete my results, who has access. Evidence: walkthrough ran sales_A → South ₹40,000 / West ₹70,000 in Chromium; light/dark/390px screenshots
-- [x] Share dialog (visibility + version-pinned link) and fork dialog (title, version, then opens the copy in the editor). Evidence: typecheck; exercised end-to-end in phase 8 e2e
+UI (evidence screenshots in `docs/screenshots/`)
+- [x] Login with one-click demo accounts; controls disabled until hydrated; form is POST. Evidence: `00-login.png`, e2e sign-ins
+- [x] Shell: sidebar (workspace + role, New recipe, nav, AI status pill, user), top bar (⌘K palette, theme, New recipe), mobile drawer
+- [x] Editor: sample CSV read in the browser, column checklist, AI draft with badges, step cards with per-step columns, Make adjustable, parameters, live validity, columns through the pipeline, Advanced JSON, unsaved-changes guard. Evidence: `01-editor-ai-draft.png`
+- [x] Recipe page: version picker + "latest is M" banner, run panel with header pre-check and parameter reset, results (summary chips, Table v9 sorting, funnel, CSV), my runs + delete, who has access, share + copy dialogs. Evidence: `02`–`05`
+- [x] Library, My runs, Access (matrix from `policy.ts`, roles, one-click sharing, principles), Dashboard (checklist, stats, validated run chart with table view, activity), System design (interactive diagrams, live schema). Evidence: `06`, `08`, `09`, `10-dashboard-dark.png`
+- [x] No horizontal overflow at 390px on the main pages; light and dark themes
 
-- [x] `POST /api/generate` (20th endpoint): flat strict output schema; Anthropic forced `submit_recipe` tool call or OpenAI `json_schema` strict; author's contract wraps model steps; full validation; exactly one repair (Anthropic `tool_result` `is_error: true`); 422 DRAFT_INVALID with draft; 503 MODEL_UNAVAILABLE (no key, provider error, 20 s timeout); never writes. Evidence: `tests/ai.test.ts` (8)
-- [x] Editor Generate flow: AI draft badges, unsupported/clarification/invalid/unavailable callouts. Evidence: Chromium run against `tests/e2e/mock-model.ts` (unsupported callout for Gmail; 3 generated step cards for the demo sentence)
-- [x] Run path never imports the model client. Evidence: ai suite static import check + run with fetch stubbed to throw
-- [x] `npm run check:model` reports configuration (currently: not configured)
-
-- [x] `/access`: permission matrix rendered from `permissionMatrix()` (Team/Private toggle, 403/404 cells with reasons, "you" column), members with role dropdowns for admins (self and last admin locked), one-click share/unshare with link copy, six principles. Evidence: screenshot as Asha
-- [x] `/runs`: all my runs, status filter in URL, sortable Table v9, per-run CSV, "Delete all my results" with confirm. Evidence: screenshot as Asha
-- [x] OpenRouter provider (owner supplied a key, stored only in git-ignored `.env`): OpenAI-compatible call, strict json_schema, `provider.require_parameters: true`, `X-Title`. Evidence: `tests/ai.test.ts` "uses strict json_schema for OpenAI and for OpenRouter"; live `npm run check:model` → valid 3-step demo recipe from `anthropic/claude-sonnet-5` (first try, no repair)
-- [x] Live model comparison via OpenRouter (1 run each, 2026-09-26): claude-sonnet-5 demo 5.7 s / Gmail 2.4 s / ambiguous 3.7 s; gpt-6-luna 3.1 / 2.1 / 2.2 s; gemini-3.8-flash 14.7 / 4.6 / 4.3 s. All nine answers correct (workflow / unsupported / clarification), no repairs
-
-- [x] Dashboard: welcome hero + reuse-loop checklist, 4 stat tiles, 14-day stacked run chart (colours validated with the dataviz checker in both themes; hover/focus tooltip; table view; honest empty state), recent runs, permission-filtered activity, System design teaser. Evidence: light/dark/390px screenshots
-- [x] `/system-design`: architecture diagram with Both/Authoring/Execution highlight, 11-step request lifecycle, AI authoring loop, versioning diagram, live schema/triggers/indexes/migrations/endpoints from `/api/system`, limits, failure modes, scaling path, trade-offs, stack. Evidence: screenshots
-- [x] No horizontal page overflow at 390px on /, /library, /runs, /access, /system-design. Evidence: Playwright scrollWidth check
+Phase 8 hardening
+- [x] Browser e2e of the whole demo loop (Asha AI-drafts, saves, runs, shares; Vikram reruns, adjusts, resets, copies, regroups, runs; Asha's original unchanged + copy notice; Meera can't copy; Olivia 404). Evidence: `tests/e2e/demo.spec.ts` 4/4
+- [x] Security headers on every page/API response (`X-Frame-Options: DENY`, nosniff, `Referrer-Policy`), CSRF middleware kept for server functions. Evidence: curl headers on / and /api/me
+- [x] Canonical URLs: default search params stripped (no redirect on /library or /runs). Evidence: curl → 200
+- [x] README: quick start, AI setup, OpenRouter model comparison, demo script, architecture, security, tests, limitations
 
 ## In progress
-- Phase 8: hardening, Playwright e2e, README, final report
+- Nothing. The project is complete.
 
 ## Next steps (ordered)
-1. Playwright e2e: the full demo (Asha creates via AI draft against the mock model, runs A, shares; Vikram reruns B, changes threshold, resets, copies, regroups by sales_rep, runs B; Asha's original unchanged; Meera can't copy; Olivia gets 404)
-2. Production build + start smoke test
-3. README (launch, demo script, design decisions, limitations, OpenRouter models), docs/screenshots
-4. Final context.md pass and final report
+1. Owner: pick the OpenRouter model to keep (`MODEL_NAME`), then rotate the key that was shared in chat
+2. If deploying: HTTPS (cookies become Secure automatically), a persistent disk for SQLite, and `SEED_PASSWORD` set to something private
+3. Production path from the design: Postgres + row-level security, a job queue for execution, Redis-backed rate limits
 
 ## Decisions log
 | Date | Decision | Why | Alternatives rejected |
 |---|---|---|---|
-| 2026-09-26 | Own git repo in `Flowpilot/` | Folder sat inside an unrelated Desktop-level repo (Java coursework) | Committing into the Desktop repo |
-| 2026-09-26 | Brief truncated mid-section 11; sections 11 (rest)–19 reconstructed from the system design PDF | PDF describes the finished system (routes, tests, limits, failure modes) | Stopping to ask |
-| 2026-09-26 | TypeScript 6.0 (JS) for `tsc --noEmit` | npm `latest` is TS 7 (native); TanStack's own example pins TS 6 for tooling compatibility | TS 7 |
-| 2026-09-26 | Vitest 4.1 (npm resolved it) | Vitest 5 lists Node 22/24/26 engines, not 25 | Forcing Vitest 5 |
-| 2026-09-26 | No `src/start.ts` CSRF middleware | Only two read-only GET server functions exist; all writes go through /api with its own origin check | Global request middleware |
-| 2026-09-26 | Server functions only for session + login info; everything else is REST via `/api/$` | Brief: one dispatcher; tests call `handleApi(Request)` | Server functions per feature |
-| 2026-09-26 | Client data via TanStack Query `useQuery` (no SSR prefetch) | Brief: QueryClient via router context + `Wrap`; SSR renders shell, data loads client-side | ssr-query integration |
-| 2026-09-26 | Cookie `fp_session` (+Secure on HTTPS) instead of `__Host-` prefix | `__Host-` requires Secure, which breaks plain http://localhost | `__Host-fp_session` |
-| 2026-09-26 | Import protection denies `src/server/**` in the client bundle | Build fails if DB/session/model code leaks to the browser | Marker imports |
-| 2026-09-26 | Text cells are trimmed; amounts must match `^\d+$` after trim | Stray spaces from spreadsheet exports otherwise break exact matching; amounts stay strict | Keeping raw whitespace |
-| 2026-09-26 | Fully blank rows (all fields empty) are skipped | They carry no data; brief says skip blank lines | Treating `,,,,` as a bad row |
-| 2026-09-26 | Escaped export cells are quoted (`"'=A1"`) | Papa Parse 5.7 behaviour; still neutralises formulas | — |
-| 2026-09-26 | Names `__proto__`/`constructor`/`prototype` rejected for columns, aliases, parameters | Rows are plain objects keyed by these names | Null-prototype rows |
-| 2026-09-26 | Create bodies strip unknown keys (identity fields ignored); PATCH bodies are strict (422) | Brief: "ignored on create and rejected on update" | Strict everywhere |
-| 2026-09-26 | New recipes go to the caller's first workspace where they are admin/member | Workspace comes from the session, never the body | `workspaceId` in body |
-| 2026-09-26 | Fork allowed = can view AND role admin/member (owner included) | Matrix: viewers can't copy; a copy is a new recipe in the workspace | Owner always allowed |
-| 2026-09-26 | Extra DB triggers beyond the brief: versions numbered sequentially + only by the owner; runs must start `running` and pin a version of their own recipe; runs keep version/runner/parameters | Cheap, and makes crafted writes impossible below the API | — |
-| 2026-09-26 | "Library team" tab includes my own shared recipes | Team library = what the team sees | Excluding mine |
-| 2026-09-26 | Access-matrix workspace rows (create, roles) don't change with recipe visibility | They are workspace permissions, not recipe permissions | Showing 404 for them on private |
-| 2026-09-26 | Dashboard day buckets are UTC | Server-side aggregation; prototype | Per-user time zones |
-| 2026-09-26 | Sample-CSV column checklist unchecks id-like columns (`order_id`) by default | The demo contract ignores order_id; authors can re-check it | All checked |
-| 2026-09-26 | After "Make a copy" the app opens the copy in the editor | Demo: copy → change groupBy → save → run | Opening the copy's detail page |
-| 2026-09-26 | Editor Save in edit mode = POST versions, then PATCH title/description only if changed | Versions hold definitions; title/description are recipe metadata | Versioning metadata |
-| 2026-09-26 | Model reply parsed leniently (nullish fields, extra keys stripped); the built definition is validated strictly | Avoids wasting the single repair on harmless omissions (Anthropic tool input isn't strict-mode) | Strict parse of the reply |
-| 2026-09-26 | Literal values are placed by tracked column type (e.g. "100000" as text for an amount becomes 100000) | Fewer needless repairs; still validated | Trusting the model's slot choice |
-| 2026-09-26 | OpenAI default model `gpt-5` | Needs a default; override with MODEL_NAME | — |
-| 2026-09-26 | OpenRouter default model `anthropic/claude-sonnet-5` | Matches the brief's intended model; correct on all live checks | `openai/gpt-6-luna` (faster/cheaper, offered as the budget option) |
-| 2026-09-26 | Tests never load `.env` (skipped under VITEST) | A developer's real key must never reach the test process | Relying on per-test env stubs only |
-| 2026-09-26 | Run chart uses dedicated tokens `--chart-ok`/`--chart-bad` (failed = #e5484d in both themes) | The dark UI red #ff6369 failed the dataviz lightness band on the dark surface; #e5484d passes both | Reusing status tokens |
-| 2026-09-26 | Diagrams: violet = authoring (AI), teal = execution, gray = shared | Same colour meaning as the rest of the app | The PDF's blue/orange |
+| 2026-09-26 | Own git repo in `Flowpilot/` | Folder sat inside an unrelated Desktop-level repo | Committing into the Desktop repo |
+| 2026-09-26 | Brief truncated mid-section 11; the rest followed the system design PDF | PDF describes the finished system | Stopping to ask |
+| 2026-09-26 | TypeScript 6.0 for `tsc --noEmit`; Vitest 4.1 | TS 7 is native-only (TanStack pins TS 6); Vitest 5 excludes Node 25 | TS 7, Vitest 5 |
+| 2026-09-26 | Server functions only for session + login info; everything else REST via `/api/$` | Brief: one dispatcher; tests call `handleApi(Request)` | Server functions per feature |
+| 2026-09-26 | Client data via `useQuery` (no SSR prefetch); QueryClient in router context + `Wrap` | Brief; SSR renders the shell, data loads client-side | ssr-query integration |
+| 2026-09-26 | Cookie `fp_session` (+Secure on HTTPS) instead of `__Host-` | `__Host-` needs Secure, which breaks http://localhost | `__Host-fp_session` |
+| 2026-09-26 | Import protection denies `src/server/**` in the client bundle | Build fails if server code leaks to the browser | Marker imports |
+| 2026-09-26 | Text cells trimmed; amounts must match `^\d+$`; fully blank rows skipped | Spreadsheet whitespace; blanks carry no data | Raw whitespace |
+| 2026-09-26 | Reserved names (`__proto__` etc.) rejected for columns, aliases, parameters | Rows are plain objects | Null-prototype rows |
+| 2026-09-26 | Create bodies ignore identity keys; PATCH bodies strict (422) | Brief wording | Strict everywhere |
+| 2026-09-26 | New recipes go to the caller's first admin/member workspace | Workspace from the session, never the body | `workspaceId` in body |
+| 2026-09-26 | Fork allowed = can view AND admin/member | Viewers can't copy; a copy is a new recipe | Owner always allowed |
+| 2026-09-26 | Extra triggers: sequential owner-only versions; runs start `running`, pin their own recipe's version, keep version/runner/parameters | Crafted writes impossible below the API | — |
+| 2026-09-26 | Team tab includes my own shared recipes; matrix workspace rows ignore visibility | Team library = what the team sees; workspace permissions | — |
+| 2026-09-26 | Dashboard day buckets in UTC | Prototype | Per-user time zones |
+| 2026-09-26 | Id-like sample columns (`order_id`) unchecked by default; after a copy the editor opens | Matches the demo contract and flow | — |
+| 2026-09-26 | Model reply parsed leniently, then the definition validated strictly; literals placed by column type | Don't waste the single repair on omissions | Strict reply parse |
+| 2026-09-26 | Defaults: `claude-sonnet-5` (Anthropic), `gpt-5` (OpenAI), `anthropic/claude-sonnet-5` (OpenRouter) | Brief's intended model; overridable with MODEL_NAME | `openai/gpt-6-luna` offered as the budget option |
+| 2026-09-26 | Tests never load `.env` (skipped under VITEST); e2e forces a mock provider | Real keys never reach tests or spend credits | Per-test stubs only |
+| 2026-09-26 | Run chart tokens `--chart-ok`/`--chart-bad`; failed = #e5484d in both themes | Validated with the dataviz checker; dark UI red failed the band | Reusing status tokens |
+| 2026-09-26 | `src/start.ts` adds security headers and re-adds CSRF for server functions | Defining start.ts replaces Start's default CSRF middleware | No start.ts (earlier choice) |
+| 2026-09-26 | Controls needing JS disabled until hydration; `<html data-hydrated>` for tests | Pre-hydration clicks did nothing; a native GET submit would expose credentials | — |
+| 2026-09-26 | `stripSearchParams` for default search values | Avoid a redirect to `?tab=mine&q=` on every load | — |
 
 ## Deviations from the brief
-- Added optional `ANTHROPIC_BASE_URL` / `OPENAI_BASE_URL` / `OPENROUTER_BASE_URL` (defaults: the public APIs) · the browser e2e test needs a local mock model because the model call is server-side · no change when unset
-- Added a third provider, OpenRouter (`OPENROUTER_API_KEY`, `MODEL_PROVIDER=openrouter`) · owner asked for it and supplied a key · Anthropic and OpenAI adapters unchanged
+- Added optional `ANTHROPIC_BASE_URL` / `OPENAI_BASE_URL` / `OPENROUTER_BASE_URL` · the browser test needs a local mock model (the model call is server-side) · no change when unset
+- Added a third provider, OpenRouter (`OPENROUTER_API_KEY`, `MODEL_PROVIDER=openrouter`) · owner asked for it and supplied a key · other adapters unchanged
+- Added `docs/screenshots/` evidence and `scripts/screenshots.ts` · not in the brief · no runtime impact
 
 ## Known issues / bugs
-- Fixed in phase 4: the editor's unsaved-changes blocker read stale state and prompted after a successful save (found by the Playwright walkthrough).
-- Fixed in phase 4: single-column grids overflowed at 390px (added `grid-cols-1`).
-- CSV line numbers count records (header = line 1); a quoted field containing a newline would shift later line numbers. Low severity; documented.
-- Build prints rolldown "use client" directive warnings from lucide-react. Harmless.
+- Fixed: editor's unsaved-changes prompt appeared after a successful save (stale closure) · found by Playwright
+- Fixed: single-column grids overflowed at 390px
+- Fixed: clicks before hydration were ignored on the login page; a native submit could have used GET
+- Fixed: reduced-motion users briefly saw staggered cards missing (animation delays not zeroed)
+- Fixed: dark-theme chart red failed the palette lightness band
+- Open (low): login throttle is in memory and per email, so an address can be locked out for 10 minutes · documented
+- Open (low): CSV line numbers count records; a quoted field containing a newline shifts later numbers · documented
+- Open (cosmetic): build prints rolldown "use client" warnings from lucide-react; npm warns that Vitest's engines omit Node 25 (tests pass)
 
 ## How to run
-- Install: `npm install` (Node 22+; developed on Node 25.3)
+- Install: `npm install` (Node 22+; built on Node 25.3) · E2E browser once: `npx playwright install chromium`
 - Dev: `npm run dev` (predev seeds `./data/flowpilot.db` if empty) → http://localhost:3000
 - Seed / reset: `npm run seed` / `npm run seed:reset`
-- Test: `npm test` · Typecheck: `npm run typecheck` · E2E: `npm run test:e2e` (phase 8)
-- Build / start: `npm run build` → `npm start` (Nitro output, `node .output/server/index.mjs`)
-- Screenshots: `npx tsx scripts/screenshots.ts --as asha --theme both / /library`
+- Test: `npm test` · E2E: `npm run test:e2e` · Typecheck: `npm run typecheck`
+- Build / start: `npm run build` → `npm start`
+- AI: put keys in `.env` (see `.env.example`), then `npm run check:model`
+- Screenshots: `npx tsx scripts/screenshots.ts --as asha --theme both / /library` (dev server running)
 
 ## Environment variables (names only)
-DATABASE_PATH, SEED_PASSWORD, MODEL_PROVIDER, MODEL_NAME, ANTHROPIC_API_KEY, OPENAI_API_KEY, OPENROUTER_API_KEY (+ optional ANTHROPIC_BASE_URL, OPENAI_BASE_URL, OPENROUTER_BASE_URL). A local `.env` (git-ignored) currently sets MODEL_PROVIDER=openrouter and OPENROUTER_API_KEY.
+DATABASE_PATH, SEED_PASSWORD, MODEL_PROVIDER, MODEL_NAME, ANTHROPIC_API_KEY, OPENAI_API_KEY, OPENROUTER_API_KEY (+ optional ANTHROPIC_BASE_URL, OPENAI_BASE_URL, OPENROUTER_BASE_URL). The local git-ignored `.env` sets MODEL_PROVIDER=openrouter and OPENROUTER_API_KEY.
 
 ## File map
-- `src/server/migrations.ts`: schema + invariant triggers · `db.ts`: connection, migrate, `useDatabase` for tests
-- `src/server/auth.ts`: scrypt, sessions, cookie, login throttle · `http.ts`: ApiError, JSON/body helpers
-- `src/server/api/router.ts`: `handleApi` dispatcher (route match → origin → session → handler → errors) · `api/auth.ts`: login/logout/me
-- `src/server/seed.ts` + `scripts/seed.ts`: demo data · `src/server/ai/config.ts`: model env config (no keys leave the server)
-- `src/lib/session.ts`: server functions for the `_app` guard and login page · `lib/api.ts`: fetch wrapper + query keys · `lib/types.ts`: shared types · `lib/demo.ts`: demo people
-- `src/routes/`: `__root.tsx` (document, theme script), `login.tsx`, `_app.tsx` (guard + shell), `_app/index.tsx`, `api/$.ts`
-- `src/components/`: `ui.tsx` (Button, Badge, Card, Dialog, Callout, Field, Avatar…), `shell.tsx`, `toast.tsx`, `states.tsx`, `logo.tsx`, `theme.ts`
-- `src/lib/workflow/`: `schema.ts` (contract, LIMITS, Zod) · `validate.ts` (validateDefinition, analyze, resolveParameters) · `execute.ts` (engine) · `describe.ts` (INR, plain-language steps, summary) · `examples.ts` (demo + seed definitions)
-- `src/lib/csv.ts`: parseTable, parseForContract, checkAmount, inferColumns, toCsv
-- `fixtures/`: sales_A/B + invalid files · `public/samples/`: downloadable demo CSVs · `tests/helpers/fixtures.ts`
-- `src/lib/policy.ts`: pure access policy + matrix
-- `src/server/repo.ts`: access-aware queries, create/save/fork transactions, runs, stale reaper · `events.ts`: audit log + filtered feed
-- `src/server/api/`: `workflows.ts`, `runs.ts`, `workspace.ts`, `dashboard.ts`, `system.ts` (+ `auth.ts`, `router.ts`)
-- `tests/helpers/app.ts`: in-memory app + cookie-keeping client calling `handleApi`
-- `src/lib/workflow/draft.ts`: editor draft model ↔ definition (incl. lenient loader for invalid model drafts) · `src/lib/format.ts`
-- `src/components/`: `editor.tsx`, `results.tsx` (Table v9 grid + funnel), `workflow-bits.tsx` (badges, chips, step list, recipe card), `file-drop.tsx`, `share-dialog.tsx`, `fork-dialog.tsx`, `access-panel.tsx`, `command.tsx` (⌘K)
-- `src/routes/_app/`: `library.tsx`, `workflows.new.tsx`, `w.$workflowId.index.tsx`, `w.$workflowId.edit.tsx`, `access.tsx`, `runs.tsx`
-- `src/server/ai/generate.ts`: prompt, output schema, provider adapters, repair loop · `src/server/api/generate.ts`: endpoint · `scripts/check-model.ts`
-- `tests/e2e/mock-model.ts`: stand-in Anthropic endpoint for browser tests only
-- `src/components/charts.tsx`: 14-day run chart · `src/components/diagrams/`: `architecture.tsx`, `versioning.tsx`
-- `src/routes/_app/`: `index.tsx` (dashboard), `system-design.tsx`
-- `scripts/screenshots.ts`: Playwright screenshot helper
+- `src/lib/workflow/`: `schema.ts` (contract, LIMITS) · `validate.ts` (validateDefinition, analyze, resolveParameters) · `execute.ts` (engine) · `describe.ts` (INR, steps, summary) · `draft.ts` (editor model) · `examples.ts`
+- `src/lib/`: `csv.ts` · `policy.ts` (pure access policy + matrix) · `api.ts` (client + query keys) · `types.ts` · `format.ts` · `session.ts` (server fns) · `demo.ts`
+- `src/server/`: `migrations.ts` (schema + triggers) · `db.ts` · `auth.ts` · `repo.ts` (access-aware queries, transactions, stale reaper) · `events.ts` (audit + feed) · `seed.ts` · `http.ts` · `env.ts` · `ids.ts`
+- `src/server/api/`: `router.ts` (dispatcher) · `auth.ts` · `workflows.ts` · `runs.ts` · `generate.ts` · `workspace.ts` · `dashboard.ts` · `system.ts`
+- `src/server/ai/`: `config.ts` (providers, env) · `generate.ts` (prompt, schema, adapters, repair loop)
+- `src/routes/`: `__root.tsx` · `login.tsx` · `_app.tsx` (guard + shell) · `_app/{index,library,runs,access,system-design,workflows.new,w.$workflowId.index,w.$workflowId.edit}.tsx` · `api/$.ts`
+- `src/components/`: `ui.tsx` · `shell.tsx` · `command.tsx` · `editor.tsx` · `results.tsx` · `charts.tsx` · `workflow-bits.tsx` · `file-drop.tsx` · `share-dialog.tsx` · `fork-dialog.tsx` · `access-panel.tsx` · `states.tsx` · `toast.tsx` · `logo.tsx` · `theme.ts` · `diagrams/{architecture,versioning}.tsx`
+- `src/start.ts`: global request middleware (security headers, server-fn CSRF)
+- `tests/`: 6 Vitest suites + `helpers/` · `tests/e2e/`: `demo.spec.ts`, `mock-model.ts` · `playwright.config.ts`
+- `scripts/`: `seed.ts`, `check-model.ts`, `screenshots.ts` · `fixtures/`, `public/samples/`, `docs/screenshots/`
 
 ## Demo checklist
-- [ ] Asha creates & shares · [ ] Vikram reruns · [ ] Vikram forks · [ ] Asha's original unchanged · [ ] Meera/Olivia blocked
+- [x] Asha creates & shares (e2e test 1) · [x] Vikram reruns (e2e test 2) · [x] Vikram forks (e2e test 2) · [x] Asha's original unchanged (e2e test 3) · [x] Meera/Olivia blocked (e2e test 4)
 
 ## Open questions for the owner
-- Which OpenRouter model to use long-term? Default meanwhile: `anthropic/claude-sonnet-5` (set `MODEL_NAME` to switch; `openai/gpt-6-luna` was fastest and cheapest in the live comparison). The owner should rotate the OpenRouter key after the project, since it was shared in chat.
-- Sections 11 (after "Governance: Access") to 19 of the brief were cut off by the paste limit. The default I took meanwhile: follow the system design PDF for those parts, with 8 phases: 1 scaffold · 2 deterministic core · 3 API + access · 4 core UI · 5 AI authoring · 6 sharing/governance UI · 7 dashboard, runs, system design · 8 hardening, e2e, README.
+- Which OpenRouter model to keep? Default meanwhile: `anthropic/claude-sonnet-5`. `openai/gpt-6-luna` was faster and much cheaper, and equally correct in the live checks. Please rotate the OpenRouter key after choosing, since it was shared in chat.
+- The brief was cut off after section 11 ("Governance: Access"). If sections 12–19 hold requirements beyond the system design PDF, share them and they can be checked against this build.

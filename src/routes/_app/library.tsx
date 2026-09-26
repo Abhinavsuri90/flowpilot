@@ -1,5 +1,5 @@
 import * as React from 'react'
-import { Link, createFileRoute, useNavigate } from '@tanstack/react-router'
+import { Link, createFileRoute, stripSearchParams, useNavigate } from '@tanstack/react-router'
 import { useQuery } from '@tanstack/react-query'
 import { z } from 'zod'
 import { FolderOpen, Plus, Search, Users, X } from 'lucide-react'
@@ -18,6 +18,8 @@ const Search_ = z.object({
 
 export const Route = createFileRoute('/_app/library')({
   validateSearch: Search_,
+  // Default values stay out of the URL (no redirect to ?tab=mine&q=).
+  search: { middlewares: [stripSearchParams({ tab: 'mine', q: '' })] },
   head: () => ({ meta: [{ title: 'Recipe library · FlowPilot' }] }),
   component: Library,
 })

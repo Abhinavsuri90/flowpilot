@@ -521,9 +521,16 @@ function InputSection({ draft, setDraft, issues }: { draft: Draft; setDraft: Rea
             <Button size="sm" icon={<FileSpreadsheet className="size-3.5" />} onClick={() => loadDemoFile('sales_A.csv')}>
               Use sales_A.csv
             </Button>
-            <a href="/samples/sales_B.csv" download className="text-center text-[12px] text-brand-ink hover:underline">
-              Download sample files
-            </a>
+            <span className="text-center text-[12px] text-muted">
+              Download{' '}
+              <a href="/samples/sales_A.csv" download className="text-brand-ink hover:underline">
+                A
+              </a>{' '}
+              ·{' '}
+              <a href="/samples/sales_B.csv" download className="text-brand-ink hover:underline">
+                B
+              </a>
+            </span>
           </div>
         </div>
         {error && <Callout tone="bad">{error}</Callout>}

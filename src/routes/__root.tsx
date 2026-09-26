@@ -32,6 +32,14 @@ export const Route = createRootRouteWithContext<{ queryClient: QueryClient }>()(
   ),
 })
 
+/** Marks the document once React has hydrated (used by browser tests before interacting). */
+function HydrationFlag() {
+  React.useEffect(() => {
+    document.documentElement.dataset.hydrated = 'true'
+  }, [])
+  return null
+}
+
 function RootDocument({ children }: { children: React.ReactNode }) {
   return (
     <html lang="en" suppressHydrationWarning>
@@ -42,6 +50,7 @@ function RootDocument({ children }: { children: React.ReactNode }) {
       </head>
       <body>
         <ToastProvider>{children}</ToastProvider>
+        <HydrationFlag />
         <Scripts />
       </body>
     </html>
