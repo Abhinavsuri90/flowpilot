@@ -27,7 +27,7 @@ import {
 } from 'lucide-react'
 import { api, ApiError, qk, qs } from '~/lib/api'
 import { CsvError, literalMismatch, missingColumnsMessage, parseForContract, parseTable } from '~/lib/csv'
-import { formatParameterValue, parameterUnits, type ParameterUnit } from '~/lib/workflow/describe'
+import { AS_OF_KEY, formatParameterValue, parameterUnits, type ParameterUnit } from '~/lib/workflow/describe'
 import { formatDate, isIsoDate, todayIso, usesRelativeDates } from '~/lib/dates'
 import { compatibleSamples, fetchSample } from '~/lib/samples'
 import { exportFileName, resultWorkbook, saveBlob } from '~/lib/spreadsheet'
@@ -885,7 +885,15 @@ function ResultCard({ runId, detail, onClose }: { runId: string; detail: Workflo
             {params.map(([name, value], i) => (
               <span key={name}>
                 {i > 0 && ', '}
-                <code className="text-ink-2">{name}</code> = <span className="tabular font-medium text-ink-2">{formatParameterValue(value, units[name])}</span>
+                {name === AS_OF_KEY ? (
+                  <>
+                    as of <span className="tabular font-medium text-ink-2">{formatDate(String(value))}</span>
+                  </>
+                ) : (
+                  <>
+                    <code className="text-ink-2">{name}</code> = <span className="tabular font-medium text-ink-2">{formatParameterValue(value, units[name])}</span>
+                  </>
+                )}
               </span>
             ))}
             {ranOnOther && ' · ran on a different version than the one shown above'}

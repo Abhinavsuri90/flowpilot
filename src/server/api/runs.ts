@@ -31,6 +31,7 @@ const FORM_OVERHEAD = 64 * 1024
 function cleanFileName(name: string): string {
   const base = name.split(/[\\/]/).pop() ?? 'upload.csv'
   // Keep it printable and short; it's only ever rendered as text.
+  // eslint-disable-next-line no-control-regex -- control characters are exactly what this strips
   return base.replace(/[\u0000-\u001f\u007f]/g, '').slice(0, 200) || 'upload.csv'
 }
 

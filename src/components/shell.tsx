@@ -337,14 +337,15 @@ function ThemeToggle() {
   )
 }
 
-/** "⌘" on Apple platforms, "Ctrl" elsewhere (decided after hydration; SSR shows ⌘). */
+const noSubscribe = () => () => {}
+function modifierLabel(): string {
+  const platform = (navigator as Navigator & { userAgentData?: { platform?: string } }).userAgentData?.platform ?? navigator.platform ?? ''
+  return /mac|iphone|ipad|ipod/i.test(platform || navigator.userAgent) ? '⌘' : 'Ctrl '
+}
+
+/** "⌘" on Apple platforms, "Ctrl" elsewhere (SSR and hydration show ⌘; the browser decides right after). */
 function useModifierLabel(): string {
-  const [label, setLabel] = React.useState('⌘')
-  React.useEffect(() => {
-    const platform = (navigator as Navigator & { userAgentData?: { platform?: string } }).userAgentData?.platform ?? navigator.platform ?? ''
-    if (!/mac|iphone|ipad|ipod/i.test(platform || navigator.userAgent)) setLabel('Ctrl ')
-  }, [])
-  return label
+  return React.useSyncExternalStore(noSubscribe, modifierLabel, () => '⌘')
 }
 
 export function AppShell({ me, children }: { me: Me; children: React.ReactNode }) {
@@ -353,7 +354,12 @@ export function AppShell({ me, children }: { me: Me; children: React.ReactNode }
   const [paletteOpen, setPaletteOpen] = React.useState(false)
   const [createOpen, setCreateOpen] = React.useState(false)
   const pathname = useRouterState({ select: (s) => s.location.pathname })
-  React.useEffect(() => setDrawerOpen(false), [pathname])
+  // The mobile drawer closes when the route changes (adjusted during render, not in an effect).
+  const [drawerPath, setDrawerPath] = React.useState(pathname)
+  if (drawerPath !== pathname) {
+    setDrawerPath(pathname)
+    setDrawerOpen(false)
+  }
 
   React.useEffect(() => {
     const onKey = (e: KeyboardEvent) => {

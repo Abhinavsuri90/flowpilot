@@ -55,7 +55,7 @@ export function getDb(): DB {
 }
 
 /** Swaps the process-wide connection (tests use an in-memory database). */
-export function useDatabase(db: DB): DB {
+export function setDatabase(db: DB): DB {
   holder.__flowpilotDb = db
   return db
 }

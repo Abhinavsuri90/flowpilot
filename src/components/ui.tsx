@@ -6,11 +6,11 @@ export function cn(...classes: Array<string | false | null | undefined>): string
   return classes.filter(Boolean).join(' ')
 }
 
-/** False during SSR and until React has hydrated; used to disable controls that need JavaScript. */
+const noSubscribe = () => () => {}
+
+/** False during SSR and hydration, true afterwards: a store that never changes, read the way React expects. */
 export function useHydrated(): boolean {
-  const [hydrated, setHydrated] = React.useState(false)
-  React.useEffect(() => setHydrated(true), [])
-  return hydrated
+  return React.useSyncExternalStore(noSubscribe, () => true, () => false)
 }
 
 // ---------------------------------------------------------------------------

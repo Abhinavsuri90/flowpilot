@@ -1,0 +1,66 @@
+# Every push and pull request: types, lint, unit and API tests, the production
+# build, the browser suite, and the production image smoke-tested end to end.
+name: CI
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  checks:
+    name: Typecheck, lint, unit tests, build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci --ignore-scripts
+      - run: npm run typecheck
+      - run: npm run lint
+      - run: npm test
+      - run: npm run build
+
+  browser:
+    name: Browser tests (Playwright)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci --ignore-scripts
+      - run: npx playwright install --with-deps chromium
+      - run: npm run test:e2e
+      - uses: actions/upload-artifact@v4
+        if: failure()
+        with:
+          name: playwright-results
+          path: test-results
+          retention-days: 7
+
+  image:
+    name: Production image smoke test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci --ignore-scripts
+      - run: docker build -t flowpilot:ci .
+      - name: Start the container
+        run: |
+          docker run -d --name flowpilot -p 3000:3000 -e DEMO_MODE=true -e REGISTRATION=open flowpilot:ci
+          for i in $(seq 1 60); do
+            if curl -fsS http://localhost:3000/api/health >/dev/null 2>&1; then exit 0; fi
+            sleep 1
+          done
+          docker logs flowpilot
+          exit 1
+      - run: npm run smoke -- --base http://localhost:3000
+      - if: always()
+        run: docker rm -f flowpilot

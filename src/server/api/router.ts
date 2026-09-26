@@ -106,7 +106,7 @@ function assertSameOrigin(request: Request): void {
 
   const origin = request.headers.get('origin')
   if (origin) {
-    let originHost: string | null = null
+    let originHost: string | null
     try {
       originHost = new URL(origin).host
     } catch {

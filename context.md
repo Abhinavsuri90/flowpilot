@@ -1,5 +1,5 @@
 # FlowPilot: context
-_Last updated: 2026-09-27 · Phase 19 (API tokens) done; phase 20 (senior-level polish and final verification) starting · Free hosting kit for Oracle Cloud verified on a laptop; the owner runs the console steps_
+_Last updated: 2026-09-27 · Phase 20 (senior pass) done: lint clean, CI workflow, error boundary, screenshots reviewed, production image re-verified (smoke 78/78 in the container) · Ready for the owner to test and to deploy on Oracle Cloud Always Free (kit in `deploy/oracle/`)_
 
 ## What this is
 FlowPilot turns a one-sentence description of a repetitive CSV report into a saved, versioned recipe that a workspace can run on their own files, share and fork. AI drafts; a deterministic server executes; one access policy guards every request.
@@ -7,11 +7,19 @@ Stack: TanStack Start 1.168 (React 19.3, Vite 8, Nitro 3 beta), TanStack Router/
 Run: `npm install && npm run dev` → http://localhost:3000 (demo password `flowpilot-demo`)
 
 ## Current status
-- Phase: 19 done (owner: "make it the best ever"); phase 20 senior pass (lint, CI, error boundary, screenshots, container re-verification) next
-- Tests: 164/164 (`npm test`: engine 13, csv 18, validator 13, access 20, demo-loop 12, ai 12, hardening 15, accounts 17, language 14, governance 4, spreadsheet 8, dates 11, templates 3, tokens 4) · Browser 31/31 (`npm run test:e2e`: demo 4, features 19, accounts 6, a11y 2) · Smoke 78/78 checks over all 45 endpoints (`npm run smoke`, local dev) · Model eval 28/28 (median 3.6 s) · Typecheck: pass (strict unused) · Build: pass
+- Phase: 20 done. Nothing in progress; the owner tests next, then deploys (`deploy/oracle/README.md`)
+- Tests: 164/164 (`npm test`: engine 13, csv 18, validator 13, access 20, demo-loop 12, ai 12, hardening 15, accounts 17, language 14, governance 4, spreadsheet 8, dates 11, templates 3, tokens 4) · Browser 31/31 (`npm run test:e2e`: demo 4, features 19, accounts 6, a11y 2) · Smoke 78/78 checks over all 45 endpoints (`npm run smoke`, local dev and the production container) · Lint: clean (`npm run lint`) · `npm audit`: 0 vulnerabilities · Model eval 28/28 (median 3.6 s) · Typecheck: pass (strict unused) · Build: pass
 - App runs with: `npm install && npm run dev` → http://localhost:3000
 
 ## Done (with evidence)
+Phase 20: senior pass (evidence: `npm run lint` clean; `npm audit` 0 vulnerabilities (prod and dev); typecheck; 164/164; 31/31 browser incl. palette, theme, drawer, share/fork/JSON dialogs and invite sign-up after the hook refactors; `docker build` + container on :3456 → 5 migrations, `/` → 307 `/welcome`, smoke 78/78; six screenshots taken by `scripts/screenshots-features.ts` and looked at; an overflow probe of the editor with relative-date filters at 1440/1024/390 px: page width = viewport)
+- [x] ESLint flat config (`eslint.config.js`: `@eslint/js` recommended, typescript-eslint recommended, `eslint-plugin-react-hooks` recommended) + `npm run lint`; 19 findings fixed properly: `useHydrated`, `useTheme` and the ⌘/Ctrl label now use `useSyncExternalStore` (SSR snapshot + client snapshot) instead of set-state-in-effect; the palette reset, drawer close, JSON/share/fork dialog resets and the invite email fill use React's adjust-state-during-render pattern; the editor's dirty ref is copied in an effect; `useDatabase` → `setDatabase` (it isn't a hook); two `no-control-regex` exceptions documented inline
+- [x] `.github/workflows/ci.yml`: typecheck + lint + unit + build, the browser suite with artifacts on failure, and the production image built, started and smoke-tested. Not yet run on GitHub (the repo isn't pushed): written to mirror the local commands exactly
+- [x] Root `errorComponent` (`ErrorState` with retry) so a render error never leaves a blank page
+- [x] The result card shows the run day as "as of 27 Sep 2026" instead of `as_of = "2026-09-27"`
+- [x] `scripts/screenshots-features.ts` (landing, templates, date filter editor, chart, Excel sheet picker, API token dialog) → `docs/screenshots/11–16`, embedded in a README "Screenshots" section
+- [x] Probed, not a bug: the Run button looked disabled in a screenshot after switching workbook sheets; it is enabled from 0 ms (hover styling)
+
 Phase 19: personal API tokens (evidence: `tests/tokens.test.ts` 4; browser test "API tokens: minted once in account settings…"; smoke +7 checks incl. a bearer request with no cookie and no Origin, `403 SESSION_REQUIRED`, revocation → 401; the dev server had to be restarted for migration 5, which the 500s in its log showed)
 - [x] Migration 5 `api_tokens` (id, user, name, SHA-256 `token_hash`, `fp_xxxxxxxx` prefix, created/expires/last_used/revoked); `createApiToken` (secret `fp_` + 43 URL-safe chars, returned once), `listApiTokens`, `countActiveApiTokens`, `revokeApiToken`
 - [x] `userFromRequest` accepts `Authorization: Bearer fp_…` (unrevoked, unexpired, hash match; `last_used_at` refreshed at most every 5 min; `X-Workspace-Id` picks another workspace you belong to); `SessionUser.via: 'session' | 'token'`
@@ -150,12 +158,13 @@ Phase 8 hardening
 - [x] README: quick start, AI setup, OpenRouter model comparison, demo script, architecture, security, tests, limitations
 
 ## In progress
-- Phase 20: senior-level pass: ESLint config + `npm run lint`, GitHub Actions CI workflow, a root error boundary, refreshed screenshots (looked at), `npm audit`, production image rebuilt and smoke-tested with every feature, final full verification, final report
+- Nothing. The owner tests the app next (`npm install && npm run dev`, or the Docker image), then deploys with `deploy/oracle/push.sh`
 
 ## Next steps (ordered)
 1. Owner: Oracle Cloud account (card for verification only) → Ubuntu 24.04 A1.Flex VM → security list TCP 80/443 → `deploy/oracle/push.sh ubuntu@<ip>` → `npm run smoke -- --base https://<ip-dashes>.sslip.io` (steps in `deploy/oracle/README.md`)
 2. Owner: rotate the OpenRouter key that was shared in chat (enter the new one when `push.sh` asks, or later in the server's `deploy/oracle/.env`)
-3. Phase 20 (see In progress), then the final report
+3. After deploying: `npm run smoke -- --base https://<domain>` and, optionally, `npm run eval:model` with the new key
+4. Ideas not built (documented in README limitations): CSP with nonces, SSO/2FA/email verification, scheduled runs with stored inputs, Postgres for many servers
 4. Optional, for the resume: a public GitHub repo (`brew install gh`, `gh auth login`, then `gh repo create flowpilot --public --source . --push`)
 
 ## Decisions log
@@ -235,6 +244,9 @@ Phase 8 hardening
 | 2026-09-27 | `/` for a signed-out visitor → `/welcome`; every other path → `/login?redirect=` | A public front door for the showcase without moving the dashboard | A separate marketing site; landing at `/` with the dashboard elsewhere |
 | 2026-09-27 | API tokens: hashed, `fp_`-prefixed, expiring, capped at 10, session-only endpoints for account/security/membership | A leaked token must not become account takeover; scripts need only recipes and runs | Long-lived unhashed keys; tokens with full account power; OAuth (too much for one server) |
 | 2026-09-27 | Tokens work in the first workspace unless `X-Workspace-Id` says otherwise | Scripts have no session row to remember a workspace | A per-token workspace at creation |
+| 2026-09-27 | Hook lint findings fixed with `useSyncExternalStore` / adjust-during-render, not disabled | The rules point at real hydration and reset patterns; the fixes remove a render each | `eslint-disable` per site |
+| 2026-09-27 | ESLint checks correctness only (no formatting rules); no Prettier config | The code is consistently formatted already; formatting churn would hide real diffs | Prettier + lint-staged |
+| 2026-09-27 | CI workflow committed although it can't be run here | It mirrors the local commands exactly; it is the natural next step once the repo is public | Waiting until the repo is pushed |
 
 ## Deviations from the brief
 - Added optional `ANTHROPIC_BASE_URL` / `OPENAI_BASE_URL` / `OPENROUTER_BASE_URL` · the browser test needs a local mock model (the model call is server-side) · no change when unset
@@ -253,13 +265,13 @@ Phase 8 hardening
 - Open (low): no SSO, 2FA or email verification; accounts can't be deleted from the UI · documented
 - By design: CSV line numbers count records (= spreadsheet row numbers); only in a text editor does a quoted newline shift them · documented
 - Open (cosmetic): build prints rolldown "use client" warnings from lucide-react; npm warns that Vitest's engines omit Node 25 (tests pass)
-- Open (cosmetic): react-hooks lint (not installed in the repo) flags 10 intentional client-only effects (hydration flag, theme, platform, dialog resets); reviewed, no bug (the fork dialog reset was probed in a browser: no reset on refetch)
+- Fixed in phase 20: the react-hooks lint findings (hydration flag, theme, platform label, dialog resets) are gone; ESLint is now part of the repo and clean
 
 ## How to run
 - Install: `npm install` (Node 22+; built on Node 25.3) · E2E browser once: `npx playwright install chromium`
 - Dev: `npm run dev` (predev seeds `./data/flowpilot.db` if empty) → http://localhost:3000
 - Seed / reset: `npm run seed` / `npm run seed:reset`
-- Test: `npm test` · E2E: `npm run test:e2e` · Typecheck: `npm run typecheck`
+- Test: `npm test` · E2E: `npm run test:e2e` · Typecheck: `npm run typecheck` · Lint: `npm run lint`
 - Build / start: `npm run build` → `npm start`
 - AI: put keys in `.env` (see `.env.example`), then `npm run check:model` and `npm run eval:model`
 - Screenshots: `npx tsx scripts/screenshots.ts --as asha --theme both / /library` (dev server running)
@@ -275,9 +287,9 @@ DATABASE_PATH, SEED_PASSWORD, DEMO_MODE, REGISTRATION, APP_URL, TRUST_PROXY (`tr
 - `src/server/ai/`: `config.ts` (providers, env) · `generate.ts` (prompt, schema, adapters, repair loop)
 - `src/routes/`: `__root.tsx` · `welcome.tsx` (public landing) · `login.tsx` · `signup.tsx` · `invite.$token.tsx` · `forgot-password.tsx` · `reset-password.$token.tsx` · `_app.tsx` (guard + shell) · `_app/{index,library,runs,access,account,system-design,workflows.new,w.$workflowId.index,w.$workflowId.edit}.tsx` · `_app/$.tsx` (in-app 404) · `api/$.ts`
 - `src/components/`: `ui.tsx` (incl. `Menu`) · `templates.tsx` (gallery) · `charts.tsx` (run chart + `ResultChart`) · `shell.tsx` (workspace switcher, create-workspace dialog) · `auth-layout.tsx` (sign-in pages layout, password input) · `command.tsx` · `editor.tsx` · `results.tsx` · `charts.tsx` · `workflow-bits.tsx` · `file-drop.tsx` · `share-dialog.tsx` · `fork-dialog.tsx` · `access-panel.tsx` · `states.tsx` · `toast.tsx` · `logo.tsx` · `theme.ts` · `diagrams/{architecture,versioning}.tsx`
-- `src/start.ts`: global request middleware (security headers, server-fn CSRF)
+- `src/start.ts`: global request middleware (security headers, server-fn CSRF) · `eslint.config.js` · `.github/workflows/ci.yml`
 - `tests/`: 14 Vitest suites (incl. `hardening`, `accounts`, `language`, `governance`, `spreadsheet`, `dates`, `templates`, `tokens`) + `helpers/` · `tests/e2e/`: `demo.spec.ts`, `features.spec.ts`, `accounts.spec.ts`, `a11y.spec.ts`, `mock-model.ts` · `playwright.config.ts`
-- `scripts/`: `seed.ts`, `check-model.ts`, `eval-model.ts`, `smoke.ts`, `screenshots.ts`, `backup-db.mjs` (also in the image), `make-fixtures.mjs` (xlsx fixtures) · `fixtures/`, `public/samples/`, `docs/system-design.md`, `docs/screenshots/`
+- `scripts/`: `seed.ts`, `check-model.ts`, `eval-model.ts`, `smoke.ts`, `screenshots.ts`, `screenshots-features.ts` (clicks through the newer features), `backup-db.mjs` (also in the image), `make-fixtures.mjs` (xlsx fixtures) · `fixtures/`, `public/samples/`, `docs/system-design.md`, `docs/screenshots/`
 - `deploy/oracle/`: `README.md` (console walkthrough) · `docker-compose.yml` · `Caddyfile` · `setup.sh` · `backup.sh` · `push.sh` · `Dockerfile`, `docker-entrypoint.sh`, `.dockerignore`, `fly.toml` at the root
 - `src/lib/samples.ts` (sample catalogue) · `src/server/ratelimit.ts` (drafting limits)
 

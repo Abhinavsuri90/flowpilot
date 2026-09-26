@@ -133,10 +133,12 @@ export function RecipeEditor(props: Props) {
   const definitionChanged = JSON.stringify(raw) !== initialDefinition
   const detailsChanged = draft.title.trim() !== props.initial.title.trim() || draft.description.trim() !== props.initial.description.trim()
 
-  // Refs, not state: the blocker runs during navigation, possibly in the same
-  // tick as a successful save, and must see the latest values.
+  // Refs, not state: the blocker runs during navigation and must see the latest
+  // values without re-subscribing; the dirty flag is copied after every render.
   const dirtyRef = React.useRef(dirty)
-  dirtyRef.current = dirty
+  React.useEffect(() => {
+    dirtyRef.current = dirty
+  })
   const savedRef = React.useRef(false)
   useBlocker({
     shouldBlockFn: () =>
@@ -1606,12 +1608,16 @@ function JsonDialog({
 }) {
   const [textValue, setTextValue] = React.useState('')
   const [issues, setIssues] = React.useState<ApiIssue[] | null>(null)
-  React.useEffect(() => {
-    if (open) {
-      setTextValue(JSON.stringify(current, null, 2))
+  // Opening shows the current definition afresh (adjusted during render, not in an effect).
+  const [shownFor, setShownFor] = React.useState<unknown>(null)
+  const showing = open ? current : null
+  if (shownFor !== showing) {
+    setShownFor(showing)
+    if (showing !== null) {
+      setTextValue(JSON.stringify(showing, null, 2))
       setIssues(null)
     }
-  }, [open, current])
+  }
 
   const apply = () => {
     let parsed: unknown

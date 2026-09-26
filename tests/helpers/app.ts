@@ -1,5 +1,5 @@
 import { handleApi } from '../../src/server/api/router'
-import { openDatabase, useDatabase } from '../../src/server/db'
+import { openDatabase, setDatabase } from '../../src/server/db'
 import { seedDatabase } from '../../src/server/seed'
 import { resetLoginThrottle } from '../../src/server/auth'
 import { resetAccountLimits } from '../../src/server/ratelimit'
@@ -11,7 +11,7 @@ export const PASSWORD = 'flowpilot-demo'
 
 /** A fresh in-memory database with the demo seed, used by the real dispatcher. */
 export async function freshApp() {
-  const db = useDatabase(openDatabase(':memory:'))
+  const db = setDatabase(openDatabase(':memory:'))
   resetLoginThrottle()
   resetAccountLimits()
   clearMailOutbox()
@@ -43,7 +43,7 @@ export class Client {
     }
     const res = await handleApi(new Request(BASE + path, { method, headers, body }))
     const text = await res.text()
-    let parsed: unknown = null
+    let parsed: unknown
     try {
       parsed = text ? JSON.parse(text) : null
     } catch {

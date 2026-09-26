@@ -1,4 +1,4 @@
-import type { DatePart, DateUnit, RelativeDate, WorkflowDefinition } from './workflow/schema'
+import type { DatePart, RelativeDate, WorkflowDefinition } from './workflow/schema'
 
 // Calendar dates as "YYYY-MM-DD" text, with the maths done on day numbers
 // rather than Date objects: a CSV or a workbook has no time zone, so the same

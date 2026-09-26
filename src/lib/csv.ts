@@ -110,7 +110,7 @@ export function parseTable(input: CsvInput): ParsedTable {
   const rows = parsed.data
 
   // The header is the first non-blank line.
-  let headerIndex = rows.findIndex((cells) => !isBlank(cells))
+  const headerIndex = rows.findIndex((cells) => !isBlank(cells))
   if (headerIndex === -1) throw new CsvError(422, 'The file is empty.', [{ path: 'file', message: 'The file has no header row' }])
 
   const headers = rows[headerIndex]!.map((h) => h.trim())

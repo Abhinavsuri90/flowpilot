@@ -27,10 +27,18 @@ export function CommandPalette({ open, onClose, pages }: { open: boolean; onClos
     return () => window.clearTimeout(t)
   }, [q])
 
+  // Opening starts a fresh search (adjusted during render); focus moves in an effect, and back on close.
+  const [wasOpen, setWasOpen] = React.useState(open)
+  if (open !== wasOpen) {
+    setWasOpen(open)
+    if (open) {
+      setQ('')
+      setDebounced('')
+      setActive(0)
+    }
+  }
   React.useEffect(() => {
     if (!open) return
-    setQ('')
-    setActive(0)
     const previous = document.activeElement as HTMLElement | null
     window.setTimeout(() => inputRef.current?.focus(), 0)
     return () => previous?.focus?.()
@@ -58,7 +66,12 @@ export function CommandPalette({ open, onClose, pages }: { open: boolean; onClos
     return [...recipeItems, ...pageItems]
   }, [recipes.data, pages, q])
 
-  React.useEffect(() => setActive(0), [debounced])
+  // A new query starts at the first result.
+  const [activeFor, setActiveFor] = React.useState(debounced)
+  if (activeFor !== debounced) {
+    setActiveFor(debounced)
+    setActive(0)
+  }
 
   const go = (item: Item | undefined) => {
     if (!item) return

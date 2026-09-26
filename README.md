@@ -11,6 +11,7 @@ The full loop works end to end, and a real browser test proves it: **describe â†
 ## Contents
 
 - [Features](#features)
+- [Screenshots](#screenshots)
 - [Quick start](#quick-start)
 - [AI drafting and model choice](#ai-drafting-and-model-choice)
 - [A five-minute demo](#a-five-minute-demo)
@@ -75,6 +76,14 @@ The full loop works end to end, and a real browser test proves it: **describe â†
 - A dashboard with a checklist of the reuse loop, stats, a 14-day run chart, recent runs and a permission-filtered activity feed.
 - A System design page with interactive diagrams and the live schema, triggers, limits and endpoints of the running server.
 - âŒ˜K / Ctrl K search, light and dark themes, a phone-width layout, and pages that pass an automated WCAG 2.1 AA scan.
+
+## Screenshots
+
+| | |
+|---|---|
+| ![The public landing page](docs/screenshots/11-landing.png) The landing page at `/welcome` | ![Templates on New recipe](docs/screenshots/12-templates.png) Ten templates, filterable by tag |
+| ![A date filter relative to the run day](docs/screenshots/13-date-filter-editor.png) A template loaded with its sample values | ![Monthly revenue as a chart](docs/screenshots/14-monthly-revenue-chart.png) A run as of a chosen day, read as a chart |
+| ![An Excel workbook with a sheet picker](docs/screenshots/15-excel-upload.png) An Excel workbook converted in the browser | ![A new API token](docs/screenshots/16-api-token.png) An API token, shown once |
 
 ## Quick start
 
@@ -301,8 +310,11 @@ npm test                          # 164 unit and API tests
 npx playwright install chromium   # once
 npm run test:e2e                  # 31 browser tests
 npm run typecheck
+npm run lint                      # ESLint: TypeScript recommended rules plus the rules of hooks
 npm run smoke                     # every endpoint and error code against a running server (--base <url>)
 ```
+
+Every push runs the same checks on GitHub Actions ([`.github/workflows/ci.yml`](.github/workflows/ci.yml)): typecheck, lint, unit tests and the build; the browser suite; and the production image built, started and smoke-tested. The workflow was written to mirror the local commands and has not yet run on GitHub, because the repository has not been pushed.
 
 - **Unit and API tests (Vitest), 164 in total:** engine 13, CSV 18, validator 13, access 20, demo loop 12, AI 12 (incl. relative dates, date parameters and periods from the flat reply, and a repair), hardening 15 (HTTP methods, HSTS, redirects, sessions, no-op edits, the activity feed on a busy team, list paging and run counts, the client address behind a proxy), accounts 17 (sign-up modes and rules, invitations, password resets, account settings, workspaces, removal and hand-over), language 14 (summaries and exact rounding, sort, top N, column choices, *contains* and *is one of*, whole numbers, validation messages, the seeded examples, a top-N run and CSV export through the API), governance 4 (archive and restore, the audit log's privacy rules, filters, paging and CSV), spreadsheet 8 (workbook â†’ CSV on xlsx/xls/xlsb/ods files written by SheetJS: raw numbers, ISO dates, sheet choice and limits, refusing renamed text files; results â†’ Excel with real numbers and an about sheet), dates 11 (strict date reading, calendar maths incl. ISO weeks and leap years, relative dates, periods, earliest and latest per group, every validator message, the as-of day through the API), templates 3 (every template validates, matches its sample's columns, and runs on its sample to known rows as of 27 Sep 2026), tokens 4 (minting and one-time display, hash-only storage, a script running a recipe with no cookie or Origin, session-only endpoints, demo accounts, revocation, expiry, junk headers, the 10-token cap, X-Workspace-Id). They call the same `handleApi(Request)` the server uses, with real session cookies, against an in-memory SQLite database, so access rules are tested end to end rather than mocked. The model is always stubbed, and the tests never read `.env`.
 - **Browser tests (Playwright), 31 in total:**
@@ -312,6 +324,7 @@ npm run smoke                     # every endpoint and error code against a runn
   - `a11y.spec.ts` (2) runs an axe-core WCAG 2.1 AA scan of every page, including the landing page, sign-up, invitations and account settings, in light and dark mode.
 - The browser tests use their own database and a stand-in model (`tests/e2e/mock-model.ts`), so they never spend real credits. Screenshots of each demo stage are saved to `docs/screenshots/`.
 - **Model quality:** `npm run eval:model`, described above.
+- **Lint:** `npm run lint` (ESLint with typescript-eslint and the React hooks rules; clean, with two documented exceptions for regexes that strip control characters).
 - **Smoke test:** `npm run smoke` signs up two throwaway accounts on any running FlowPilot and makes 78 checks across all 45 endpoints: the happy paths and the important errors (401, 403, 404, 405, 409, 413, 415, 422). It is how a deployment is verified: `npm run smoke -- --base https://your-app`.
 
 ## Configuration

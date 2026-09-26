@@ -38,10 +38,14 @@ function SignupPage() {
     enabled: !!inviteToken,
     retry: false,
   })
-  React.useEffect(() => {
-    // An email invite fills (and fixes) the address.
-    if (invite.data?.email) setValues((v) => ({ ...v, email: invite.data!.email! }))
-  }, [invite.data])
+  // An email invite fills (and fixes) the address: adjusted during render when the
+  // invite arrives, so no frame shows an empty field and no effect re-renders.
+  const [filledFrom, setFilledFrom] = React.useState<string | null>(null)
+  const invitedEmail = invite.data?.email ?? null
+  if (invitedEmail && filledFrom !== invitedEmail) {
+    setFilledFrom(invitedEmail)
+    setValues((v) => ({ ...v, email: invitedEmail }))
+  }
 
   const joining = !!inviteToken && !!invite.data
   const register = useMutation({

@@ -75,9 +75,13 @@ export function ShareDialog({
   const [visibility, setVisibility] = React.useState<Visibility>(workflow.visibility)
   const queryClient = useQueryClient()
   const toast = useToast()
-  React.useEffect(() => {
-    if (open) setVisibility(workflow.visibility)
-  }, [open, workflow.visibility])
+  // Opening starts from the saved visibility (adjusted during render, not in an effect).
+  const [openedWith, setOpenedWith] = React.useState<Visibility | null>(null)
+  const saved = open ? workflow.visibility : null
+  if (openedWith !== saved) {
+    setOpenedWith(saved)
+    if (saved !== null) setVisibility(saved)
+  }
 
   const save = useMutation({
     mutationFn: (next: Visibility) => api.patch<{ workflow: WorkflowSummary }>(`/api/workflows/${workflow.id}`, { visibility: next }),

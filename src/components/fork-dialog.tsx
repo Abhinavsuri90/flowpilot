@@ -17,12 +17,13 @@ export function ForkDialog({ target, onClose }: { target: Target | null; onClose
   const navigate = useNavigate()
   const toast = useToast()
 
-  React.useEffect(() => {
-    if (target) {
-      setTitle(`Copy of ${target.title}`.slice(0, 120))
-      setVersionId(target.versionId)
-    }
-  }, [target])
+  // A new target resets the form (adjusted during render, not in an effect).
+  const [formFor, setFormFor] = React.useState<Target | null>(null)
+  if (target && formFor !== target) {
+    setFormFor(target)
+    setTitle(`Copy of ${target.title}`.slice(0, 120))
+    setVersionId(target.versionId)
+  }
 
   const fork = useMutation({
     mutationFn: () =>

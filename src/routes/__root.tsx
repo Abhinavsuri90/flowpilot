@@ -5,7 +5,7 @@ import type { QueryClient } from '@tanstack/react-query'
 import appCss from '~/styles/app.css?url'
 import { ToastProvider } from '~/components/toast'
 import { THEME_SCRIPT } from '~/components/theme'
-import { NotFoundState } from '~/components/states'
+import { ErrorState, NotFoundState } from '~/components/states'
 
 export const Route = createRootRouteWithContext<{ queryClient: QueryClient }>()({
   head: () => ({
@@ -28,6 +28,12 @@ export const Route = createRootRouteWithContext<{ queryClient: QueryClient }>()(
   notFoundComponent: () => (
     <div className="mx-auto max-w-xl p-10">
       <NotFoundState />
+    </div>
+  ),
+  // A render error anywhere shows a plain page with a retry instead of a blank screen.
+  errorComponent: ({ error, reset }) => (
+    <div className="mx-auto max-w-xl p-10">
+      <ErrorState error={error} onRetry={reset} />
     </div>
   ),
 })
