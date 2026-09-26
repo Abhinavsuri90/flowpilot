@@ -168,3 +168,36 @@ test('sign-in, sign-up and reset pages fit a phone screen', async ({ page }) => 
     expect(await page.evaluate(() => document.documentElement.scrollWidth), path).toBeLessThanOrEqual(390)
   }
 })
+
+test('API tokens: minted once in account settings, usable by a script, revoked with one click', async ({ page }) => {
+  const origin = new URL((await page.goto('/login'))!.url()).origin
+  const registered = await page.request.post('/api/auth/register', {
+    headers: { origin },
+    data: { name: 'Tia Bot', email: `tia.${unique}@acme.test`, password: PASSWORD, workspaceName: `Acme Data ${unique}` },
+  })
+  expect(registered.status()).toBe(201)
+  await open(page, '/account')
+  await expect(page.getByText('No tokens yet.')).toBeVisible()
+  await page.getByRole('button', { name: 'New token' }).click()
+  await page.locator('#new-token-name').fill('nightly-report')
+  await page.getByLabel('Expires in').selectOption('30')
+  await page.getByRole('button', { name: 'Create token' }).click()
+  const secret = await page.getByLabel('Token', { exact: true }).inputValue()
+  expect(secret).toMatch(/^fp_/)
+  await expect(page.getByLabel('Try it')).toHaveValue(`curl -H "Authorization: Bearer ${secret}" ${origin}/api/me`)
+  await page.getByRole('button', { name: 'Done' }).click()
+  await expect(page.getByText('nightly-report')).toBeVisible()
+  await expect(page.getByText(`${secret.slice(0, 11)}…`)).toBeVisible()
+  await expect(page.getByText(/never used · expires/)).toBeVisible()
+
+  // The secret never appears again on the page, but a script can use it.
+  await expect(page.getByText(secret)).toHaveCount(0)
+  const asScript = await page.request.get('/api/me', { headers: { authorization: `Bearer ${secret}` } })
+  expect(asScript.status()).toBe(200)
+
+  await page.getByRole('button', { name: 'Revoke nightly-report' }).click()
+  await page.getByRole('button', { name: 'Yes, revoke' }).click()
+  await expect(page.getByText('Token revoked')).toBeVisible()
+  await expect(page.getByText('No tokens yet.')).toBeVisible()
+  expect((await page.request.get('/api/me', { headers: { authorization: `Bearer ${secret}` } })).status()).toBe(401)
+})

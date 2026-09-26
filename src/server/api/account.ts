@@ -1,6 +1,7 @@
 import { z } from 'zod'
 import { ApiError, forbidden, invalid, json, notFound, readJson } from '../http'
 import { clearLoginFailures, hashPassword, isLoginThrottled, recordLoginFailure, verifyPassword } from '../auth'
+import { API_TOKEN_LIMITS, countActiveApiTokens, createApiToken, listApiTokens, revokeApiToken, type ApiTokenRow } from '../accounts'
 import {
   addMember,
   createPasswordReset,
@@ -23,7 +24,7 @@ import { recordEvent } from '../events'
 import { sendMail } from '../mail'
 import { takePasswordReset, takeRegistration } from '../ratelimit'
 import { emailProblem, nameProblem, normalizeEmail, passwordProblem, workspaceNameProblem } from '../../lib/account'
-import type { ApiIssue, SessionInfo } from '../../lib/types'
+import type { ApiIssue, ApiTokenInfo, SessionInfo } from '../../lib/types'
 import type { ApiContext, AuthedContext } from './context'
 import { issueSession, toMe } from './auth'
 
@@ -258,6 +259,52 @@ export function sessions(ctx: AuthedContext): Response {
     device: describeDevice(s.user_agent),
   }))
   return json({ sessions: list })
+}
+
+// ----- personal API tokens ------------------------------------------------------------
+
+function toTokenInfo(row: ApiTokenRow, now = Date.now()): ApiTokenInfo {
+  return {
+    id: row.id,
+    name: row.name,
+    prefix: `${row.prefix}…`,
+    createdAt: row.created_at,
+    expiresAt: row.expires_at,
+    lastUsedAt: row.last_used_at,
+    expired: Date.parse(row.expires_at) <= now,
+  }
+}
+
+/** GET /api/me/tokens: your tokens (never the secrets). */
+export function tokens(ctx: AuthedContext): Response {
+  return json({ tokens: listApiTokens(ctx.db, ctx.user.id).map((row) => toTokenInfo(row)) })
+}
+
+const CreateTokenBody = z.strictObject({
+  name: z
+    .string({ error: 'Give the token a name, like the script that will use it' })
+    .trim()
+    .min(1, { error: 'Give the token a name, like the script that will use it' })
+    .max(API_TOKEN_LIMITS.nameMax, { error: `Names can be at most ${API_TOKEN_LIMITS.nameMax} characters` }),
+  expiresInDays: z.union([z.literal(30), z.literal(90), z.literal(365)], { error: 'Expiry is 30, 90 or 365 days' }).default(90),
+})
+
+/** POST /api/me/tokens: a new token, whose secret is returned exactly once. */
+export async function createToken(ctx: AuthedContext): Promise<Response> {
+  if (ctx.user.isDemo) throw forbidden('Demo accounts can’t create API tokens. Create your own account to script FlowPilot.')
+  const parsed = CreateTokenBody.safeParse(await readJson(ctx.request))
+  if (!parsed.success) throw invalid(parsed.error.issues[0]?.message ?? 'Check the token details')
+  if (countActiveApiTokens(ctx.db, ctx.user.id) >= API_TOKEN_LIMITS.active) {
+    throw invalid(`You already have ${API_TOKEN_LIMITS.active} active tokens. Revoke one you no longer use first.`, undefined, 'TOKEN_LIMIT')
+  }
+  const { row, secret } = createApiToken(ctx.db, ctx.user.id, { name: parsed.data.name, expiresInDays: parsed.data.expiresInDays })
+  return json({ token: toTokenInfo(row), secret }, { status: 201 })
+}
+
+/** DELETE /api/me/tokens/:id: revoke one of your tokens; scripts using it get 401 from then on. */
+export function revokeToken(ctx: AuthedContext): Response {
+  if (!revokeApiToken(ctx.db, ctx.user.id, ctx.params.id!)) throw notFound('That token')
+  return json({ revoked: true })
 }
 
 /** DELETE /api/me/sessions: sign out everywhere except this browser. */

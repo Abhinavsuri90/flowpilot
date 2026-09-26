@@ -78,6 +78,9 @@ export type InviteLanding = {
 
 export type SessionInfo = { id: string; current: boolean; createdAt: string; lastSeenAt: string | null; device: string }
 
+/** A personal API token as listed on the account page (never the secret itself). */
+export type ApiTokenInfo = { id: string; name: string; prefix: string; createdAt: string; expiresAt: string; lastUsedAt: string | null; expired: boolean }
+
 // ----- Recipes ---------------------------------------------------------------
 
 

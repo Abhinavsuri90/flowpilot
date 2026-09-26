@@ -586,6 +586,7 @@ function SecuritySection() {
           ['Password guessing / lockout abuse', 'Three-way sign-in throttle; strong-password rules', 'accounts suite'],
           ['Account enumeration', 'Uniform sign-in errors, dummy scrypt for unknown emails, uniform forgot-password answer', 'accounts suite'],
           ['Open redirect after sign-in', 'Only same-site paths; control characters refused', 'hardening suite'],
+          ['Stolen or leaked API token', 'fp_-prefixed tokens stored only as SHA-256 hashes; they expire, can be revoked, and can never reach account, password, membership or token endpoints (403 SESSION_REQUIRED)', 'tokens suite, smoke'],
           ['Spreadsheet formula injection', 'Formula-like cells escaped in every CSV export; the Excel export writes text, never formulas', 'csv, governance and spreadsheet suites'],
           ['Hostile workbooks (archive bombs, macros)', 'Excel/ODS files become CSV in the browser (SheetJS on demand, 4 MB cap, zip/CFB bytes only, bounded rows); the server only ever parses CSV', 'spreadsheet suite, browser test “Excel files”'],
           ['Code injection via recipes or AI', 'Allowlisted steps; values are literals or declared parameters; nothing evaluated', 'validator and language suites'],

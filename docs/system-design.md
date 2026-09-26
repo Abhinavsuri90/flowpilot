@@ -55,7 +55,7 @@ Two paths share only the dispatcher, the access policy and the validator:
 
 The model is never on the execution path, so saved recipes keep running when the AI provider is down, slow or unconfigured.
 
-All 42 REST endpoints sit behind one dispatcher, `handleApi(Request)`. It matches the route, answers `HEAD` and `OPTIONS`, rejects cross-site writes, reads the session, runs the handler, and maps every error to one JSON shape. Tests call the same function directly.
+All 45 REST endpoints sit behind one dispatcher, `handleApi(Request)`. It matches the route, answers `HEAD` and `OPTIONS`, rejects cross-site writes, reads the session or the bearer token, runs the handler, and maps every error to one JSON shape. Tests call the same function directly.
 
 ## 2. Pressing Run: the request lifecycle
 
@@ -264,6 +264,7 @@ Pure functions in `src/lib/policy.ts` decide every permission. The API enforces 
 | Password guessing and lockout abuse | Three-way sign-in throttle; strong-password rules | `tests/accounts` |
 | Account enumeration | Uniform sign-in errors with a dummy scrypt; uniform forgot-password answer | `tests/accounts` |
 | Open redirect after sign-in | Same-site paths only; control characters refused | `tests/hardening` |
+| Stolen or leaked API token | Tokens are `fp_`-prefixed, stored only as SHA-256 hashes, expire (30/90/365 days), are revocable, and can never reach account, password, membership or token endpoints (`403 SESSION_REQUIRED`) | `tests/tokens` |
 | Spreadsheet formula injection | Formula-like cells escaped in every CSV export; the Excel export writes text cells, never formulas | `tests/csv`, `tests/governance`, `tests/spreadsheet` |
 | Hostile workbooks (archive bombs, macros) | Excel/ODS files are converted to CSV in the browser by SheetJS (loaded on demand): 4 MB cap, only zip/CFB bytes accepted, reading stops at 10,002 rows; the server only ever parses CSV | `tests/spreadsheet`, browser test "Excel files" |
 | Code injection via recipes or AI | Allowlisted steps; literals and declared parameters only; nothing evaluated | `tests/validator`, `tests/language` |
@@ -311,7 +312,7 @@ flowchart LR
   - `TRUST_PROXY=true` behind Caddy or nginx (the last `X-Forwarded-For` hop, the one the proxy appended), `fly` on Fly.io (`Fly-Client-IP`); each mode believes exactly one header the proxy writes, so a client's own forwarded headers can't spoof rate limits
   - `APP_URL`
   - secrets: `OPENROUTER_API_KEY`, and optionally `RESEND_API_KEY` and `MAIL_FROM`
-- **Verification:** the platform polls `/api/health`, and `npm run smoke -- --base https://<app>` exercises all 42 endpoints and their error codes against the deployment.
+- **Verification:** the platform polls `/api/health`, and `npm run smoke -- --base https://<app>` exercises all 45 endpoints and their error codes against the deployment.
 
 ## 11. Scaling path
 

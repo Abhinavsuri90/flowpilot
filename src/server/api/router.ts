@@ -20,8 +20,8 @@ type Method = 'GET' | 'POST' | 'PATCH' | 'DELETE'
 type Route = {
   method: Method
   pattern: string
-  /** false = anonymous callers allowed (login, logout). */
-  auth: boolean
+  /** false = anonymous callers allowed (login, logout); 'session' = a browser session only, never an API token (account and security settings). */
+  auth: boolean | 'session'
   handler: (ctx: AuthedContext) => Response | Promise<Response>
 }
 
@@ -33,12 +33,15 @@ const ROUTES: Route[] = [
   { method: 'GET', pattern: '/api/auth/reset/:token', auth: false, handler: account.resetInfo },
   { method: 'POST', pattern: '/api/auth/reset', auth: false, handler: account.resetPassword },
   { method: 'GET', pattern: '/api/me', auth: true, handler: auth.me },
-  { method: 'PATCH', pattern: '/api/me', auth: true, handler: account.updateMe },
-  { method: 'POST', pattern: '/api/me/password', auth: true, handler: account.changePassword },
-  { method: 'GET', pattern: '/api/me/sessions', auth: true, handler: account.sessions },
-  { method: 'DELETE', pattern: '/api/me/sessions', auth: true, handler: account.signOutOthers },
-  { method: 'POST', pattern: '/api/me/workspace', auth: true, handler: account.switchWorkspace },
-  { method: 'POST', pattern: '/api/workspaces', auth: true, handler: account.createWorkspaceHandler },
+  { method: 'PATCH', pattern: '/api/me', auth: 'session', handler: account.updateMe },
+  { method: 'POST', pattern: '/api/me/password', auth: 'session', handler: account.changePassword },
+  { method: 'GET', pattern: '/api/me/sessions', auth: 'session', handler: account.sessions },
+  { method: 'DELETE', pattern: '/api/me/sessions', auth: 'session', handler: account.signOutOthers },
+  { method: 'POST', pattern: '/api/me/workspace', auth: 'session', handler: account.switchWorkspace },
+  { method: 'GET', pattern: '/api/me/tokens', auth: 'session', handler: account.tokens },
+  { method: 'POST', pattern: '/api/me/tokens', auth: 'session', handler: account.createToken },
+  { method: 'DELETE', pattern: '/api/me/tokens/:id', auth: 'session', handler: account.revokeToken },
+  { method: 'POST', pattern: '/api/workspaces', auth: 'session', handler: account.createWorkspaceHandler },
   { method: 'GET', pattern: '/api/health', auth: false, handler: ({ db }) => json({ status: db.prepare('SELECT 1').pluck().get() === 1 ? 'ok' : 'degraded' }) },
   { method: 'GET', pattern: '/api/dashboard', auth: true, handler: dashboard.get },
   { method: 'GET', pattern: '/api/workflows', auth: true, handler: workflows.list },
@@ -56,21 +59,21 @@ const ROUTES: Route[] = [
   { method: 'GET', pattern: '/api/runs/:id', auth: true, handler: runs.detail },
   { method: 'GET', pattern: '/api/runs/:id/csv', auth: true, handler: runs.csv },
   { method: 'GET', pattern: '/api/workspace', auth: true, handler: workspace.get },
-  { method: 'PATCH', pattern: '/api/workspace', auth: true, handler: workspace.rename },
-  { method: 'POST', pattern: '/api/workspace/leave', auth: true, handler: workspace.leave },
-  { method: 'PATCH', pattern: '/api/workspace/members/:userId', auth: true, handler: workspace.setRole },
-  { method: 'DELETE', pattern: '/api/workspace/members/:userId', auth: true, handler: workspace.removeMember },
+  { method: 'PATCH', pattern: '/api/workspace', auth: 'session', handler: workspace.rename },
+  { method: 'POST', pattern: '/api/workspace/leave', auth: 'session', handler: workspace.leave },
+  { method: 'PATCH', pattern: '/api/workspace/members/:userId', auth: 'session', handler: workspace.setRole },
+  { method: 'DELETE', pattern: '/api/workspace/members/:userId', auth: 'session', handler: workspace.removeMember },
   { method: 'GET', pattern: '/api/workspace/audit', auth: true, handler: audit.list },
   { method: 'GET', pattern: '/api/workspace/audit.csv', auth: true, handler: audit.csv },
-  { method: 'GET', pattern: '/api/workspace/invites', auth: true, handler: invites.list },
-  { method: 'POST', pattern: '/api/workspace/invites', auth: true, handler: invites.create },
-  { method: 'DELETE', pattern: '/api/workspace/invites/:id', auth: true, handler: invites.revoke },
+  { method: 'GET', pattern: '/api/workspace/invites', auth: 'session', handler: invites.list },
+  { method: 'POST', pattern: '/api/workspace/invites', auth: 'session', handler: invites.create },
+  { method: 'DELETE', pattern: '/api/workspace/invites/:id', auth: 'session', handler: invites.revoke },
   { method: 'GET', pattern: '/api/invites/:token', auth: false, handler: invites.info },
-  { method: 'POST', pattern: '/api/invites/:token/accept', auth: true, handler: invites.accept },
+  { method: 'POST', pattern: '/api/invites/:token/accept', auth: 'session', handler: invites.accept },
   { method: 'GET', pattern: '/api/system', auth: true, handler: (ctx) => system.get(ctx, API_ROUTES) },
 ]
 
-export const API_ROUTES = ROUTES.map(({ method, pattern, auth }) => ({ method, pattern, auth }))
+export const API_ROUTES = ROUTES.map(({ method, pattern, auth }) => ({ method, pattern, auth: auth !== false }))
 
 type CompiledRoute = Route & { regex: RegExp; keys: string[] }
 
@@ -184,6 +187,9 @@ async function dispatch(request: Request, method: string): Promise<Response> {
     const db = getDb()
     const user = userFromRequest(db, request)
     if (hit.route.auth && !user) throw unauthorized()
+    if (hit.route.auth === 'session' && user?.via === 'token') {
+      throw new ApiError(403, 'SESSION_REQUIRED', 'Sign in in a browser to change account, security or membership settings; API tokens can’t.')
+    }
 
     const ctx: ApiContext = { request, url, params, db, user }
     return await hit.route.handler(ctx as AuthedContext)

@@ -1,5 +1,5 @@
 # FlowPilot: context
-_Last updated: 2026-09-27 · Phase 18 (templates, result charts, landing page) done; phase 19 (API tokens) starting · Free hosting kit for Oracle Cloud verified on a laptop; the owner runs the console steps_
+_Last updated: 2026-09-27 · Phase 19 (API tokens) done; phase 20 (senior-level polish and final verification) starting · Free hosting kit for Oracle Cloud verified on a laptop; the owner runs the console steps_
 
 ## What this is
 FlowPilot turns a one-sentence description of a repetitive CSV report into a saved, versioned recipe that a workspace can run on their own files, share and fork. AI drafts; a deterministic server executes; one access policy guards every request.
@@ -7,11 +7,19 @@ Stack: TanStack Start 1.168 (React 19.3, Vite 8, Nitro 3 beta), TanStack Router/
 Run: `npm install && npm run dev` → http://localhost:3000 (demo password `flowpilot-demo`)
 
 ## Current status
-- Phase: 18 done (owner: "make it the best ever"); phase 19 personal API tokens next
-- Tests: 160/160 (`npm test`: engine 13, csv 18, validator 13, access 20, demo-loop 12, ai 12, hardening 15, accounts 17, language 14, governance 4, spreadsheet 8, dates 11, templates 3) · Browser 30/30 (`npm run test:e2e`: demo 4, features 19, accounts 5, a11y 2) · Smoke 71/71 checks over all 42 endpoints (`npm run smoke`, local dev) · Model eval 28/28 (median 3.6 s) · Typecheck: pass (strict unused) · Build: pass
+- Phase: 19 done (owner: "make it the best ever"); phase 20 senior pass (lint, CI, error boundary, screenshots, container re-verification) next
+- Tests: 164/164 (`npm test`: engine 13, csv 18, validator 13, access 20, demo-loop 12, ai 12, hardening 15, accounts 17, language 14, governance 4, spreadsheet 8, dates 11, templates 3, tokens 4) · Browser 31/31 (`npm run test:e2e`: demo 4, features 19, accounts 6, a11y 2) · Smoke 78/78 checks over all 45 endpoints (`npm run smoke`, local dev) · Model eval 28/28 (median 3.6 s) · Typecheck: pass (strict unused) · Build: pass
 - App runs with: `npm install && npm run dev` → http://localhost:3000
 
 ## Done (with evidence)
+Phase 19: personal API tokens (evidence: `tests/tokens.test.ts` 4; browser test "API tokens: minted once in account settings…"; smoke +7 checks incl. a bearer request with no cookie and no Origin, `403 SESSION_REQUIRED`, revocation → 401; the dev server had to be restarted for migration 5, which the 500s in its log showed)
+- [x] Migration 5 `api_tokens` (id, user, name, SHA-256 `token_hash`, `fp_xxxxxxxx` prefix, created/expires/last_used/revoked); `createApiToken` (secret `fp_` + 43 URL-safe chars, returned once), `listApiTokens`, `countActiveApiTokens`, `revokeApiToken`
+- [x] `userFromRequest` accepts `Authorization: Bearer fp_…` (unrevoked, unexpired, hash match; `last_used_at` refreshed at most every 5 min; `X-Workspace-Id` picks another workspace you belong to); `SessionUser.via: 'session' | 'token'`
+- [x] Routes carry `auth: true | false | 'session'`; 14 account/security/membership routes are session-only (`403 SESSION_REQUIRED` for tokens): me PATCH, password, sessions, workspace switch/create/leave/rename, members, invites, tokens
+- [x] `GET/POST /api/me/tokens`, `DELETE /api/me/tokens/:id` (45 endpoints now); demo accounts can't mint; at most 10 active; names ≤ 60; expiry 30/90/365 days
+- [x] Account page "API tokens" card: dialog (name, expiry) → secret shown once with Copy and a ready curl line; list with prefix, created/last used/expires, Expired badge, two-click revoke
+- [x] README "Automation" section (curl for me, list, run with parameters + asOf, CSV download; X-Workspace-Id; no Origin needed), API rows, security-model rows
+
 Phase 18: templates, result charts, landing page (evidence: `tests/templates.test.ts` 3 (every template validates, matches its sample, runs to hand-computed rows as of 2026-09-27); browser tests "the front door…" and "templates: pick one in the gallery…"; a11y scans incl. `/welcome`; the phone-width test now includes `/welcome`; smoke 71/71)
 - [x] `src/lib/workflow/templates.ts`: 10 hand-written templates (regional exceptions, monthly revenue, top reps, large orders since a date with a date parameter, refunds last quarter, weekly orders, average deal by region, paid by rep, lost orders by rep with an `in` list, live spend), each with tags, a request sentence and a sample file
 - [x] New recipe page: `TemplateGallery` (tag filter, cards with the first three step descriptions, "Use this template"); loading a template also reads its sample file in the browser so column sample values and hints come along; `?template=<key>` links (library empty state, landing page) load one once (ref guard: React StrictMode ran the effect twice → two toasts)
@@ -44,7 +52,7 @@ Phase 15: free hosting kit (evidence: `deploy/oracle` stack built and run on thi
 
 Foundation
 - [x] TanStack Start app; SSR guard redirects signed-out visitors to /login (since phase 18: `/` itself goes to the public `/welcome` page). Evidence: browser test "the front door"
-- [x] SQLite schema: 8 tables, 12 invariant triggers, migrations in `schema_migrations`. Evidence: `src/server/migrations.ts`; access "enforces the invariants in the database itself"
+- [x] SQLite schema: 9 tables (incl. `api_tokens`), 13 invariant triggers, 5 migrations in `schema_migrations`. Evidence: `src/server/migrations.ts`; access "enforces the invariants in the database itself"
 - [x] Auth: scrypt, SHA-256 session tokens, HttpOnly SameSite=Lax cookie, 10-failure throttle, uniform login errors. Evidence: access suite (401s, throttle)
 - [x] Seed: 4 demo accounts, Sales/Marketing, 2 labelled examples. Evidence: access "isolates workspaces"
 
@@ -142,12 +150,12 @@ Phase 8 hardening
 - [x] README: quick start, AI setup, OpenRouter model comparison, demo script, architecture, security, tests, limitations
 
 ## In progress
-- Phase 19: personal API tokens (create/revoke on the account page, `Authorization: Bearer` on every endpoint, hashed at rest, last-used tracking, audit events), a README "Automation" section with curl examples, smoke checks
+- Phase 20: senior-level pass: ESLint config + `npm run lint`, GitHub Actions CI workflow, a root error boundary, refreshed screenshots (looked at), `npm audit`, production image rebuilt and smoke-tested with every feature, final full verification, final report
 
 ## Next steps (ordered)
 1. Owner: Oracle Cloud account (card for verification only) → Ubuntu 24.04 A1.Flex VM → security list TCP 80/443 → `deploy/oracle/push.sh ubuntu@<ip>` → `npm run smoke -- --base https://<ip-dashes>.sslip.io` (steps in `deploy/oracle/README.md`)
 2. Owner: rotate the OpenRouter key that was shared in chat (enter the new one when `push.sh` asks, or later in the server's `deploy/oracle/.env`)
-3. Phase 19 (see In progress), then a final report; each phase with tests, smoke, docs and a commit
+3. Phase 20 (see In progress), then the final report
 4. Optional, for the resume: a public GitHub repo (`brew install gh`, `gh auth login`, then `gh repo create flowpilot --public --source . --push`)
 
 ## Decisions log
@@ -225,6 +233,8 @@ Phase 8 hardening
 | 2026-09-27 | Templates are code (`templates.ts`), tested like recipes, not database rows | Can't go stale silently; no admin UI needed; load as ordinary drafts with origin `blank` (no AI badge) | Seeding templates as example recipes per workspace |
 | 2026-09-27 | Result chart: single-series bars in the brand colour, table default | Grouped results are the common case; one hue needs no legend; the table stays one click away | Multi-series charts, a charting library |
 | 2026-09-27 | `/` for a signed-out visitor → `/welcome`; every other path → `/login?redirect=` | A public front door for the showcase without moving the dashboard | A separate marketing site; landing at `/` with the dashboard elsewhere |
+| 2026-09-27 | API tokens: hashed, `fp_`-prefixed, expiring, capped at 10, session-only endpoints for account/security/membership | A leaked token must not become account takeover; scripts need only recipes and runs | Long-lived unhashed keys; tokens with full account power; OAuth (too much for one server) |
+| 2026-09-27 | Tokens work in the first workspace unless `X-Workspace-Id` says otherwise | Scripts have no session row to remember a workspace | A per-token workspace at creation |
 
 ## Deviations from the brief
 - Added optional `ANTHROPIC_BASE_URL` / `OPENAI_BASE_URL` / `OPENROUTER_BASE_URL` · the browser test needs a local mock model (the model call is server-side) · no change when unset
@@ -261,12 +271,12 @@ DATABASE_PATH, SEED_PASSWORD, DEMO_MODE, REGISTRATION, APP_URL, TRUST_PROXY (`tr
 - `src/lib/workflow/`: `schema.ts` (contract, LIMITS, 7 step types, 4 column types) · `templates.ts` (10 templates) · `columns.ts` (shape rule) · `validate.ts` (validateDefinition, analyze, resolveParameters) · `execute.ts` (engine) · `describe.ts` (INR, steps, summary, parameter units) · `draft.ts` (editor model) · `examples.ts`
 - `src/lib/`: `csv.ts` · `dates.ts` (strict date reading, day-number calendar maths, relative dates, periods) · `spreadsheet.ts` (workbook → CSV in the browser, results → .xlsx) · `policy.ts` (pure access policy + matrix) · `account.ts` (name/email/password rules) · `api.ts` (client + query keys) · `types.ts` · `format.ts` · `session.ts` (server fns) · `demo.ts` · `redirect.ts` (safe post-login paths)
 - `src/server/`: `migrations.ts` (schema + triggers, 3 migrations) · `db.ts` · `auth.ts` (sessions, throttle) · `accounts.ts` (users, workspaces, invites, resets) · `repo.ts` (access-aware queries, stale reaper) · `events.ts` (audit + feed) · `config.ts` (env settings, client address) · `mail.ts` · `boot.ts` (first-request setup) · `seed.ts` · `http.ts` · `env.ts` · `ids.ts`
-- `src/server/api/`: `router.ts` (dispatcher, 40 routes) · `auth.ts` · `account.ts` (register, resets, me, workspaces) · `invites.ts` · `workflows.ts` · `runs.ts` · `generate.ts` · `workspace.ts` · `dashboard.ts` · `system.ts`
+- `src/server/api/`: `router.ts` (dispatcher, 45 routes, `auth: true | false | 'session'`) · `auth.ts` · `account.ts` (register, resets, me, workspaces) · `invites.ts` · `workflows.ts` · `runs.ts` · `generate.ts` · `workspace.ts` · `dashboard.ts` · `system.ts`
 - `src/server/ai/`: `config.ts` (providers, env) · `generate.ts` (prompt, schema, adapters, repair loop)
 - `src/routes/`: `__root.tsx` · `welcome.tsx` (public landing) · `login.tsx` · `signup.tsx` · `invite.$token.tsx` · `forgot-password.tsx` · `reset-password.$token.tsx` · `_app.tsx` (guard + shell) · `_app/{index,library,runs,access,account,system-design,workflows.new,w.$workflowId.index,w.$workflowId.edit}.tsx` · `_app/$.tsx` (in-app 404) · `api/$.ts`
 - `src/components/`: `ui.tsx` (incl. `Menu`) · `templates.tsx` (gallery) · `charts.tsx` (run chart + `ResultChart`) · `shell.tsx` (workspace switcher, create-workspace dialog) · `auth-layout.tsx` (sign-in pages layout, password input) · `command.tsx` · `editor.tsx` · `results.tsx` · `charts.tsx` · `workflow-bits.tsx` · `file-drop.tsx` · `share-dialog.tsx` · `fork-dialog.tsx` · `access-panel.tsx` · `states.tsx` · `toast.tsx` · `logo.tsx` · `theme.ts` · `diagrams/{architecture,versioning}.tsx`
 - `src/start.ts`: global request middleware (security headers, server-fn CSRF)
-- `tests/`: 13 Vitest suites (incl. `hardening`, `accounts`, `language`, `governance`, `spreadsheet`, `dates`, `templates`) + `helpers/` · `tests/e2e/`: `demo.spec.ts`, `features.spec.ts`, `accounts.spec.ts`, `a11y.spec.ts`, `mock-model.ts` · `playwright.config.ts`
+- `tests/`: 14 Vitest suites (incl. `hardening`, `accounts`, `language`, `governance`, `spreadsheet`, `dates`, `templates`, `tokens`) + `helpers/` · `tests/e2e/`: `demo.spec.ts`, `features.spec.ts`, `accounts.spec.ts`, `a11y.spec.ts`, `mock-model.ts` · `playwright.config.ts`
 - `scripts/`: `seed.ts`, `check-model.ts`, `eval-model.ts`, `smoke.ts`, `screenshots.ts`, `backup-db.mjs` (also in the image), `make-fixtures.mjs` (xlsx fixtures) · `fixtures/`, `public/samples/`, `docs/system-design.md`, `docs/screenshots/`
 - `deploy/oracle/`: `README.md` (console walkthrough) · `docker-compose.yml` · `Caddyfile` · `setup.sh` · `backup.sh` · `push.sh` · `Dockerfile`, `docker-entrypoint.sh`, `.dockerignore`, `fly.toml` at the root
 - `src/lib/samples.ts` (sample catalogue) · `src/server/ratelimit.ts` (drafting limits)

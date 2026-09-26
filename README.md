@@ -20,6 +20,7 @@ The full loop works end to end, and a real browser test proves it: **describe �
 - [Testing](#testing)
 - [Configuration](#configuration)
 - [Deployment](#deployment)
+- [Automation](#automation)
 - [Troubleshooting](#troubleshooting)
 - [Project structure](#project-structure)
 - [Limitations and next steps](#limitations-and-next-steps)
@@ -67,6 +68,7 @@ The full loop works end to end, and a real browser test proves it: **describe �
 - Belong to several workspaces and switch between them; lists, the dashboard and the Access page follow the one you're in.
 - Admins rename the workspace and remove people. When someone leaves or is removed, their recipes stay with the team: ownership moves to an admin, and a database trigger only ever allows handing a recipe to an admin or member of its workspace. Owners can also hand a recipe over themselves.
 - Demo accounts appear only in demo mode (`DEMO_MODE`), and their password, name and memberships are locked, so a shared demo can't be hijacked.
+- **Personal API tokens** for scripts and schedulers (see [Automation](#automation)): shown once, hashed at rest, expiring, revocable, and never able to change account or security settings.
 
 **Around it**
 - A public **landing page** (`/welcome`, where signed-out visitors to `/` land) that explains the product, shows an example pipeline and links straight into templates; deeper links still go to sign-in and come back.
@@ -231,7 +233,7 @@ A summary with an empty `groupBy` gives one row over all rows. After a summary o
 
 ## API reference
 
-One server route (`/api/$`) fronts 42 REST endpoints through a single dispatcher, `handleApi(Request)`. The dispatcher matches the route, blocks cross-site writes, reads the session, runs the handler and maps errors. Every response is `Cache-Control: private, no-store`. Every error has the shape `{ "error": { "code", "message", "issues"? , "draft"?, "runId"? } }`. Every path also answers `HEAD` (as `GET`, without a body) and `OPTIONS` (204 with `Allow`); any other method gets 405.
+One server route (`/api/$`) fronts 45 REST endpoints through a single dispatcher, `handleApi(Request)`. The dispatcher matches the route, blocks cross-site writes, reads the session cookie or the `Authorization: Bearer` token, runs the handler and maps errors. Every response is `Cache-Control: private, no-store`. Every error has the shape `{ "error": { "code", "message", "issues"? , "draft"?, "runId"? } }`. Every path also answers `HEAD` (as `GET`, without a body) and `OPTIONS` (204 with `Allow`); any other method gets 405.
 
 | Method | Path | Who | Purpose |
 |---|---|---|---|
@@ -247,6 +249,9 @@ One server route (`/api/$`) fronts 42 REST endpoints through a single dispatcher
 | POST | `/api/me/password` | signed in | `{currentPassword, newPassword}`; signs out your other devices |
 | GET | `/api/me/sessions` | signed in | Devices you're signed in on |
 | DELETE | `/api/me/sessions` | signed in | Sign out everywhere except this browser |
+| GET | `/api/me/tokens` | browser session | Your personal API tokens (name, prefix, created, last used, expiry; never the secret) |
+| POST | `/api/me/tokens` | browser session | `{name, expiresInDays: 30 \| 90 \| 365}` → the token, and its secret exactly once (201); at most 10 active |
+| DELETE | `/api/me/tokens/:id` | browser session | Revoke a token; scripts using it get 401 from then on |
 | POST | `/api/me/workspace` | member of it | `{workspaceId}`: work in another of your workspaces |
 | POST | `/api/workspaces` | signed in | `{name}` → a new workspace with you as admin |
 | GET | `/api/dashboard` | signed in | Stats, 14-day runs, recent runs, filtered activity, checklist |
@@ -292,22 +297,22 @@ Status codes: 401 not signed in · 403 visible but not yours, a cross-site write
 ## Testing
 
 ```bash
-npm test                          # 160 unit and API tests
+npm test                          # 164 unit and API tests
 npx playwright install chromium   # once
-npm run test:e2e                  # 30 browser tests
+npm run test:e2e                  # 31 browser tests
 npm run typecheck
 npm run smoke                     # every endpoint and error code against a running server (--base <url>)
 ```
 
-- **Unit and API tests (Vitest), 160 in total:** engine 13, CSV 18, validator 13, access 20, demo loop 12, AI 12 (incl. relative dates, date parameters and periods from the flat reply, and a repair), hardening 15 (HTTP methods, HSTS, redirects, sessions, no-op edits, the activity feed on a busy team, list paging and run counts, the client address behind a proxy), accounts 17 (sign-up modes and rules, invitations, password resets, account settings, workspaces, removal and hand-over), language 14 (summaries and exact rounding, sort, top N, column choices, *contains* and *is one of*, whole numbers, validation messages, the seeded examples, a top-N run and CSV export through the API), governance 4 (archive and restore, the audit log's privacy rules, filters, paging and CSV), spreadsheet 8 (workbook → CSV on xlsx/xls/xlsb/ods files written by SheetJS: raw numbers, ISO dates, sheet choice and limits, refusing renamed text files; results → Excel with real numbers and an about sheet), dates 11 (strict date reading, calendar maths incl. ISO weeks and leap years, relative dates, periods, earliest and latest per group, every validator message, the as-of day through the API), templates 3 (every template validates, matches its sample's columns, and runs on its sample to known rows as of 27 Sep 2026). They call the same `handleApi(Request)` the server uses, with real session cookies, against an in-memory SQLite database, so access rules are tested end to end rather than mocked. The model is always stubbed, and the tests never read `.env`.
-- **Browser tests (Playwright), 30 in total:**
+- **Unit and API tests (Vitest), 164 in total:** engine 13, CSV 18, validator 13, access 20, demo loop 12, AI 12 (incl. relative dates, date parameters and periods from the flat reply, and a repair), hardening 15 (HTTP methods, HSTS, redirects, sessions, no-op edits, the activity feed on a busy team, list paging and run counts, the client address behind a proxy), accounts 17 (sign-up modes and rules, invitations, password resets, account settings, workspaces, removal and hand-over), language 14 (summaries and exact rounding, sort, top N, column choices, *contains* and *is one of*, whole numbers, validation messages, the seeded examples, a top-N run and CSV export through the API), governance 4 (archive and restore, the audit log's privacy rules, filters, paging and CSV), spreadsheet 8 (workbook → CSV on xlsx/xls/xlsb/ods files written by SheetJS: raw numbers, ISO dates, sheet choice and limits, refusing renamed text files; results → Excel with real numbers and an about sheet), dates 11 (strict date reading, calendar maths incl. ISO weeks and leap years, relative dates, periods, earliest and latest per group, every validator message, the as-of day through the API), templates 3 (every template validates, matches its sample's columns, and runs on its sample to known rows as of 27 Sep 2026), tokens 4 (minting and one-time display, hash-only storage, a script running a recipe with no cookie or Origin, session-only endpoints, demo accounts, revocation, expiry, junk headers, the 10-token cap, X-Workspace-Id). They call the same `handleApi(Request)` the server uses, with real session cookies, against an in-memory SQLite database, so access rules are tested end to end rather than mocked. The model is always stubbed, and the tests never read `.env`.
+- **Browser tests (Playwright), 31 in total:**
   - `demo.spec.ts` (4) is the demo above.
   - `features.spec.ts` (19) covers the rest: the editor's value warning, an invalid AI draft and a clarifying question, Advanced JSON, in-browser file checks, samples and parameters, details-only saves and versions, runs from another recipe, large results, CSV escaping, the command palette, theme, roles, *Delete my results*, the mobile drawer, re-checking a file when the version changes, refusing a non-UTF-8 file, the in-app 404, wide tables at phone width, library paging, an AI-drafted top-N summary edited with the new step cards and run, archiving plus the audit log, Excel input (a two-sheet workbook, the sheet picker, a renamed text file refused) with the Excel download read back, and dates (the monthly example run as of a chosen day, a dated sample suggesting the date type, an AI-drafted by-month recipe with the relative-date and fixed-date controls), the landing page (signed-out `/` lands there, deep links come back after sign-in, a template link opens the editor pre-filled with sample values), and the template gallery (tag filter, load, save, run on the sample, read the result as a chart and switch the figure).
-  - `accounts.spec.ts` (5): a new team signs up, invites a teammate who joins through the link and runs a shared recipe; the workspace switcher (mouse and keyboard); account settings and a password change that signs out another device; forgot-password and dead links; the sign-in pages at phone width.
+  - `accounts.spec.ts` (6): a new team signs up, invites a teammate who joins through the link and runs a shared recipe; the workspace switcher (mouse and keyboard); account settings and a password change that signs out another device; forgot-password and dead links; the sign-in pages at phone width; API tokens minted once in account settings, used by a script, and revoked.
   - `a11y.spec.ts` (2) runs an axe-core WCAG 2.1 AA scan of every page, including the landing page, sign-up, invitations and account settings, in light and dark mode.
 - The browser tests use their own database and a stand-in model (`tests/e2e/mock-model.ts`), so they never spend real credits. Screenshots of each demo stage are saved to `docs/screenshots/`.
 - **Model quality:** `npm run eval:model`, described above.
-- **Smoke test:** `npm run smoke` signs up two throwaway accounts on any running FlowPilot and makes 71 checks across all 42 endpoints: the happy paths and the important errors (401, 403, 404, 405, 409, 413, 415, 422). It is how a deployment is verified: `npm run smoke -- --base https://your-app`.
+- **Smoke test:** `npm run smoke` signs up two throwaway accounts on any running FlowPilot and makes 78 checks across all 45 endpoints: the happy paths and the important errors (401, 403, 404, 405, 409, 413, 415, 422). It is how a deployment is verified: `npm run smoke -- --base https://your-app`.
 
 ## Configuration
 
@@ -348,10 +353,10 @@ An Arm VM (up to 2 OCPUs and 12 GB of memory, 200 GB of disk and 10 TB of traffi
 # 2. Allow TCP 80 and 443 in the VCN's default security list
 # 3. From this folder, on your computer:
 deploy/oracle/push.sh ubuntu@<public-ip>                    # copies the project, installs Docker, builds, starts, schedules backups
-npm run smoke -- --base https://<ip-with-dashes>.sslip.io   # 71 checks against the live server
+npm run smoke -- --base https://<ip-with-dashes>.sslip.io   # 78 checks against the live server
 ```
 
-Updating is the same `push.sh` command again. The kit is `docker-compose.yml` (app + Caddy), `Caddyfile`, `setup.sh` (server setup that is safe to rerun), `backup.sh` (daily online SQLite backup, integrity-checked, 14 kept) and `push.sh`. It was verified end to end on a laptop: the stack builds, Caddy serves it over HTTP/2 with HSTS, the smoke test passes 71/71 through the proxy, forged `X-Forwarded-For` headers can't dodge the sign-in throttle, and backups restore.
+Updating is the same `push.sh` command again. The kit is `docker-compose.yml` (app + Caddy), `Caddyfile`, `setup.sh` (server setup that is safe to rerun), `backup.sh` (daily online SQLite backup, integrity-checked, 14 kept) and `push.sh`. It was verified end to end on a laptop: the stack builds, Caddy serves it over HTTP/2 with HSTS, the smoke test passes 78/78 through the proxy, forged `X-Forwarded-For` headers can't dodge the sign-in throttle, and backups restore.
 
 Oracle may stop (not delete) an Always Free VM that stays idle for seven days; starting it again from the console brings the app back with its data. Never upgrade the account to *Pay As You Go*: that is the only way it can ever charge the card.
 
@@ -384,6 +389,34 @@ What both kits configure:
 - **SQLite on the disk** at `/data/flowpilot.db`, migrations on start, one machine (SQLite has a single writer).
 - **`TRUST_PROXY`:** `true` behind Caddy or nginx (the address the proxy appended to `X-Forwarded-For`), `fly` on Fly.io (`Fly-Client-IP`). Each value believes exactly one header that the proxy writes itself; a visitor's own forwarded headers are never believed.
 - **Public showcase settings:** `DEMO_MODE=true` (one-click demo accounts, locked against changes, seeded into the empty database) and `REGISTRATION=open`. For a single company, set `DEMO_MODE=false` and `REGISTRATION=invite-only`.
+
+## Automation
+
+Anything you can do in the browser, a script can do with a **personal API token** (Account settings → API tokens). A token acts with your permissions, expires on its own (30, 90 or 365 days), can be revoked any time, and is stored only as a SHA-256 hash with an `fp_` prefix that scanners can recognise. It can't change your account, password, memberships or tokens: those endpoints answer `403 SESSION_REQUIRED` and need a browser session.
+
+```bash
+export FP=https://<your-app>
+export TOKEN=fp_...            # shown once when you create it
+
+# who am I, and which workspace does this token work in?
+curl -H "Authorization: Bearer $TOKEN" $FP/api/me
+
+# the recipes I can run (paged with limit and offset)
+curl -H "Authorization: Bearer $TOKEN" "$FP/api/workflows?scope=team"
+
+# run a recipe on a file, with a parameter and an as-of day; the result comes back as JSON
+curl -H "Authorization: Bearer $TOKEN" \
+  -F versionId=ver_... -F file=@orders.csv -F 'parameters={"threshold":80000}' -F asOf=2026-09-27 \
+  $FP/api/runs
+
+# download a run's result as CSV
+curl -H "Authorization: Bearer $TOKEN" -o result.csv $FP/api/runs/run_.../csv
+```
+
+- Scripts work in your first workspace; send `X-Workspace-Id: ws_...` (ids are in `/api/me`) to work in another you belong to.
+- No `Origin` header is needed: the cross-site check only applies to browser requests that carry one.
+- Rate limits are per person, whichever way you sign in. Send CSV: workbooks are converted in the browser, not on the server.
+- Leaked a token? Revoke it on the account page; every request with it answers 401 from then on.
 
 ## Troubleshooting
 

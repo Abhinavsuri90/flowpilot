@@ -45,6 +45,8 @@ export function dummyPasswordHash(): Promise<string> {
 
 export const SESSION_COOKIE = 'fp_session'
 export const SESSION_TTL_MS = 7 * 24 * 60 * 60 * 1000
+/** Personal API tokens start with this, so a leaked one is recognisable in logs and scanners. */
+export const API_TOKEN_PREFIX = 'fp_'
 
 export function hashToken(token: string): string {
   return createHash('sha256').update(token).digest('hex')
@@ -119,8 +121,10 @@ export type SessionUser = {
   activeWorkspaceId: string | null
   /** Shared demo accounts can't change their password, name or memberships. */
   isDemo: boolean
-  /** Hash of this request's session token (identifies "this device"). */
+  /** Hash of this request's session token (identifies "this device"); empty for API tokens. */
   sessionHash: string
+  /** A browser session, or a personal API token (which can't touch account or security settings). */
+  via: 'session' | 'token'
 }
 
 type UserRow = { id: string; email: string; display_name: string; avatar_hue: number; is_demo: 0 | 1 }
@@ -140,8 +144,13 @@ export function membershipsFor(db: DB, userId: string): Membership[] {
   return rows.map((r) => ({ workspaceId: r.workspace_id, workspaceName: r.workspace_name, role: r.role }))
 }
 
-/** Resolves the signed-in user from the session cookie, or null. Roles are read fresh on every call. */
+/**
+ * Resolves the caller: a personal API token in `Authorization: Bearer fp_…`,
+ * else the session cookie, else null. Roles are read fresh on every call.
+ */
 export function userFromRequest(db: DB, request: Request, now = Date.now()): SessionUser | null {
+  const authorization = request.headers.get('authorization')
+  if (authorization) return userFromBearer(db, request, authorization, now)
   const token = readCookie(request, SESSION_COOKIE)
   if (!token || token.length > 128) return null
   const sessionHash = hashToken(token)
@@ -171,6 +180,41 @@ export function userFromRequest(db: DB, request: Request, now = Date.now()): Ses
     activeWorkspaceId: memberships.some((m) => m.workspaceId === row.workspace_id) ? row.workspace_id : null,
     isDemo: row.is_demo === 1,
     sessionHash,
+    via: 'session',
+  }
+}
+
+type TokenRow = UserRow & { expires_at: string; revoked_at: string | null; last_used_at: string | null }
+
+/** A script's user from its API token: unrevoked, unexpired, hash-matched; works in its first workspace unless X-Workspace-Id names another. */
+function userFromBearer(db: DB, request: Request, authorization: string, now: number): SessionUser | null {
+  const match = /^Bearer\s+(\S+)$/i.exec(authorization.trim())
+  const secret = match?.[1]
+  if (!secret || !secret.startsWith(API_TOKEN_PREFIX) || secret.length > 128) return null
+  const hash = hashToken(secret)
+  const row = db
+    .prepare(
+      `SELECT u.id, u.email, u.display_name, u.avatar_hue, u.is_demo, t.expires_at, t.revoked_at, t.last_used_at
+         FROM api_tokens t JOIN users u ON u.id = t.user_id
+        WHERE t.token_hash = ?`,
+    )
+    .get(hash) as TokenRow | undefined
+  if (!row || row.revoked_at || Date.parse(row.expires_at) <= now) return null
+  if (!row.last_used_at || now - Date.parse(row.last_used_at) > LAST_SEEN_EVERY_MS) {
+    db.prepare('UPDATE api_tokens SET last_used_at = ? WHERE token_hash = ?').run(new Date(now).toISOString(), hash)
+  }
+  const memberships = membershipsFor(db, row.id)
+  const wanted = request.headers.get('x-workspace-id')?.trim() || null
+  return {
+    id: row.id,
+    email: row.email,
+    displayName: row.display_name,
+    avatarHue: row.avatar_hue,
+    memberships,
+    activeWorkspaceId: wanted && memberships.some((m) => m.workspaceId === wanted) ? wanted : null,
+    isDemo: row.is_demo === 1,
+    sessionHash: '',
+    via: 'token',
   }
 }
 

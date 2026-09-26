@@ -287,4 +287,23 @@ CREATE INDEX workflows_active_idx ON workflows(workspace_id, archived_at, update
 CREATE INDEX events_workspace_type_idx ON events(workspace_id, type, id);
 `,
   },
+  {
+    id: 5,
+    name: 'api_tokens',
+    sql: /* sql */ `
+-- Personal API tokens for scripts: shown once, only their hash is stored, revocable, and they expire.
+CREATE TABLE api_tokens (
+  id TEXT PRIMARY KEY,
+  user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  name TEXT NOT NULL,
+  token_hash TEXT NOT NULL UNIQUE,
+  prefix TEXT NOT NULL,
+  created_at TEXT NOT NULL,
+  expires_at TEXT NOT NULL,
+  last_used_at TEXT,
+  revoked_at TEXT
+);
+CREATE INDEX api_tokens_user_idx ON api_tokens(user_id, created_at);
+`,
+  },
 ]

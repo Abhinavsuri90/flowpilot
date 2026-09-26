@@ -1,14 +1,15 @@
 import * as React from 'react'
 import { createFileRoute, useRouter } from '@tanstack/react-router'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
-import { Building2, KeyRound, LogOut, MonitorSmartphone, Plus, UserRound } from 'lucide-react'
+import { Building2, Copy, KeyRound, LogOut, MonitorSmartphone, Plus, TerminalSquare, UserRound } from 'lucide-react'
 import { api, ApiError } from '~/lib/api'
 import { nameProblem, passwordProblem } from '~/lib/account'
 import { timeAgo } from '~/lib/format'
-import type { Me, SessionInfo } from '~/lib/types'
+import type { ApiTokenInfo, Me, SessionInfo } from '~/lib/types'
+import { formatDate } from '~/lib/dates'
 import { PasswordInput } from '~/components/auth-layout'
 import { CreateWorkspaceDialog } from '~/components/shell'
-import { Badge, Button, Callout, Card, CardHeader, Dialog, Field, Input, PageHeader, Skeleton } from '~/components/ui'
+import { Badge, Button, Callout, Card, CardHeader, Dialog, Field, Input, PageHeader, Select, Skeleton } from '~/components/ui'
 import { RoleBadge } from '~/components/workflow-bits'
 import { useToast } from '~/components/toast'
 
@@ -31,6 +32,7 @@ function AccountPage() {
         <ProfileCard me={me} />
         <PasswordCard me={me} />
         <DevicesCard />
+        <TokensCard me={me} />
         <WorkspacesCard me={me} />
       </div>
     </>
@@ -184,6 +186,169 @@ function DevicesCard() {
           </ul>
         )}
       </div>
+    </Card>
+  )
+}
+
+/** Personal API tokens for scripts: minted here, shown once, revocable. */
+function TokensCard({ me }: { me: Me }) {
+  const toast = useToast()
+  const tokens = useQuery({ queryKey: ['api-tokens'], queryFn: () => api.get<{ tokens: ApiTokenInfo[] }>('/api/me/tokens') })
+  const [open, setOpen] = React.useState(false)
+  const [name, setName] = React.useState('')
+  const [days, setDays] = React.useState<30 | 90 | 365>(90)
+  const [secret, setSecret] = React.useState<string | null>(null)
+  const [confirmId, setConfirmId] = React.useState<string | null>(null)
+  const origin = typeof window === 'undefined' ? '' : window.location.origin
+
+  const create = useMutation({
+    mutationFn: () => api.post<{ token: ApiTokenInfo; secret: string }>('/api/me/tokens', { name: name.trim(), expiresInDays: days }),
+    onSuccess: async (res) => {
+      setSecret(res.secret)
+      await tokens.refetch()
+    },
+  })
+  const revoke = useMutation({
+    mutationFn: (id: string) => api.delete<{ revoked: true }>(`/api/me/tokens/${id}`),
+    onSuccess: async () => {
+      setConfirmId(null)
+      await tokens.refetch()
+      toast.show({ tone: 'ok', title: 'Token revoked', description: 'Scripts that used it are signed out from now on.' })
+    },
+  })
+  const close = () => {
+    setOpen(false)
+    setSecret(null)
+    setName('')
+    create.reset()
+  }
+  const copy = async (text: string) => {
+    try {
+      await navigator.clipboard.writeText(text)
+      toast.show({ tone: 'ok', title: 'Copied' })
+    } catch {
+      toast.show({ tone: 'bad', title: 'Could not copy', description: 'Select the text and copy it by hand.' })
+    }
+  }
+  const curl = secret ? `curl -H "Authorization: Bearer ${secret}" ${origin}/api/me` : ''
+
+  return (
+    <Card className="animate-rise">
+      <CardHeader
+        icon={<TerminalSquare />}
+        title="API tokens"
+        description="For scripts and schedulers: run recipes and read results with your permissions, without a browser."
+        actions={
+          <Button size="sm" variant="secondary" icon={<Plus className="size-3.5" />} disabled={me.user.isDemo} onClick={() => setOpen(true)}>
+            New token
+          </Button>
+        }
+      />
+      <div className="px-5 pb-5">
+        {me.user.isDemo ? (
+          <p className="text-[13px] text-muted">Demo accounts can’t create tokens. Create your own account to script FlowPilot.</p>
+        ) : tokens.isPending ? (
+          <Skeleton className="h-16" />
+        ) : tokens.isError ? (
+          <Callout tone="bad">{tokens.error.message}</Callout>
+        ) : tokens.data.tokens.length === 0 ? (
+          <p className="text-[13px] text-muted">
+            No tokens yet. A token acts as you: whatever you can see and run, it can too. It can’t change your account, password or memberships.
+          </p>
+        ) : (
+          <ul className="divide-y divide-line overflow-hidden rounded-xl border border-line">
+            {tokens.data.tokens.map((t) => (
+              <li key={t.id} className="flex flex-wrap items-center gap-3 px-4 py-3">
+                <KeyRound className="size-4 shrink-0 text-muted" aria-hidden />
+                <div className="min-w-0 flex-1">
+                  <div className="flex flex-wrap items-center gap-2 text-[13.5px] font-medium text-ink">
+                    {t.name}
+                    <code className="font-mono text-[11.5px] text-muted">{t.prefix}</code>
+                    {t.expired && <Badge tone="warn">Expired</Badge>}
+                  </div>
+                  <div className="text-[12px] text-muted">
+                    Created {timeAgo(t.createdAt)} · {t.lastUsedAt ? `last used ${timeAgo(t.lastUsedAt)}` : 'never used'} · {t.expired ? 'expired' : 'expires'}{' '}
+                    {formatDate(t.expiresAt.slice(0, 10))}
+                  </div>
+                </div>
+                {confirmId === t.id ? (
+                  <span className="flex items-center gap-1.5">
+                    <Button size="sm" variant="secondary" loading={revoke.isPending} onClick={() => revoke.mutate(t.id)}>
+                      Yes, revoke
+                    </Button>
+                    <Button size="sm" variant="ghost" onClick={() => setConfirmId(null)}>
+                      Keep
+                    </Button>
+                  </span>
+                ) : (
+                  <Button size="sm" variant="ghost" onClick={() => setConfirmId(t.id)} aria-label={`Revoke ${t.name}`}>
+                    Revoke
+                  </Button>
+                )}
+              </li>
+            ))}
+          </ul>
+        )}
+      </div>
+
+      <Dialog
+        open={open}
+        onClose={close}
+        icon={<TerminalSquare />}
+        title={secret ? 'Your new token' : 'New API token'}
+        description={secret ? 'Copy it now: it is shown only this once. Only a hash is stored.' : 'Name it after the script that will use it. It acts with your permissions and expires on its own.'}
+        footer={
+          secret ? (
+            <Button variant="brand" onClick={close}>
+              Done
+            </Button>
+          ) : (
+            <>
+              <Button variant="ghost" onClick={close}>
+                Cancel
+              </Button>
+              <Button variant="brand" loading={create.isPending} disabled={!name.trim()} onClick={() => create.mutate()}>
+                Create token
+              </Button>
+            </>
+          )
+        }
+      >
+        {secret ? (
+          <div className="space-y-3">
+            <Field label="Token" htmlFor="new-token-secret">
+              <div className="flex gap-2">
+                <Input id="new-token-secret" readOnly value={secret} className="font-mono text-[12.5px]" onFocus={(e) => e.currentTarget.select()} />
+                <Button variant="secondary" icon={<Copy className="size-3.5" />} onClick={() => copy(secret)} aria-label="Copy token">
+                  Copy
+                </Button>
+              </div>
+            </Field>
+            <Field label="Try it" htmlFor="new-token-curl" hint="Every endpoint in the API reference accepts the same header. Add X-Workspace-Id to work in another of your workspaces.">
+              <div className="flex gap-2">
+                <Input id="new-token-curl" readOnly value={curl} className="font-mono text-[12px]" onFocus={(e) => e.currentTarget.select()} />
+                <Button variant="secondary" icon={<Copy className="size-3.5" />} onClick={() => copy(curl)} aria-label="Copy the curl command">
+                  Copy
+                </Button>
+              </div>
+            </Field>
+          </div>
+        ) : (
+          <div className="space-y-3">
+            <Field label="Name" htmlFor="new-token-name">
+              <Input id="new-token-name" value={name} maxLength={60} placeholder="e.g. nightly-sales-report" onChange={(e) => setName(e.target.value)} autoFocus />
+            </Field>
+            <Field label="Expires in" htmlFor="new-token-days">
+              <Select id="new-token-days" value={String(days)} onChange={(e) => setDays(Number(e.target.value) as 30 | 90 | 365)}>
+                <option value="30">30 days</option>
+                <option value="90">90 days</option>
+                <option value="365">1 year</option>
+              </Select>
+            </Field>
+            {create.isError && <Callout tone="bad">{create.error instanceof ApiError ? create.error.message : String(create.error)}</Callout>}
+          </div>
+        )}
+      </Dialog>
     </Card>
   )
 }

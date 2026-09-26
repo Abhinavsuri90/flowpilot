@@ -1,6 +1,6 @@
 import { randomInt } from 'node:crypto'
 import type { DB } from './db'
-import { hashToken, newToken } from './auth'
+import { API_TOKEN_PREFIX, hashToken, newToken } from './auth'
 import { newId, nowIso } from './ids'
 import { recordEvent } from './events'
 import type { Role } from '../lib/types'
@@ -119,6 +119,61 @@ export function listSessions(db: DB, userId: string, now = Date.now()): SessionR
 /** Signs a person out everywhere except (optionally) one session. */
 export function deleteSessionsOf(db: DB, userId: string, exceptHash?: string): number {
   return db.prepare('DELETE FROM sessions WHERE user_id = ? AND token_hash IS NOT ?').run(userId, exceptHash ?? null).changes
+}
+
+// ----- personal API tokens -----------------------------------------------------------
+
+export type ApiTokenRow = {
+  id: string
+  user_id: string
+  name: string
+  token_hash: string
+  prefix: string
+  created_at: string
+  expires_at: string
+  last_used_at: string | null
+  revoked_at: string | null
+}
+
+export const API_TOKEN_LIMITS = { active: 10, nameMax: 60, days: [30, 90, 365] as const }
+
+/** Mints a token: the secret is returned once; only its hash and a short prefix are kept. */
+export function createApiToken(db: DB, userId: string, opts: { name: string; expiresInDays: number; now?: number }): { row: ApiTokenRow; secret: string } {
+  const now = opts.now ?? Date.now()
+  const secret = `${API_TOKEN_PREFIX}${newToken()}`
+  const row: ApiTokenRow = {
+    id: newId('tok'),
+    user_id: userId,
+    name: opts.name,
+    token_hash: hashToken(secret),
+    prefix: secret.slice(0, API_TOKEN_PREFIX.length + 8),
+    created_at: new Date(now).toISOString(),
+    expires_at: new Date(now + opts.expiresInDays * 24 * 60 * 60 * 1000).toISOString(),
+    last_used_at: null,
+    revoked_at: null,
+  }
+  db.prepare(
+    `INSERT INTO api_tokens (id, user_id, name, token_hash, prefix, created_at, expires_at, last_used_at, revoked_at)
+     VALUES (@id, @user_id, @name, @token_hash, @prefix, @created_at, @expires_at, @last_used_at, @revoked_at)`,
+  ).run(row)
+  return { row, secret }
+}
+
+/** A person's unrevoked tokens, newest first (expired ones included, so they can be tidied up). */
+export function listApiTokens(db: DB, userId: string): ApiTokenRow[] {
+  return db.prepare('SELECT * FROM api_tokens WHERE user_id = ? AND revoked_at IS NULL ORDER BY created_at DESC').all(userId) as ApiTokenRow[]
+}
+
+export function countActiveApiTokens(db: DB, userId: string, now = Date.now()): number {
+  return db
+    .prepare('SELECT COUNT(*) FROM api_tokens WHERE user_id = ? AND revoked_at IS NULL AND expires_at > ?')
+    .pluck()
+    .get(userId, new Date(now).toISOString()) as number
+}
+
+/** Revokes one of the person's own tokens; false when there is no such live token. */
+export function revokeApiToken(db: DB, userId: string, id: string, now = Date.now()): boolean {
+  return db.prepare('UPDATE api_tokens SET revoked_at = ? WHERE id = ? AND user_id = ? AND revoked_at IS NULL').run(new Date(now).toISOString(), id, userId).changes > 0
 }
 
 // ----- invitations -------------------------------------------------------------------

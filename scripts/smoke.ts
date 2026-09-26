@@ -104,6 +104,7 @@ async function main() {
   console.log(`FlowPilot smoke test → ${BASE}\n`)
   const anon = new Actor('anonymous')
   const sam = new Actor('sam')
+  const bot = new Actor('bot') // a script: bearer token, no cookie, no Origin
   const ria = new Actor('ria')
   const samEmail = `smoke-sam-${STAMP}@example.com`
   const riaEmail = `smoke-ria-${STAMP}@example.com`
@@ -138,6 +139,16 @@ async function main() {
   await check('me', sam, 'GET', '/api/me', 200, {}, (r) => (r.data?.workspace?.role === 'admin' ? true : 'not admin of the new workspace'))
   await check('rename me', sam, 'PATCH', '/api/me', 200, { json: { name: 'Smoke Sam Patel' } })
   await check('my sessions', sam, 'GET', '/api/me/sessions', 200, {}, (r) => (r.data?.sessions?.some((s: { current: boolean }) => s.current) ? true : 'no current session'))
+  const minted = await check('create an API token', sam, 'POST', '/api/me/tokens', 201, { json: { name: 'smoke script', expiresInDays: 30 } }, (r) =>
+    typeof r.data?.secret === 'string' && r.data.secret.startsWith('fp_') ? true : 'no fp_ secret',
+  )
+  const bearer = { authorization: `Bearer ${minted.data?.secret ?? 'none'}` }
+  await check('token: me (no cookie, no Origin)', bot, 'GET', '/api/me', 200, { headers: bearer, origin: null })
+  await check('token: list recipes', bot, 'GET', '/api/workflows?scope=mine', 200, { headers: bearer, origin: null })
+  await check('token can’t manage tokens → 403', bot, 'POST', '/api/me/tokens', 403, { headers: bearer, origin: null, json: { name: 'x' } }, code('SESSION_REQUIRED'))
+  await check('list tokens (prefix only)', sam, 'GET', '/api/me/tokens', 200, {}, (r) => (r.data?.tokens?.length === 1 && !('secret' in r.data.tokens[0]) ? true : 'expected one token without its secret'))
+  await check('revoke the token', sam, 'DELETE', `/api/me/tokens/${minted.data?.token?.id ?? 'none'}`, 200)
+  await check('revoked token → 401', bot, 'GET', '/api/me', 401, { headers: bearer, origin: null })
   await check('password change needs the current one', sam, 'POST', '/api/me/password', 422, { json: { currentPassword: 'wrong wrong wrong', newPassword: 'another long passphrase' } })
   await check('forgot password (same answer for anyone)', anon, 'POST', '/api/auth/forgot', 200, { json: { email: `nobody-${STAMP}@example.com` } })
   await check('dead reset link → 404', anon, 'GET', '/api/auth/reset/not-a-real-token', 404, {}, code('RESET_INVALID'))
@@ -227,7 +238,7 @@ async function main() {
     console.log(r.ok ? line : `${line}   ${r.note ?? ''}`)
   }
   const failed = results.filter((r) => !r.ok).length
-  const endpoints = new Set(results.map((r) => `${r.method} ${r.path.replace(/\/(wf|run|inv|usr|ws)_[0-9a-f]{16}/g, '/:id').replace(/\?.*$/, '')}`)).size
+  const endpoints = new Set(results.map((r) => `${r.method} ${r.path.replace(/\/(wf|run|inv|usr|ws|tok)_[0-9a-f]{16}/g, '/:id').replace(/\?.*$/, '')}`)).size
   console.log(`\n${results.length - failed}/${results.length} checks passed across ${endpoints} method + path combinations${failed ? ` · ${failed} FAILED` : ''}`)
   process.exit(failed ? 1 : 0)
 }
