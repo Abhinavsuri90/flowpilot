@@ -1,10 +1,24 @@
 import type { ModelStatus } from '../../lib/types'
 
-export type Provider = 'anthropic' | 'openai'
+export type Provider = 'anthropic' | 'openai' | 'openrouter'
 
 export const DEFAULT_MODELS: Record<Provider, string> = {
   anthropic: 'claude-sonnet-5',
   openai: 'gpt-5',
+  // Any OpenRouter model id that supports structured outputs works; see README.
+  openrouter: 'anthropic/claude-sonnet-5',
+}
+
+const KEY_VARS: Record<Provider, string> = {
+  anthropic: 'ANTHROPIC_API_KEY',
+  openai: 'OPENAI_API_KEY',
+  openrouter: 'OPENROUTER_API_KEY',
+}
+
+const BASE_URL_VARS: Record<Provider, string> = {
+  anthropic: 'ANTHROPIC_BASE_URL',
+  openai: 'OPENAI_BASE_URL',
+  openrouter: 'OPENROUTER_BASE_URL',
 }
 
 export type ModelConfig = { provider: Provider; model: string; apiKey: string; baseUrl: string }
@@ -12,7 +26,10 @@ export type ModelConfig = { provider: Provider; model: string; apiKey: string; b
 const DEFAULT_BASE_URLS: Record<Provider, string> = {
   anthropic: 'https://api.anthropic.com',
   openai: 'https://api.openai.com/v1',
+  openrouter: 'https://openrouter.ai/api/v1',
 }
+
+const PROVIDERS: Provider[] = ['anthropic', 'openai', 'openrouter']
 
 /**
  * Reads the model configuration from the environment on every call, so a key
@@ -20,21 +37,20 @@ const DEFAULT_BASE_URLS: Record<Provider, string> = {
  * the server: callers only ever see `modelStatus()`.
  */
 export function modelConfig(): ModelConfig | null {
-  const anthropicKey = process.env.ANTHROPIC_API_KEY?.trim()
-  const openaiKey = process.env.OPENAI_API_KEY?.trim()
+  const keyFor = (provider: Provider) => process.env[KEY_VARS[provider]]?.trim() || ''
   const requested = process.env.MODEL_PROVIDER?.trim().toLowerCase()
 
-  let provider: Provider | null = null
-  if (requested === 'anthropic' || requested === 'openai') provider = requested
-  else if (anthropicKey) provider = 'anthropic'
-  else if (openaiKey) provider = 'openai'
+  // An explicit MODEL_PROVIDER wins; otherwise the first provider with a key.
+  const provider: Provider | undefined = PROVIDERS.includes(requested as Provider)
+    ? (requested as Provider)
+    : PROVIDERS.find((p) => keyFor(p))
   if (!provider) return null
 
-  const apiKey = provider === 'anthropic' ? anthropicKey : openaiKey
+  const apiKey = keyFor(provider)
   if (!apiKey) return null
   const model = process.env.MODEL_NAME?.trim() || DEFAULT_MODELS[provider]
   // Optional override (same convention as the official SDKs), e.g. a proxy or a local mock in e2e tests.
-  const override = (provider === 'anthropic' ? process.env.ANTHROPIC_BASE_URL : process.env.OPENAI_BASE_URL)?.trim()
+  const override = process.env[BASE_URL_VARS[provider]]?.trim()
   const baseUrl = (override || DEFAULT_BASE_URLS[provider]).replace(/\/+$/, '')
   return { provider, model, apiKey, baseUrl }
 }

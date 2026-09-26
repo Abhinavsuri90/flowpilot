@@ -1,5 +1,5 @@
 # FlowPilot: context
-_Last updated: 2026-09-26 03:00 · Phase 5/8 · AI authoring done; starting Access + My runs_
+_Last updated: 2026-09-26 12:35 · Phase 6/8 · Access, My runs and OpenRouter done; starting dashboard + system design_
 
 ## What this is
 FlowPilot turns a one-sentence description of a repetitive CSV report into a saved, versioned recipe that a workspace can run on their own files, share and fork.
@@ -7,7 +7,7 @@ Stack: TanStack Start 1.168 (React 19.3, Vite 8, Nitro 3 beta), TanStack Router/
 Run: `npm install && npm run dev` → http://localhost:3000
 
 ## Current status
-- Phase: 5 AI authoring. Status: done
+- Phase: 6 access, runs, OpenRouter. Status: done
 - Tests: 77/77 (`npm test`, 2026-09-26: engine 13, csv 12, validator 13, access 19, demo-loop 12, ai 8). Typecheck: pass. Build: pass (phase 1)
 - App runs with: `npm install && npm run dev` → http://localhost:3000
 
@@ -45,13 +45,18 @@ Run: `npm install && npm run dev` → http://localhost:3000
 - [x] Run path never imports the model client. Evidence: ai suite static import check + run with fetch stubbed to throw
 - [x] `npm run check:model` reports configuration (currently: not configured)
 
+- [x] `/access`: permission matrix rendered from `permissionMatrix()` (Team/Private toggle, 403/404 cells with reasons, "you" column), members with role dropdowns for admins (self and last admin locked), one-click share/unshare with link copy, six principles. Evidence: screenshot as Asha
+- [x] `/runs`: all my runs, status filter in URL, sortable Table v9, per-run CSV, "Delete all my results" with confirm. Evidence: screenshot as Asha
+- [x] OpenRouter provider (owner supplied a key, stored only in git-ignored `.env`): OpenAI-compatible call, strict json_schema, `provider.require_parameters: true`, `X-Title`. Evidence: `tests/ai.test.ts` "uses strict json_schema for OpenAI and for OpenRouter"; live `npm run check:model` → valid 3-step demo recipe from `anthropic/claude-sonnet-5` (first try, no repair)
+- [x] Live model comparison via OpenRouter (1 run each, 2026-09-26): claude-sonnet-5 demo 5.7 s / Gmail 2.4 s / ambiguous 3.7 s; gpt-6-luna 3.1 / 2.1 / 2.2 s; gemini-3.8-flash 14.7 / 4.6 / 4.3 s. All nine answers correct (workflow / unsupported / clarification), no repairs
+
 ## In progress
-- Phase 6: Access & sharing page, My runs page
+- Phase 7: dashboard, system design page, polish
 
 ## Next steps (ordered)
-1. `/access`: matrix from `permissionMatrix` with Private/Team toggle and 403/404 cells; members with role dropdowns (admins); one-click share/unshare of my recipes; the principles
-2. `/runs`: all my runs, status filter, sortable Table v9, per-run CSV, "Delete all my results"
-3. Add both to nav + command palette
+1. Dashboard: greeting hero, reuse-loop checklist, 4 stat tiles, 14-day stacked run chart (load dataviz skill first), recent runs, permission-filtered activity, System Design teaser
+2. `/system-design`: interactive architecture diagram (both / authoring / execution), request lifecycle, versioning diagram, live schema + triggers from /api/system, limits, failure modes, scaling path, trade-offs
+3. Nav + palette entries; visual pass in light/dark/mobile
 
 ## Decisions log
 | Date | Decision | Why | Alternatives rejected |
@@ -82,9 +87,12 @@ Run: `npm install && npm run dev` → http://localhost:3000
 | 2026-09-26 | Model reply parsed leniently (nullish fields, extra keys stripped); the built definition is validated strictly | Avoids wasting the single repair on harmless omissions (Anthropic tool input isn't strict-mode) | Strict parse of the reply |
 | 2026-09-26 | Literal values are placed by tracked column type (e.g. "100000" as text for an amount becomes 100000) | Fewer needless repairs; still validated | Trusting the model's slot choice |
 | 2026-09-26 | OpenAI default model `gpt-5` | Needs a default; override with MODEL_NAME | — |
+| 2026-09-26 | OpenRouter default model `anthropic/claude-sonnet-5` | Matches the brief's intended model; correct on all live checks | `openai/gpt-6-luna` (faster/cheaper, offered as the budget option) |
+| 2026-09-26 | Tests never load `.env` (skipped under VITEST) | A developer's real key must never reach the test process | Relying on per-test env stubs only |
 
 ## Deviations from the brief
-- Added optional `ANTHROPIC_BASE_URL` / `OPENAI_BASE_URL` (defaults: the public APIs) · the browser e2e test needs a local mock model because the model call is server-side · no change when unset
+- Added optional `ANTHROPIC_BASE_URL` / `OPENAI_BASE_URL` / `OPENROUTER_BASE_URL` (defaults: the public APIs) · the browser e2e test needs a local mock model because the model call is server-side · no change when unset
+- Added a third provider, OpenRouter (`OPENROUTER_API_KEY`, `MODEL_PROVIDER=openrouter`) · owner asked for it and supplied a key · Anthropic and OpenAI adapters unchanged
 
 ## Known issues / bugs
 - Fixed in phase 4: the editor's unsaved-changes blocker read stale state and prompted after a successful save (found by the Playwright walkthrough).
@@ -101,7 +109,7 @@ Run: `npm install && npm run dev` → http://localhost:3000
 - Screenshots: `npx tsx scripts/screenshots.ts --as asha --theme both / /library`
 
 ## Environment variables (names only)
-DATABASE_PATH, SEED_PASSWORD, MODEL_PROVIDER, MODEL_NAME, ANTHROPIC_API_KEY, OPENAI_API_KEY (+ optional ANTHROPIC_BASE_URL, OPENAI_BASE_URL)
+DATABASE_PATH, SEED_PASSWORD, MODEL_PROVIDER, MODEL_NAME, ANTHROPIC_API_KEY, OPENAI_API_KEY, OPENROUTER_API_KEY (+ optional ANTHROPIC_BASE_URL, OPENAI_BASE_URL, OPENROUTER_BASE_URL). A local `.env` (git-ignored) currently sets MODEL_PROVIDER=openrouter and OPENROUTER_API_KEY.
 
 ## File map
 - `src/server/migrations.ts`: schema + invariant triggers · `db.ts`: connection, migrate, `useDatabase` for tests
@@ -120,7 +128,7 @@ DATABASE_PATH, SEED_PASSWORD, MODEL_PROVIDER, MODEL_NAME, ANTHROPIC_API_KEY, OPE
 - `tests/helpers/app.ts`: in-memory app + cookie-keeping client calling `handleApi`
 - `src/lib/workflow/draft.ts`: editor draft model ↔ definition (incl. lenient loader for invalid model drafts) · `src/lib/format.ts`
 - `src/components/`: `editor.tsx`, `results.tsx` (Table v9 grid + funnel), `workflow-bits.tsx` (badges, chips, step list, recipe card), `file-drop.tsx`, `share-dialog.tsx`, `fork-dialog.tsx`, `access-panel.tsx`, `command.tsx` (⌘K)
-- `src/routes/_app/`: `library.tsx`, `workflows.new.tsx`, `w.$workflowId.index.tsx`, `w.$workflowId.edit.tsx`
+- `src/routes/_app/`: `library.tsx`, `workflows.new.tsx`, `w.$workflowId.index.tsx`, `w.$workflowId.edit.tsx`, `access.tsx`, `runs.tsx`
 - `src/server/ai/generate.ts`: prompt, output schema, provider adapters, repair loop · `src/server/api/generate.ts`: endpoint · `scripts/check-model.ts`
 - `tests/e2e/mock-model.ts`: stand-in Anthropic endpoint for browser tests only
 - `scripts/screenshots.ts`: Playwright screenshot helper
@@ -129,5 +137,5 @@ DATABASE_PATH, SEED_PASSWORD, MODEL_PROVIDER, MODEL_NAME, ANTHROPIC_API_KEY, OPE
 - [ ] Asha creates & shares · [ ] Vikram reruns · [ ] Vikram forks · [ ] Asha's original unchanged · [ ] Meera/Olivia blocked
 
 ## Open questions for the owner
-- No model key in this environment (`ANTHROPIC_API_KEY` / `OPENAI_API_KEY` unset). The default I took meanwhile: AI generation is verified against stubbed/mock providers only; the app shows "AI off" and manual editing works. Run `npm run check:model` after adding a key.
+- Which OpenRouter model to use long-term? Default meanwhile: `anthropic/claude-sonnet-5` (set `MODEL_NAME` to switch; `openai/gpt-6-luna` was fastest and cheapest in the live comparison). The owner should rotate the OpenRouter key after the project, since it was shared in chat.
 - Sections 11 (after "Governance: Access") to 19 of the brief were cut off by the paste limit. The default I took meanwhile: follow the system design PDF for those parts, with 8 phases: 1 scaffold · 2 deterministic core · 3 API + access · 4 core UI · 5 AI authoring · 6 sharing/governance UI · 7 dashboard, runs, system design · 8 hardening, e2e, README.

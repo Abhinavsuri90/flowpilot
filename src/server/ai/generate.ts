@@ -155,7 +155,17 @@ async function post(url: string, headers: Record<string, string>, body: unknown)
       body: JSON.stringify(body),
       signal: controller.signal,
     })
-    if (!res.ok) throw new ModelUnavailable(`the model provider answered HTTP ${res.status}`)
+    if (!res.ok) {
+      const hint =
+        res.status === 401 || res.status === 403
+          ? 'the model provider rejected the API key'
+          : res.status === 402
+            ? 'the model provider account is out of credits'
+            : res.status === 429
+              ? 'the model provider is rate limiting requests'
+              : 'the model provider answered with an error'
+      throw new ModelUnavailable(`${hint}, HTTP ${res.status}`)
+    }
     return await res.json()
   } catch (err) {
     if (err instanceof ModelUnavailable) throw err
@@ -211,20 +221,22 @@ function anthropicConversation(config: ModelConfig): Conversation {
   }
 }
 
+/** OpenAI Chat Completions, also used for OpenRouter's OpenAI-compatible API. */
 function openaiConversation(config: ModelConfig): Conversation {
+  const openrouter = config.provider === 'openrouter'
   const messages: Array<{ role: string; content: string }> = [
     { role: 'system', content: `${SYSTEM_PROMPT}\nAnswer with JSON that matches the submit_recipe schema.` },
   ]
+  const headers: Record<string, string> = { authorization: `Bearer ${config.apiKey}` }
+  if (openrouter) headers['X-Title'] = 'FlowPilot'
   const call = async (): Promise<Reply> => {
-    const body = (await post(
-      `${config.baseUrl}/chat/completions`,
-      { authorization: `Bearer ${config.apiKey}` },
-      {
-        model: config.model,
-        messages,
-        response_format: { type: 'json_schema', json_schema: { name: 'submit_recipe', strict: true, schema: OUTPUT_JSON_SCHEMA } },
-      },
-    )) as { choices?: Array<{ message?: { content?: string | null; refusal?: string | null } }> }
+    const body = (await post(`${config.baseUrl}/chat/completions`, headers, {
+      model: config.model,
+      messages,
+      response_format: { type: 'json_schema', json_schema: { name: 'submit_recipe', strict: true, schema: OUTPUT_JSON_SCHEMA } },
+      // OpenRouter: only route to upstream providers that honour strict response_format.
+      ...(openrouter ? { provider: { require_parameters: true }, max_tokens: 4096 } : {}),
+    })) as { choices?: Array<{ message?: { content?: string | null; refusal?: string | null } }> }
     const message = body.choices?.[0]?.message
     if (message?.refusal) return { data: { kind: 'unsupported', reason: message.refusal, question: null, parameters: [], steps: [] }, raw: body }
     const content = message?.content ?? ''

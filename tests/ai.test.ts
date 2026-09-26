@@ -63,6 +63,7 @@ beforeEach(async () => {
   // Hermetic: a developer's .env can never leak a real key into these tests.
   vi.stubEnv('ANTHROPIC_API_KEY', '')
   vi.stubEnv('OPENAI_API_KEY', '')
+  vi.stubEnv('OPENROUTER_API_KEY', '')
   vi.stubEnv('MODEL_PROVIDER', '')
   vi.stubEnv('MODEL_NAME', '')
 })
@@ -132,7 +133,7 @@ describe('AI authoring', () => {
     expect(calls[0]!.body.system).toMatch(/Gmail/)
   })
 
-  it('uses OpenAI strict json_schema when that provider is configured', async () => {
+  it('uses strict json_schema for OpenAI and for OpenRouter', async () => {
     vi.stubEnv('OPENAI_API_KEY', 'test-openai-key')
     vi.stubEnv('MODEL_NAME', 'gpt-test')
     stubFetch(openai(GOOD))
@@ -155,6 +156,19 @@ describe('AI authoring', () => {
       }
     }
     walk(body.response_format.json_schema.schema)
+
+    // OpenRouter: same OpenAI-compatible call, routed only to providers that honour strict output.
+    calls = []
+    vi.stubEnv('OPENAI_API_KEY', '')
+    vi.stubEnv('MODEL_NAME', '')
+    vi.stubEnv('OPENROUTER_API_KEY', 'test-openrouter-key')
+    stubFetch(openai(GOOD))
+    const routed = await generate()
+    expect(routed.body).toMatchObject({ kind: 'workflow', provider: 'openrouter', model: 'anthropic/claude-sonnet-5', definition: ORIGINAL })
+    expect(calls[0]!.url).toBe('https://openrouter.ai/api/v1/chat/completions')
+    expect(calls[0]!.headers).toMatchObject({ authorization: 'Bearer test-openrouter-key', 'X-Title': 'FlowPilot' })
+    expect(calls[0]!.body.provider).toEqual({ require_parameters: true })
+    expect(calls[0]!.body.response_format.json_schema.strict).toBe(true)
   })
 
   it('reports a provider error or a 20-second timeout as 503 MODEL_UNAVAILABLE', async () => {

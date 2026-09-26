@@ -1,7 +1,7 @@
 import * as React from 'react'
 import { Link, useRouter, useRouterState } from '@tanstack/react-router'
 import { useMutation, useQueryClient } from '@tanstack/react-query'
-import { BookMarked, LayoutDashboard, LogOut, Menu, Moon, Plus, Search, Sparkles, Sun, X } from 'lucide-react'
+import { BookMarked, History, LayoutDashboard, LogOut, Menu, Moon, Plus, Search, ShieldCheck, Sparkles, Sun, X } from 'lucide-react'
 import { api } from '~/lib/api'
 import { canCreateInWorkspace } from '~/lib/policy'
 import type { Me } from '~/lib/types'
@@ -10,7 +10,7 @@ import { useTheme } from './theme'
 import { CommandPalette, type PaletteLink } from './command'
 import { Avatar, Badge, Button, Kbd, Tip, buttonClass, cn } from './ui'
 
-type NavTo = '/' | '/library'
+type NavTo = '/' | '/library' | '/runs' | '/access'
 type NavItem = { to: NavTo; label: string; icon: React.ReactNode; exact?: boolean }
 type NavGroup = { label: string; items: NavItem[] }
 
@@ -20,7 +20,12 @@ export const NAV: NavGroup[] = [
     items: [
       { to: '/', label: 'Dashboard', icon: <LayoutDashboard />, exact: true },
       { to: '/library', label: 'Recipe library', icon: <BookMarked /> },
+      { to: '/runs', label: 'My runs', icon: <History /> },
     ],
+  },
+  {
+    label: 'Governance',
+    items: [{ to: '/access', label: 'Access', icon: <ShieldCheck /> }],
   },
 ]
 

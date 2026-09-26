@@ -28,7 +28,7 @@ export type UserRef = { id: string; name: string; hue: number }
 
 export type ModelStatus = {
   available: boolean
-  provider: 'anthropic' | 'openai' | null
+  provider: 'anthropic' | 'openai' | 'openrouter' | null
   model: string | null
 }
 

@@ -9,6 +9,8 @@ let loaded = false
 export function loadEnv(): void {
   if (loaded) return
   loaded = true
+  // Tests stay hermetic: a developer's real keys are never loaded into them.
+  if (process.env.VITEST) return
   if (!existsSync('.env')) return
   try {
     process.loadEnvFile('.env')
