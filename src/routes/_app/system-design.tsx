@@ -158,7 +158,7 @@ function ArchitectureSection() {
         rows={[
           [code('lib/workflow/schema.ts'), 'Recipe types, limits, strict Zod schema'],
           [code('lib/workflow/validate.ts'), 'Structural + semantic validation, column tracking step by step, parameter resolution'],
-          [code('lib/workflow/execute.ts'), 'Allowlisted filter and group_sum, 30 s deadline, step log'],
+          [code('lib/workflow/execute.ts'), 'Six allowlisted steps (filter, group_sum, aggregate, sort, limit, select), exact integer maths, 30 s deadline, step log'],
           [code('lib/workflow/describe.ts'), 'Plain-language steps and the deterministic summary line'],
           [code('lib/csv.ts'), 'Parsing, limits, whole-rupee amounts, type inference, formula-safe export'],
           [code('lib/policy.ts'), 'Pure access policy shared by the server and the Access page'],
@@ -183,7 +183,7 @@ const LIFECYCLE: Array<[string, string, string]> = [
   ['Parameters', 'Values checked against type and min/max; defaults fill gaps; unknown names rejected', '422 PARAMETERS_INVALID'],
   ['Parse file', 'BOM, headers, duplicates, field counts, limits, required columns, whole-rupee amounts; extras dropped', '413 / 422 INVALID_FILE (≤20 line-numbered issues)'],
   ['Record', 'Insert a running row that pins version, runner and parameters', '—'],
-  ['Execute', 'filter / group_sum as plain functions; deadline checked between steps and every 1,024 rows', '500 TIMEOUT · EXECUTION_ERROR (row finalised as failed)'],
+  ['Execute', 'Each step is a plain function (filter, group_sum, aggregate, sort, limit, select); deadline checked between steps and every 1,024 rows', '500 TIMEOUT · EXECUTION_ERROR (row finalised as failed)'],
   ['Finalize', 'Store result, step log, summary, row count and duration; append a run.succeeded event', '—'],
   ['Respond', '201 with columns, rows, summary, step log and ignored columns; private, no-store', '—'],
 ]
@@ -243,7 +243,7 @@ function AiSection({ system }: { system?: SystemInfo }) {
           <ul className="mt-2 space-y-1.5 text-[13px] text-muted">
             <li>• The user’s sentence (3 to 2,000 characters)</li>
             <li>• Declared column names and types: text or amount (whole INR). Never data rows</li>
-            <li>• The two operations, their operators, and the rule that group_sum keeps only two columns</li>
+            <li>• The six step types, their operators and figures, and which columns survive each step (grouping and column choices reshape the rows)</li>
             <li>• When to answer “unsupported” (email, Gmail, Slack, APIs, scheduling, joins, charts, averages, code, SQL) or ask one clarification question</li>
           </ul>
         </div>
@@ -404,7 +404,10 @@ function LimitsSection({ system }: { system?: SystemInfo }) {
         ['Columns per file', String(l.columns), '422 · CSV parser'],
         ['Steps per recipe', String(l.steps), '422 · validator'],
         ['Amount per row', `${formatINR(l.amountMax!)} (whole rupees, no decimals, no separators)`, '422 · CSV parser'],
-        ['Integer parameter', `0 to ${formatINR(l.integerParameterMax!)}`, '422 · validator'],
+        ['Whole number per row', `${formatCount(l.integerMax!)} (counts and quantities)`, '422 · CSV parser'],
+        ['Integer parameter', `0 to ${formatCount(l.integerParameterMax!)}`, '422 · validator'],
+        ['Summary step', `${l.groupColumns} group-by columns · ${l.measures} figures`, '422 · validator'],
+        ['Sort · keep first N', `${l.sortKeys} sort columns · up to ${formatCount(l.limitRowsMax!)} rows`, '422 · validator'],
         ['Text value', `${l.textMax} characters`, '422 · validator'],
         ['Execution deadline', `${l.deadlineMs! / 1000} s`, '500 TIMEOUT'],
         ['Stale run', `${l.staleRunMs! / 1000} s`, 'reported as failed STALE'],
@@ -489,7 +492,7 @@ function TradeoffsSection() {
         head={['Decision', 'Gain', 'Cost']}
         rows={[
           ['Linear steps, not a graph', 'Simple to validate, render as cards and explain', 'No branches, joins or loops'],
-          ['Deterministic engine, not an LLM runtime', 'Reproducible, auditable, cheap; runs with the model offline', 'Only what two operations can express'],
+          ['Deterministic engine, not an LLM runtime', 'Reproducible, auditable, cheap; runs with the model offline', 'Only what the six step types can express (no joins, dates or percentages yet)'],
           ['Schema-only prompts', 'No customer rows leave the server; small prompts', 'The model can’t see value casing (“Paid” vs “paid”)'],
           ['Immutable versions', 'Runs and pinned links stay reproducible', 'More rows; every edit is a new version'],
           ['Copy, not reference', 'A copy never breaks when the source changes or goes private', 'Copies don’t receive upstream fixes'],

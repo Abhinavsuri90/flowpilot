@@ -9,11 +9,12 @@ import {
   useTable,
   type ColumnDef,
 } from '@tanstack/react-table'
-import { ArrowDown, ArrowUp, ChevronsUpDown, FileSpreadsheet, Filter, Sigma } from 'lucide-react'
+import { ArrowDown, ArrowUp, ChevronsUpDown, FileSpreadsheet } from 'lucide-react'
 import { formatCount, formatINR } from '~/lib/format'
-import type { Column, Row, StepLogEntry, WorkflowDefinition } from '~/lib/workflow/schema'
+import { isNumericType, type Column, type Row, type StepLogEntry, type WorkflowDefinition } from '~/lib/workflow/schema'
 import { describeRecipe } from '~/lib/workflow/describe'
 import { cn } from './ui'
+import { StepIcon } from './workflow-bits'
 
 // ---------------------------------------------------------------------------
 // Sortable result grid (TanStack Table v9)
@@ -38,11 +39,12 @@ export function ResultTable({ columns, rows, caption }: { columns: Column[]; row
         helper.accessor((row) => row[column.name]!, {
           id: column.name,
           header: column.name,
-          sortFn: column.type === 'integer_inr' ? 'basic' : 'text',
-          sortDescFirst: column.type === 'integer_inr',
+          sortFn: isNumericType(column.type) ? 'basic' : 'text',
+          sortDescFirst: isNumericType(column.type),
           cell: (info) => {
             const value = info.getValue()
-            return column.type === 'integer_inr' && typeof value === 'number' ? formatINR(value) : String(value ?? '')
+            if (typeof value !== 'number') return String(value ?? '')
+            return column.type === 'integer_inr' ? formatINR(value) : column.type === 'integer' ? formatCount(value) : String(value)
           },
         }),
       ),
@@ -63,7 +65,7 @@ export function ResultTable({ columns, rows, caption }: { columns: Column[]; row
           {table.getHeaderGroups().map((group) => (
             <tr key={group.id}>
               {group.headers.map((header) => {
-                const amount = typeOf.get(header.column.id) === 'integer_inr'
+                const amount = isNumericType(typeOf.get(header.column.id))
                 const sorted = header.column.getIsSorted()
                 return (
                   <th
@@ -100,7 +102,7 @@ export function ResultTable({ columns, rows, caption }: { columns: Column[]; row
           {shownRows.map((row) => (
             <tr key={row.id} className="border-b border-line last:border-0 hover:bg-surface-2">
               {row.getAllCells().map((cell) => {
-                const amount = typeOf.get(cell.column.id) === 'integer_inr'
+                const amount = isNumericType(typeOf.get(cell.column.id))
                 return (
                   <td
                     key={cell.id}
@@ -144,10 +146,15 @@ export function StepFunnel({ stepLog, definition, inputRows }: { stepLog: StepLo
     { key: 'input', icon: <FileSpreadsheet />, label: 'Your file', count: inputRows, sub: 'rows read' },
     ...stepLog.map((s, i) => ({
       key: s.stepId,
-      icon: s.type === 'group_sum' ? <Sigma /> : <Filter />,
+      icon: <StepIcon type={s.type} />,
       label: labels[i] ?? s.stepId,
       count: s.rowsOut,
-      sub: s.type === 'group_sum' ? `groups from ${formatCount(s.rowsIn)} rows` : `of ${formatCount(s.rowsIn)} rows kept`,
+      sub:
+        s.type === 'group_sum' || s.type === 'aggregate'
+          ? `group${s.rowsOut === 1 ? '' : 's'} from ${formatCount(s.rowsIn)} rows`
+          : s.type === 'sort' || s.type === 'select'
+            ? 'rows, same count'
+            : `of ${formatCount(s.rowsIn)} rows kept`,
     })),
   ]
   return (

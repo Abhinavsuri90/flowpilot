@@ -22,15 +22,32 @@ const filter = (d: WorkflowDefinition, column: string, operator: string[], value
       s.type === 'filter' &&
       s.column === column &&
       operator.includes(s.operator) &&
-      (!value || ('literal' in s.value ? value(s.value.literal) : value(d.parameters[s.value.parameter]?.default))),
+      (!value ||
+        ('literal' in s.value ? value(s.value.literal) : 'parameter' in s.value ? value(d.parameters[s.value.parameter]?.default) : value(s.value.list))),
   )
 const groupSum = (d: WorkflowDefinition, groupBy: string, valueColumn: string) =>
   d.steps.some((s) => s.type === 'group_sum' && s.groupBy === groupBy && s.valueColumn === valueColumn)
 const param = (d: WorkflowDefinition, dflt: number) => Object.values(d.parameters).some((p) => p.type === 'integer' && p.default === dflt)
 const aliasFilter = (d: WorkflowDefinition, operator: string[]) => {
-  const g = d.steps.find((s) => s.type === 'group_sum')
-  return !!g && g.type === 'group_sum' && filter(d, g.as, operator)
+  const g = d.steps.find((s) => s.type === 'group_sum' || s.type === 'aggregate')
+  if (g?.type === 'group_sum') return filter(d, g.as, operator)
+  if (g?.type === 'aggregate') return g.measures.some((m) => filter(d, m.as, operator))
+  return false
 }
+const aggregate = (d: WorkflowDefinition, groupBy: string[], op: string, column?: string) =>
+  d.steps.some(
+    (s) =>
+      s.type === 'aggregate' &&
+      JSON.stringify(s.groupBy) === JSON.stringify(groupBy) &&
+      s.measures.some((m) => m.op === op && (op === 'count' || ('column' in m && m.column === column))),
+  )
+/** One total per group, whichever grouping step the model chose. */
+const totalPer = (d: WorkflowDefinition, groupBy: string, column: string) => groupSum(d, groupBy, column) || aggregate(d, [groupBy], 'sum', column)
+const sortedDesc = (d: WorkflowDefinition) => d.steps.some((s) => s.type === 'sort' && s.by[0]?.direction === 'desc')
+const firstN = (d: WorkflowDefinition, n: number) =>
+  d.steps.some((s) => s.type === 'limit' && ('literal' in s.rows ? s.rows.literal === n : d.parameters[s.rows.parameter]?.default === n))
+const listFilter = (d: WorkflowDefinition, column: string, values: string[]) =>
+  d.steps.some((s) => s.type === 'filter' && s.column === column && s.operator === 'in' && 'list' in s.value && values.every((v) => (s.value as { list: string[] }).list.includes(v)))
 
 type Case = {
   name: string
@@ -90,8 +107,57 @@ const CASES: Case[] = [
     kind: 'workflow',
     check: (d) => filter(d, 'status', ['eq'], (v) => v === 'paid') && groupSum(d, 'region', 'amount'),
   },
-  { name: 'average → unsupported', request: 'Average order value by region.', columns: SALES, kind: 'unsupported' },
-  { name: 'count → unsupported', request: 'How many orders does each sales rep have?', columns: SALES, kind: 'unsupported' },
+  {
+    name: 'average per region',
+    request: 'Average order value by region.',
+    columns: SALES,
+    kind: 'workflow',
+    check: (d) => aggregate(d, ['region'], 'avg', 'amount'),
+  },
+  {
+    name: 'count per rep',
+    request: 'How many orders does each sales rep have?',
+    columns: SALES,
+    kind: 'workflow',
+    check: (d) => aggregate(d, ['sales_rep'], 'count'),
+  },
+  {
+    name: 'top 3 by revenue',
+    request: 'Top 3 sales reps by paid revenue.',
+    columns: SALES,
+    kind: 'workflow',
+    check: (d) => filter(d, 'status', ['eq'], (v) => v === 'paid') && totalPer(d, 'sales_rep', 'amount') && sortedDesc(d) && firstN(d, 3),
+  },
+  {
+    name: 'largest per group',
+    request: 'What is the largest single order in each region?',
+    columns: SALES,
+    kind: 'workflow',
+    check: (d) => aggregate(d, ['region'], 'max', 'amount'),
+  },
+  {
+    name: 'overall summary',
+    request: 'How many paid orders are there, and what is their total amount?',
+    columns: SALES,
+    kind: 'workflow',
+    check: (d) => filter(d, 'status', ['eq'], (v) => v === 'paid') && aggregate(d, [], 'count') && aggregate(d, [], 'sum', 'amount'),
+  },
+  {
+    name: 'one of a list',
+    request: 'Keep only orders from the "North" and "West" regions.',
+    columns: SALES,
+    kind: 'workflow',
+    check: (d) => listFilter(d, 'region', ['North', 'West']),
+  },
+  {
+    name: 'contains',
+    request: 'Keep rows where the sales rep name contains ash, then total the amount by region.',
+    columns: SALES,
+    kind: 'workflow',
+    check: (d) => filter(d, 'sales_rep', ['contains'], (v) => typeof v === 'string' && v.toLowerCase() === 'ash') && totalPer(d, 'region', 'amount'),
+  },
+  { name: 'months → unsupported', request: 'Show paid revenue by month for the last quarter.', columns: SALES, kind: 'unsupported' },
+  { name: 'percentage → unsupported', request: 'What percentage of total revenue does each region contribute?', columns: SALES, kind: 'unsupported' },
   { name: 'Gmail + schedule → unsupported', request: 'Email this report to my manager through Gmail every Monday.', columns: SALES, kind: 'unsupported' },
   { name: 'join → unsupported', request: 'Join these orders with the targets spreadsheet and compare.', columns: SALES, kind: 'unsupported' },
   { name: 'chart → unsupported', request: 'Draw a bar chart of paid revenue by region.', columns: SALES, kind: 'unsupported' },

@@ -1,5 +1,5 @@
 # FlowPilot: context
-_Last updated: 2026-09-26 17:40 · Phase 11 (accounts and teams) · Complete: sign-up, invites, resets, account settings, workspaces; 114 unit + 24 browser tests green. Next: phase 12 (recipe language v2, archive, audit log)_
+_Last updated: 2026-09-26 19:30 · Phase 12 (recipe language v2) · Complete: summaries, sort, top N, column choices, contains / is one of, whole numbers; eval 21/21; 129 unit + 25 browser tests green. Next: phase 13 (archive, audit log, endpoint smoke, system design)_
 
 ## What this is
 FlowPilot turns a one-sentence description of a repetitive CSV report into a saved, versioned recipe that a workspace can run on their own files, share and fork. AI drafts; a deterministic server executes; one access policy guards every request.
@@ -7,8 +7,8 @@ Stack: TanStack Start 1.168 (React 19.3, Vite 8, Nitro 3 beta), TanStack Router/
 Run: `npm install && npm run dev` → http://localhost:3000 (demo password `flowpilot-demo`)
 
 ## Current status
-- Phase: 11 accounts and teams (owner: "not MVP/demo: add login, sign-in, register; make it useful for companies; then deploy"). Status: done
-- Tests: 114/114 (`npm test`: engine 13, csv 18, validator 13, access 20, demo-loop 12, ai 9, hardening 12, accounts 17) · Browser 24/24 (`npm run test:e2e`: demo 4, features 13, accounts 5, a11y 2) · Model eval 14/14 (phase 9; AI code unchanged since) · Typecheck: pass (also --noUnusedLocals/--noUnusedParameters)
+- Phase: 12 recipe language v2 (owner: "make it one of the fabulous useful tools for companies"). Status: done
+- Tests: 129/129 (`npm test`: engine 13, csv 18, validator 13, access 20, demo-loop 12, ai 10, hardening 12, accounts 17, language 14) · Browser 25/25 (`npm run test:e2e`: demo 4, features 14, accounts 5, a11y 2) · Model eval 21/21 (`npm run eval:model`, gpt-6-luna, median 3.0 s) · Typecheck: pass (also --noUnusedLocals/--noUnusedParameters) · Build: pass
 - App runs with: `npm install && npm run dev` → http://localhost:3000
 
 ## Done (with evidence)
@@ -38,6 +38,15 @@ UI (evidence screenshots in `docs/screenshots/`)
 - [x] Recipe page: version picker + "latest is M" banner, run panel with header pre-check and parameter reset, results (summary chips, Table v9 sorting, funnel, CSV), my runs + delete, who has access, share + copy dialogs. Evidence: `02`–`05`
 - [x] Library, My runs, Access (matrix from `policy.ts`, roles, one-click sharing, principles), Dashboard (checklist, stats, validated run chart with table view, activity), System design (interactive diagrams, live schema). Evidence: `06`, `08`, `09`, `10-dashboard-dark.png`
 - [x] No horizontal overflow at 390px on the main pages; light and dark themes
+
+Phase 12: recipe language v2 (evidence: `tests/language.test.ts` 14, `tests/ai.test.ts` new-shapes test, `tests/e2e/features.spec.ts` "AI drafts a top-N summary", eval 21/21)
+- [x] New steps: `aggregate` (0–3 group columns, 1–5 figures: count/sum/avg/min/max; empty group = one summary row; avg rounded half up with BigInt maths), `sort` (≤3 keys, stable, code-point text), `limit` (literal or parameter, min 1), `select` (order + display-name headers); `group_sum` unchanged (old versions run as before)
+- [x] Filter operators `contains` (ignores capitals) and `in` (`{"list": [...]}`); column type `integer` (whole numbers: counts, quantities; CSV-checked like amounts; suggested for qty/units/count-like names)
+- [x] One shape rule `lib/workflow/columns.ts` (columnsAfter) shared by engine, descriptions, draft model and AI adapter; validator explains removed/renamed columns ("step s2 summarized the rows…", "step s5 renamed it to…")
+- [x] Editor: six step kinds with dedicated cards (figures, sort keys, top N with Make adjustable, column picker with headers/order/Keep all), casing check also for "is one of" lists, pipeline sidebar labels
+- [x] AI: strict schema with six step shapes, lenient parse, typed conversion via columnsAfter, prompt rules (group_sum vs aggregate, top N = sort desc + limit, unsupported: dates, percentages); eval set 14 → 21 cases (average/count now supported)
+- [x] Parameters show their unit (rupees vs plain number) from how steps use them; runs carry a server-formatted `parametersText`
+- [x] Seed example "Top sales reps by paid revenue" (Vikram, Sales) showcasing the new steps
 
 Phase 11: accounts and teams (evidence: `tests/accounts.test.ts` 17, `tests/e2e/accounts.spec.ts` 5, a11y scans of the new pages)
 - [x] Sign-up (`/signup`): account + workspace (you're admin), or join through an invite; `REGISTRATION` open / invite-only / closed; shared password rules (≥10 chars, not common, not your email) with a strength meter; 20 sign-ups/hour/address
@@ -92,10 +101,9 @@ Phase 8 hardening
 - Nothing mid-change. Owner's remaining asks: company-grade features, every endpoint and error smoke-tested, a stronger system design, then deployment.
 
 ## Next steps (ordered)
-1. Phase 12: recipe language v2 (count/avg/min/max, sort, top N, column select/rename, more filter operators), archive recipes, admin audit log
-2. Phase 13: `npm run smoke` against any URL (every endpoint and error code); system design page + docs upgrade
-3. Phase 14: deploy (recommended: Fly.io, Mumbai region, SQLite on a volume); needs the owner's account login
-4. Owner: rotate the OpenRouter key that was shared in chat
+1. Phase 13: archive recipes, admin audit log (+ CSV export), `npm run smoke` against any URL (every endpoint and error code); system design page + docs upgrade
+2. Phase 14: deploy (recommended: Fly.io, Mumbai region, SQLite on a volume); needs the owner's account login
+3. Owner: rotate the OpenRouter key that was shared in chat
 
 ## Decisions log
 | Date | Decision | Why | Alternatives rejected |
@@ -146,6 +154,12 @@ Phase 8 hardening
 | 2026-09-26 | Login throttle keyed three ways (email+address, email, address) | Per-email only let anyone lock an account for 10 minutes | Per-address only (distributed guessing) |
 | 2026-09-26 | `DEMO_MODE` default on in dev, off in prod; demo users flagged `is_demo` and locked | A public demo must not be hijackable; production has no demo accounts by default | Removing demo accounts |
 | 2026-09-26 | Admin-issued password resets not offered | An admin of one workspace could take over a member's other workspaces | Admin reset links |
+| 2026-09-26 | Keep `group_sum`; add `aggregate` beside it | Saved versions are immutable and must keep running; the model and demo stay stable | Migrating group_sum away |
+| 2026-09-26 | Averages rounded half up to whole numbers (exact BigInt maths), stated in the step text | Keeps the integer-only type system and "nothing silently rounded" honest | Decimal column type |
+| 2026-09-26 | `contains` ignores capitals; eq/neq/in stay case-sensitive | "Contains" is a search; equality must stay exact and deterministic | Case-insensitive everything |
+| 2026-09-26 | Empty summary input gives zero rows (not a row of zeros) | No blanks exist for avg/min/max; "No rows matched" is honest | SQL-style NULL row |
+| 2026-09-26 | `select` headers may use spaces and capitals (display names) | Output is for people and spreadsheets | snake_case only |
+| 2026-09-26 | Integer parameter unit inferred from use (amount filter → ₹, limit/whole-number filter → plain) | No schema change; old recipes read as before | A unit field on parameters |
 
 ## Deviations from the brief
 - Added optional `ANTHROPIC_BASE_URL` / `OPENAI_BASE_URL` / `OPENROUTER_BASE_URL` · the browser test needs a local mock model (the model call is server-side) · no change when unset
@@ -179,7 +193,7 @@ Phase 8 hardening
 DATABASE_PATH, SEED_PASSWORD, DEMO_MODE, REGISTRATION, APP_URL, TRUST_PROXY, RESEND_API_KEY, MAIL_FROM, MODEL_PROVIDER, MODEL_NAME, ANTHROPIC_API_KEY, OPENAI_API_KEY, OPENROUTER_API_KEY (+ optional ANTHROPIC_BASE_URL, OPENAI_BASE_URL, OPENROUTER_BASE_URL). The local git-ignored `.env` sets MODEL_PROVIDER=openrouter and OPENROUTER_API_KEY.
 
 ## File map
-- `src/lib/workflow/`: `schema.ts` (contract, LIMITS) · `validate.ts` (validateDefinition, analyze, resolveParameters) · `execute.ts` (engine) · `describe.ts` (INR, steps, summary) · `draft.ts` (editor model) · `examples.ts`
+- `src/lib/workflow/`: `schema.ts` (contract, LIMITS, 6 step types) · `columns.ts` (shape rule) · `validate.ts` (validateDefinition, analyze, resolveParameters) · `execute.ts` (engine) · `describe.ts` (INR, steps, summary, parameter units) · `draft.ts` (editor model) · `examples.ts`
 - `src/lib/`: `csv.ts` · `policy.ts` (pure access policy + matrix) · `account.ts` (name/email/password rules) · `api.ts` (client + query keys) · `types.ts` · `format.ts` · `session.ts` (server fns) · `demo.ts` · `redirect.ts` (safe post-login paths)
 - `src/server/`: `migrations.ts` (schema + triggers, 3 migrations) · `db.ts` · `auth.ts` (sessions, throttle) · `accounts.ts` (users, workspaces, invites, resets) · `repo.ts` (access-aware queries, stale reaper) · `events.ts` (audit + feed) · `config.ts` (env settings, client address) · `mail.ts` · `boot.ts` (first-request setup) · `seed.ts` · `http.ts` · `env.ts` · `ids.ts`
 - `src/server/api/`: `router.ts` (dispatcher, 40 routes) · `auth.ts` · `account.ts` (register, resets, me, workspaces) · `invites.ts` · `workflows.ts` · `runs.ts` · `generate.ts` · `workspace.ts` · `dashboard.ts` · `system.ts`
@@ -187,7 +201,7 @@ DATABASE_PATH, SEED_PASSWORD, DEMO_MODE, REGISTRATION, APP_URL, TRUST_PROXY, RES
 - `src/routes/`: `__root.tsx` · `login.tsx` · `signup.tsx` · `invite.$token.tsx` · `forgot-password.tsx` · `reset-password.$token.tsx` · `_app.tsx` (guard + shell) · `_app/{index,library,runs,access,account,system-design,workflows.new,w.$workflowId.index,w.$workflowId.edit}.tsx` · `_app/$.tsx` (in-app 404) · `api/$.ts`
 - `src/components/`: `ui.tsx` (incl. `Menu`) · `shell.tsx` (workspace switcher, create-workspace dialog) · `auth-layout.tsx` (sign-in pages layout, password input) · `command.tsx` · `editor.tsx` · `results.tsx` · `charts.tsx` · `workflow-bits.tsx` · `file-drop.tsx` · `share-dialog.tsx` · `fork-dialog.tsx` · `access-panel.tsx` · `states.tsx` · `toast.tsx` · `logo.tsx` · `theme.ts` · `diagrams/{architecture,versioning}.tsx`
 - `src/start.ts`: global request middleware (security headers, server-fn CSRF)
-- `tests/`: 8 Vitest suites (incl. `hardening.test.ts`, `accounts.test.ts`) + `helpers/` · `tests/e2e/`: `demo.spec.ts`, `features.spec.ts`, `accounts.spec.ts`, `a11y.spec.ts`, `mock-model.ts` · `playwright.config.ts`
+- `tests/`: 9 Vitest suites (incl. `hardening`, `accounts`, `language`) + `helpers/` · `tests/e2e/`: `demo.spec.ts`, `features.spec.ts`, `accounts.spec.ts`, `a11y.spec.ts`, `mock-model.ts` · `playwright.config.ts`
 - `scripts/`: `seed.ts`, `check-model.ts`, `eval-model.ts`, `screenshots.ts` · `fixtures/`, `public/samples/`, `docs/screenshots/`
 - `src/lib/samples.ts` (sample catalogue) · `src/server/ratelimit.ts` (drafting limits)
 

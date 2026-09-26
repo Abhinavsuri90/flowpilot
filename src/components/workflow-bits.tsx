@@ -1,20 +1,24 @@
 import { Link } from '@tanstack/react-router'
 import {
+  ArrowDownWideNarrow,
   ArrowRight,
   BookOpen,
+  Calculator,
   CheckCircle2,
   CircleDashed,
+  Columns3,
   Copy,
   Filter,
   GitFork,
   Hash,
+  ListStart,
   Lock,
   Sigma,
   Type,
   Users,
   XCircle,
 } from 'lucide-react'
-import { describeRecipe, formatINR } from '~/lib/workflow/describe'
+import { describeRecipe, formatParameterValue, parameterUnits } from '~/lib/workflow/describe'
 import type { ColumnType, ParameterValues, WorkflowDefinition } from '~/lib/workflow/schema'
 import type { Attribution, Role, RunStatus, Visibility, WorkflowSummary } from '~/lib/types'
 import { Avatar, Badge, Button, Tip, buttonClass, cn } from './ui'
@@ -57,23 +61,35 @@ export function ColumnChip({ name, type, className }: { name: string; type: Colu
     <span
       className={cn(
         'inline-flex max-w-full items-center gap-1 rounded-md border px-1.5 py-0.5 font-mono text-[11.5px] leading-4',
-        type === 'integer_inr' ? 'border-flow/25 bg-flow-soft text-flow-ink' : 'border-line bg-sunken text-ink-2',
+        type === 'string' ? 'border-line bg-sunken text-ink-2' : 'border-flow/25 bg-flow-soft text-flow-ink',
         className,
       )}
-      title={type === 'integer_inr' ? `${name}: amount in whole rupees` : `${name}: text`}
+      title={type === 'integer_inr' ? `${name}: amount in whole rupees` : type === 'integer' ? `${name}: whole number` : `${name}: text`}
     >
-      {type === 'integer_inr' ? <span className="font-sans font-semibold">₹</span> : <Type className="size-3 opacity-60" aria-hidden />}
+      {type === 'integer_inr' ? (
+        <span className="font-sans font-semibold">₹</span>
+      ) : type === 'integer' ? (
+        <Hash className="size-3 opacity-70" aria-hidden />
+      ) : (
+        <Type className="size-3 opacity-60" aria-hidden />
+      )}
       <span className="truncate">{name}</span>
     </span>
   )
 }
 
+const STEP_ICONS: Record<string, typeof Filter> = {
+  filter: Filter,
+  group_sum: Sigma,
+  aggregate: Calculator,
+  sort: ArrowDownWideNarrow,
+  limit: ListStart,
+  select: Columns3,
+}
+
 export function StepIcon({ type, className }: { type: string; className?: string }) {
-  return type === 'group_sum' ? (
-    <Sigma className={cn('size-4', className)} aria-hidden />
-  ) : (
-    <Filter className={cn('size-4', className)} aria-hidden />
-  )
+  const Icon = STEP_ICONS[type] ?? Filter
+  return <Icon className={cn('size-4', className)} aria-hidden />
 }
 
 /** "Copied from Asha Rao's Regional revenue exceptions (v1)", or a hidden source. */
@@ -124,6 +140,7 @@ export function StepList({ definition, params, className }: { definition: Workfl
 
 export function ParameterSummary({ definition }: { definition: WorkflowDefinition }) {
   const entries = Object.entries(definition.parameters)
+  const units = parameterUnits(definition)
   if (!entries.length) return <p className="text-[13px] text-muted">No parameters. Every run uses the saved values.</p>
   return (
     <ul className="space-y-1.5">
@@ -132,8 +149,8 @@ export function ParameterSummary({ definition }: { definition: WorkflowDefinitio
           <code className="rounded-md bg-sunken px-1.5 py-0.5 text-[12px] text-ink">{name}</code>
           {p.type === 'integer' ? (
             <span className="text-muted">
-              default <span className="tabular font-medium text-ink-2">{formatINR(p.default)}</span> · allowed{' '}
-              <span className="tabular">{formatINR(p.min)}</span>–<span className="tabular">{formatINR(p.max)}</span>
+              default <span className="tabular font-medium text-ink-2">{formatParameterValue(p.default, units[name])}</span> · allowed{' '}
+              <span className="tabular">{formatParameterValue(p.min, units[name])}</span>–<span className="tabular">{formatParameterValue(p.max, units[name])}</span>
             </span>
           ) : (
             <span className="text-muted">

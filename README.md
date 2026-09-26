@@ -29,7 +29,8 @@ The full loop works end to end, and a real browser test proves it: **describe �
 **Authoring**
 - Read a sample CSV in the browser (it is never uploaded) to declare the input columns and their types: text, or amount in whole rupees.
 - Describe the report in plain language, in English or Hinglish, and get editable step cards. AI drafts carry a badge until you save them.
-- Edit steps by hand: filter rows, or group and sum. Each dropdown offers only the columns available at that step, and a sidebar shows the columns flowing through the pipeline.
+- Edit steps by hand, from six kinds: **filter** rows (equals, comparisons, *contains*, *is one of*); **group & sum**; **summarize** by up to three columns with up to five figures (count, total, average, smallest, largest), or over all rows; **sort** by up to three columns; **keep the first N** rows (a "top 10", adjustable per run); and **choose columns**, in order, with friendly headers. Each dropdown offers only the columns available at that step, and a sidebar shows the columns flowing through the pipeline.
+- Three column types: text, amounts in whole rupees, and whole numbers (counts and quantities), suggested from the sample file.
 - Checks run as you type: every rule is validated live and problems are pinned to the step card they belong to.
 - The editor warns when a text value never occurs in your sample (for example "Paid" when the data says "paid") and fixes it in one click.
 - *Make adjustable* turns a fixed value into a run parameter, such as a threshold with a default and bounds.
@@ -99,7 +100,7 @@ Then check it:
 
 ```bash
 npm run check:model     # is the model reachable, and what does it draft for the demo sentence?
-npm run eval:model      # the 14-case eval set below, against the configured model
+npm run eval:model      # the 21-case eval set below, against the configured model
 ```
 
 Anthropic (`ANTHROPIC_API_KEY`, which uses a forced tool call) and OpenAI (`OPENAI_API_KEY`, which uses strict `json_schema`) work the same way. With OpenRouter, FlowPilot asks to be routed only to providers that honour a strict `response_format`.
@@ -108,7 +109,7 @@ Anthropic (`ANTHROPIC_API_KEY`, which uses a forced tool call) and OpenAI (`OPEN
 
 ### Why `openai/gpt-6-luna`
 
-`npm run eval:model` sends 14 fixed requests and checks the drafts structurally. It covers drafts, adjustable thresholds, exclusions, a different file layout and a Hinglish request, plus things a recipe can't do (averages, counts, Gmail on a schedule, joins, charts) and an ambiguous column that should get a clarifying question. Measured through OpenRouter on 26 Sep 2026:
+`npm run eval:model` sends 21 fixed requests and checks the drafts structurally. It covers drafts, adjustable thresholds, exclusions, a different file layout and a Hinglish request; averages, counts, a top 3, the largest order per group, an overall summary, *is one of* and *contains*; things a recipe can't do (monthly periods, percentage shares, Gmail on a schedule, joins, charts); and an ambiguous column that should get a clarifying question. `openai/gpt-6-luna` passes **21 / 21** (median 3.0 s). The model comparison below was measured on the earlier 14-case set, through OpenRouter on 26 Sep 2026:
 
 | Model | Eval result | Median | Slowest | Price in / out per M tokens |
 |---|---|---|---|---|
@@ -159,7 +160,7 @@ flowchart LR
     PO[Access policy]
     VA[Validator: strict schema]
     CS[CSV parser]
-    EN[Engine: filter, group_sum]
+    EN[Engine: six allowlisted steps]
   end
   MP[(Model provider)]
   DB[(SQLite: versions immutable, runs private)]
@@ -175,8 +176,8 @@ flowchart LR
 ```
 
 - **Two paths, one policy.** Authoring (editor → AI author → model → validator → new version) and execution (run panel → policy → validator → CSV parser → engine → private run record) share only the dispatcher, the access policy and the validator. The model is never on the execution path, so saved recipes run even when AI is down.
-- **A small recipe language.** A strict JSON document with a declared input, typed parameters and up to 10 linear steps. Only `filter` and `group_sum` exist, values are literals or declared parameters, and nothing is ever evaluated. The validator tracks the available columns step by step, so it can explain problems precisely, e.g. *“Column "sales_rep" is no longer available: step s2 grouped the rows, which keeps only "region" and "total"”*.
-- **A deterministic engine.** Integer sums are exact, groups are sorted by code point, a 30-second deadline is checked between steps and every 1,024 rows, and a step log records rows in and out.
+- **A small recipe language.** A strict JSON document with a declared input, typed parameters and up to 10 linear steps from an allowlist of six (`filter`, `group_sum`, `aggregate`, `sort`, `limit`, `select`). Values are literals, lists or declared parameters, and nothing is ever evaluated. One shared rule (`lib/workflow/columns.ts`) says which columns exist after each step, and the validator uses it to explain problems precisely, e.g. *“Column "status" is no longer available: step s2 summarized the rows, which keeps only "region", "orders"”* or *“…step s5 renamed it to "Region"”*.
+- **A deterministic engine.** Sums are exact integers, averages are rounded half up with exact integer maths, groups and sorts order text by code point (never by locale) and ties keep their file order, a 30-second deadline is checked between steps and every 1,024 rows, and a step log records rows in and out.
 - **Versions, runs and copies.** Saving appends an immutable version, and title or description edits don't create one. Each run pins the exact version it executed. A copy is a new private recipe whose version 1 points back at one source version.
 - **The database enforces invariants itself.** Triggers reject editing or deleting a version; changing a recipe's owner, workspace or copy source; pointing a recipe at another recipe's version; updating a finished run; and editing the audit log.
 - **One access policy.** Pure functions in `src/lib/policy.ts` are used by every endpoint and by the Access page's matrix.
@@ -198,7 +199,19 @@ flowchart LR
 }
 ```
 
-`eq` and `neq` work on text or amounts; `lt`, `lte`, `gt` and `gte` work only on amounts. Text matching is exact and case-sensitive. After a `group_sum`, only the group column and the new total remain.
+`eq` and `neq` work on any column; `lt`, `lte`, `gt` and `gte` on numbers (amounts and whole numbers); `contains` (ignoring capitals) and `in` (`{"list": [...]}`) on text. `eq`, `neq` and `in` match text exactly and case-sensitively. After a `group_sum`, only the group column and the new total remain.
+
+The other steps, as they appear in a recipe:
+
+```json
+{ "id": "s2", "type": "aggregate", "groupBy": ["sales_rep"],
+  "measures": [{ "op": "sum", "column": "amount", "as": "revenue" }, { "op": "count", "as": "orders" }, { "op": "avg", "column": "amount", "as": "avg_deal" }] }
+{ "id": "s3", "type": "sort", "by": [{ "column": "revenue", "direction": "desc" }] }
+{ "id": "s4", "type": "limit", "rows": { "parameter": "top_n" } }
+{ "id": "s5", "type": "select", "columns": [{ "column": "sales_rep", "as": "Sales rep" }, { "column": "revenue", "as": "Paid revenue" }] }
+```
+
+A summary with an empty `groupBy` gives one row over all rows. After a summary only its group columns and figures remain; counts are whole numbers and the other figures keep their column's type. Column types are `string`, `integer_inr` (whole rupees) and `integer` (whole numbers).
 </details>
 
 | Action on a team recipe | Owner | Admin | Member | Viewer | Outsider |
@@ -271,16 +284,16 @@ Status codes: 401 not signed in · 403 visible but not yours, a cross-site write
 ## Testing
 
 ```bash
-npm test                          # 114 unit and API tests
+npm test                          # 129 unit and API tests
 npx playwright install chromium   # once
-npm run test:e2e                  # 24 browser tests
+npm run test:e2e                  # 25 browser tests
 npm run typecheck
 ```
 
-- **Unit and API tests (Vitest), 114 in total:** engine 13, CSV 18, validator 13, access 20, demo loop 12, AI 9, hardening 12 (HTTP methods, redirects, sessions, no-op edits, the activity feed on a busy team, list paging and run counts), accounts 17 (sign-up modes and rules, invitations, password resets, account settings, workspaces, removal and hand-over). They call the same `handleApi(Request)` the server uses, with real session cookies, against an in-memory SQLite database, so access rules are tested end to end rather than mocked. The model is always stubbed, and the tests never read `.env`.
-- **Browser tests (Playwright), 24 in total:**
+- **Unit and API tests (Vitest), 129 in total:** engine 13, CSV 18, validator 13, access 20, demo loop 12, AI 10, hardening 12 (HTTP methods, redirects, sessions, no-op edits, the activity feed on a busy team, list paging and run counts), accounts 17 (sign-up modes and rules, invitations, password resets, account settings, workspaces, removal and hand-over), language 14 (summaries and exact rounding, sort, top N, column choices, *contains* and *is one of*, whole numbers, validation messages, the seeded examples, a top-N run and CSV export through the API). They call the same `handleApi(Request)` the server uses, with real session cookies, against an in-memory SQLite database, so access rules are tested end to end rather than mocked. The model is always stubbed, and the tests never read `.env`.
+- **Browser tests (Playwright), 25 in total:**
   - `demo.spec.ts` (4) is the demo above.
-  - `features.spec.ts` (13) covers the rest: the editor's value warning, an invalid AI draft and a clarifying question, Advanced JSON, in-browser file checks, samples and parameters, details-only saves and versions, runs from another recipe, large results, CSV escaping, the command palette, theme, roles, *Delete my results*, the mobile drawer, re-checking a file when the version changes, refusing a non-UTF-8 file, the in-app 404, wide tables at phone width, and library paging.
+  - `features.spec.ts` (14) covers the rest: the editor's value warning, an invalid AI draft and a clarifying question, Advanced JSON, in-browser file checks, samples and parameters, details-only saves and versions, runs from another recipe, large results, CSV escaping, the command palette, theme, roles, *Delete my results*, the mobile drawer, re-checking a file when the version changes, refusing a non-UTF-8 file, the in-app 404, wide tables at phone width, library paging, and an AI-drafted top-N summary edited with the new step cards and run.
   - `accounts.spec.ts` (5): a new team signs up, invites a teammate who joins through the link and runs a shared recipe; the workspace switcher (mouse and keyboard); account settings and a password change that signs out another device; forgot-password and dead links; the sign-in pages at phone width.
   - `a11y.spec.ts` (2) runs an axe-core WCAG 2.1 AA scan of every page, including sign-up, invitations and account settings, in light and dark mode.
 - The browser tests use their own database and a stand-in model (`tests/e2e/mock-model.ts`), so they never spend real credits. Screenshots of each demo stage are saved to `docs/screenshots/`.
@@ -356,7 +369,7 @@ This is a working prototype, not a production platform:
 
 - **Single node.** SQLite suits one server process. The next step is Postgres with row-level security mirroring `lib/policy.ts`.
 - **Small, synchronous runs.** Up to 1 MiB, 5,000 rows and 50 columns per file, run inside the request with a 30-second deadline. There is no queue, scheduling or retry.
-- **Two operations.** Filter and group-and-sum only: no joins, averages, counts or charts. The AI says so instead of pretending.
+- **Six step types.** Filter, group & sum, summarize, sort, keep first N and choose columns: no joins, dates or periods, percentages or charts yet. The AI says so instead of pretending.
 - **Accounts.** Email and password only: no SSO, two-factor sign-in or email verification yet, and accounts can't be deleted from the UI.
 - **In-memory limits.** Sign-in, sign-up, reset and drafting limits live in the server's memory, so they reset on restart and aren't shared between servers (Redis would fix both).
 - **No deleting recipes.** Versions are immutable by design.

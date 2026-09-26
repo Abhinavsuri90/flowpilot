@@ -1,4 +1,4 @@
-import type { ColumnType, Operator, WorkflowDefinition } from './schema'
+import { AGGREGATE_OPS, OPERATORS, type AggregateOp, type ColumnType, type Operator, type StepType, type WorkflowDefinition } from './schema'
 
 // The editor edits a loose, form-friendly draft. It converts to a definition on
 // every change, and the same validator as the server decides whether it's valid.
@@ -13,18 +13,34 @@ export type DraftColumn = {
   values?: string[]
 }
 export type DraftParam = { key: string; name: string; type: 'integer' | 'string'; default: string; min: string; max: string }
+export type DraftMeasure = { key: string; op: AggregateOp; column: string; as: string }
+export type DraftSortKey = { key: string; column: string; direction: 'asc' | 'desc' }
+export type DraftPick = { key: string; column: string; as: string }
+
+/** One form for every step type; each type reads only its own fields. */
 export type DraftStep = {
   key: string
   id: string
-  type: 'filter' | 'group_sum'
+  type: StepType
+  // filter (and limit: valueKind / literal / parameter hold the number of rows)
   column: string
   operator: Operator
   valueKind: 'literal' | 'parameter'
   literal: string
   parameter: string
+  /** "is one of" values, comma-separated as typed. */
+  list: string
+  // group_sum
   groupBy: string
   valueColumn: string
   as: string
+  // aggregate
+  groupColumns: string[]
+  measures: DraftMeasure[]
+  // sort
+  sortKeys: DraftSortKey[]
+  // select
+  picks: DraftPick[]
 }
 
 /** Where the current steps came from; AI drafts carry a review badge until saved. */
@@ -47,7 +63,11 @@ export function emptyDraft(): Draft {
   return { title: '', description: '', request: '', columns: [], parameters: [], steps: [], origin: 'blank' }
 }
 
-export function newStep(type: 'filter' | 'group_sum', existingIds: string[]): DraftStep {
+export const newMeasure = (op: AggregateOp = 'sum', as = 'total'): DraftMeasure => ({ key: draftKey(), op, column: '', as })
+export const newSortKey = (): DraftSortKey => ({ key: draftKey(), column: '', direction: 'desc' })
+export const newPick = (column = '', as = ''): DraftPick => ({ key: draftKey(), column, as })
+
+export function newStep(type: StepType, existingIds: string[]): DraftStep {
   let n = existingIds.length + 1
   while (existingIds.includes(`s${n}`)) n++
   return {
@@ -57,32 +77,58 @@ export function newStep(type: 'filter' | 'group_sum', existingIds: string[]): Dr
     column: '',
     operator: 'eq',
     valueKind: 'literal',
-    literal: '',
+    literal: type === 'limit' ? '10' : '',
     parameter: '',
+    list: '',
     groupBy: '',
     valueColumn: '',
     as: type === 'group_sum' ? 'total' : '',
+    groupColumns: type === 'aggregate' ? [''] : [],
+    measures: type === 'aggregate' ? [newMeasure()] : [],
+    sortKeys: type === 'sort' ? [newSortKey()] : [],
+    picks: [],
   }
 }
 
-export function newParam(existingNames: string[], type: 'integer' | 'string' = 'integer', dflt = ''): DraftParam {
-  const base = type === 'integer' ? 'threshold' : 'value'
-  let name = base
+export function newParam(existingNames: string[], type: 'integer' | 'string' = 'integer', dflt = '', base?: string, min = '0'): DraftParam {
+  const stem = base ?? (type === 'integer' ? 'threshold' : 'value')
+  let name = stem
   let n = 2
-  while (existingNames.includes(name)) name = `${base}_${n++}`
-  return { key: draftKey(), name, type, default: dflt || (type === 'integer' ? '0' : ''), min: '0', max: '1000000000' }
+  while (existingNames.includes(name)) name = `${stem}_${n++}`
+  return { key: draftKey(), name, type, default: dflt || (type === 'integer' ? '0' : ''), min, max: '1000000000' }
 }
 
 const asInt = (s: string): number | string => (/^\s*\d{1,15}\s*$/.test(s) ? Number(s.trim()) : s)
 
-/** Column types before each step, following the same schema rule as the validator. */
-function typesBefore(draft: Pick<Draft, 'columns' | 'steps'>): Array<Map<string, ColumnType>> {
+/** "North, South ,  West" → ["North", "South", "West"]. */
+export function splitList(text: string): string[] {
+  return text
+    .split(',')
+    .map((v) => v.trim())
+    .filter(Boolean)
+}
+
+/** Column types before each step, following the same shape rules as the validator (on partial drafts too). */
+export function typesBefore(draft: Pick<Draft, 'columns' | 'steps'>): Array<Map<string, ColumnType>> {
   let current = new Map(draft.columns.filter((c) => c.include).map((c) => [c.name, c.type] as const))
   return draft.steps.map((step) => {
     const before = current
     if (step.type === 'group_sum' && step.groupBy) {
       current = new Map<string, ColumnType>([[step.groupBy, 'string']])
       if (step.as && step.as !== step.groupBy) current.set(step.as, 'integer_inr')
+    } else if (step.type === 'aggregate') {
+      const next = new Map<string, ColumnType>()
+      for (const column of step.groupColumns) if (column && before.has(column)) next.set(column, before.get(column)!)
+      for (const m of step.measures) {
+        if (!m.as) continue
+        if (m.op === 'count') next.set(m.as, 'integer')
+        else if (before.has(m.column)) next.set(m.as, before.get(m.column)!)
+      }
+      current = next
+    } else if (step.type === 'select' && step.picks.some((p) => p.column)) {
+      const next = new Map<string, ColumnType>()
+      for (const p of step.picks) if (p.column && before.has(p.column)) next.set(p.as.trim() || p.column, before.get(p.column)!)
+      current = next
     }
     return before
   })
@@ -106,47 +152,112 @@ export function draftToDefinition(draft: Draft): unknown {
     },
     parameters,
     steps: draft.steps.map((s, i) => {
-      if (s.type === 'group_sum') return { id: s.id, type: 'group_sum', groupBy: s.groupBy, valueColumn: s.valueColumn, as: s.as }
-      const columnType = types[i]?.get(s.column)
-      const literal = columnType === 'integer_inr' ? asInt(s.literal) : s.literal.trim()
-      return {
-        id: s.id,
-        type: 'filter',
-        column: s.column,
-        operator: s.operator,
-        value: s.valueKind === 'parameter' ? { parameter: s.parameter } : { literal },
+      switch (s.type) {
+        case 'group_sum':
+          return { id: s.id, type: 'group_sum', groupBy: s.groupBy, valueColumn: s.valueColumn, as: s.as }
+        case 'aggregate':
+          return {
+            id: s.id,
+            type: 'aggregate',
+            groupBy: s.groupColumns.filter(Boolean),
+            measures: s.measures.map((m) => (m.op === 'count' ? { op: 'count', as: m.as } : { op: m.op, column: m.column, as: m.as })),
+          }
+        case 'sort':
+          return { id: s.id, type: 'sort', by: s.sortKeys.map((k) => ({ column: k.column, direction: k.direction })) }
+        case 'limit':
+          return { id: s.id, type: 'limit', rows: s.valueKind === 'parameter' ? { parameter: s.parameter } : { literal: asInt(s.literal) } }
+        case 'select':
+          return {
+            id: s.id,
+            type: 'select',
+            columns: s.picks.map((p) => (p.as.trim() && p.as.trim() !== p.column ? { column: p.column, as: p.as.trim() } : { column: p.column })),
+          }
+        case 'filter': {
+          const columnType = types[i]?.get(s.column)
+          if (s.operator === 'in') return { id: s.id, type: 'filter', column: s.column, operator: 'in', value: { list: splitList(s.list) } }
+          const numeric = columnType === 'integer_inr' || columnType === 'integer'
+          const literal = numeric ? asInt(s.literal) : s.literal.trim()
+          return {
+            id: s.id,
+            type: 'filter',
+            column: s.column,
+            operator: s.operator,
+            value: s.valueKind === 'parameter' ? { parameter: s.parameter } : { literal },
+          }
+        }
       }
     }),
     output: { format: 'table' },
   }
 }
 
+const isObj = (v: unknown): v is Record<string, unknown> => typeof v === 'object' && v !== null && !Array.isArray(v)
+const text = (v: unknown) => (typeof v === 'string' ? v : typeof v === 'number' ? String(v) : '')
+
+/**
+ * Loads any step-shaped value (a saved definition, or a model draft that failed
+ * validation) into the editor without throwing, so its problems can be pinned
+ * to the right step cards and fixed by hand.
+ */
+function draftStepFrom(raw: unknown, i: number): DraftStep {
+  const obj = isObj(raw) ? raw : {}
+  const id = text(obj.id) || `s${i + 1}`
+  switch (obj.type) {
+    case 'group_sum':
+      return { ...newStep('group_sum', []), id, groupBy: text(obj.groupBy), valueColumn: text(obj.valueColumn), as: text(obj.as) }
+    case 'aggregate': {
+      const groupBy = Array.isArray(obj.groupBy) ? obj.groupBy.map(text) : []
+      const measures = (Array.isArray(obj.measures) ? obj.measures : []).map((m) => {
+        const mm = isObj(m) ? m : {}
+        const op = AGGREGATE_OPS.find((o) => o === mm.op) ?? 'sum'
+        return { key: draftKey(), op, column: text(mm.column), as: text(mm.as) }
+      })
+      return { ...newStep('aggregate', []), id, groupColumns: groupBy, measures }
+    }
+    case 'sort': {
+      const by = (Array.isArray(obj.by) ? obj.by : []).map((k) => {
+        const kk = isObj(k) ? k : {}
+        return { key: draftKey(), column: text(kk.column), direction: kk.direction === 'asc' ? ('asc' as const) : ('desc' as const) }
+      })
+      return { ...newStep('sort', []), id, sortKeys: by }
+    }
+    case 'limit': {
+      const rows = isObj(obj.rows) ? obj.rows : {}
+      return {
+        ...newStep('limit', []),
+        id,
+        valueKind: 'parameter' in rows ? 'parameter' : 'literal',
+        literal: 'literal' in rows ? text(rows.literal) : '',
+        parameter: text(rows.parameter),
+      }
+    }
+    case 'select': {
+      const picks = (Array.isArray(obj.columns) ? obj.columns : []).map((c) => {
+        const cc = isObj(c) ? c : {}
+        return newPick(text(cc.column), text(cc.as))
+      })
+      return { ...newStep('select', []), id, picks }
+    }
+    default: {
+      const value = isObj(obj.value) ? obj.value : {}
+      const operator = OPERATORS.find((o) => o === obj.operator) ?? 'eq'
+      return {
+        ...newStep('filter', []),
+        id,
+        column: text(obj.column),
+        operator,
+        valueKind: 'parameter' in value ? 'parameter' : 'literal',
+        literal: text(value.literal),
+        parameter: text(value.parameter),
+        list: Array.isArray(value.list) ? value.list.map(text).join(', ') : '',
+      }
+    }
+  }
+}
+
 /** Loads a saved (or generated) definition into the editor. */
 export function definitionToDraft(def: WorkflowDefinition): Pick<Draft, 'columns' | 'parameters' | 'steps'> {
-  return {
-    columns: Object.entries(def.input.columns).map(([name, type]) => ({ name, type, include: true, samples: [], blanks: 0 })),
-    parameters: Object.entries(def.parameters).map(([name, p]) => ({
-      key: draftKey(),
-      name,
-      type: p.type,
-      default: String(p.default),
-      min: p.type === 'integer' ? String(p.min) : '0',
-      max: p.type === 'integer' ? String(p.max) : '1000000000',
-    })),
-    steps: def.steps.map((s) =>
-      s.type === 'group_sum'
-        ? { ...newStep('group_sum', []), id: s.id, groupBy: s.groupBy, valueColumn: s.valueColumn, as: s.as }
-        : {
-            ...newStep('filter', []),
-            id: s.id,
-            column: s.column,
-            operator: s.operator,
-            valueKind: 'parameter' in s.value ? 'parameter' : 'literal',
-            literal: 'literal' in s.value ? String(s.value.literal) : '',
-            parameter: 'parameter' in s.value ? s.value.parameter : '',
-          },
-    ),
-  }
+  return draftFromUnknown(def)
 }
 
 /**
@@ -165,14 +276,6 @@ export function mergeColumns(existing: DraftColumn[], incoming: DraftColumn[]): 
   return merged
 }
 
-const isObj = (v: unknown): v is Record<string, unknown> => typeof v === 'object' && v !== null && !Array.isArray(v)
-const text = (v: unknown) => (typeof v === 'string' ? v : typeof v === 'number' ? String(v) : '')
-
-/**
- * Loads any definition-shaped value (for example a model draft that failed
- * validation) into the editor without throwing, so its problems can be pinned
- * to the right step cards and fixed by hand.
- */
 export function draftFromUnknown(raw: unknown): Pick<Draft, 'columns' | 'parameters' | 'steps'> {
   const root = isObj(raw) ? raw : {}
   const input = isObj(root.input) ? root.input : {}
@@ -182,7 +285,7 @@ export function draftFromUnknown(raw: unknown): Pick<Draft, 'columns' | 'paramet
   return {
     columns: Object.entries(columns).map(([name, type]) => ({
       name,
-      type: type === 'integer_inr' ? 'integer_inr' : 'string',
+      type: type === 'integer_inr' || type === 'integer' ? type : 'string',
       include: true,
       samples: [],
       blanks: 0,
@@ -199,23 +302,6 @@ export function draftFromUnknown(raw: unknown): Pick<Draft, 'columns' | 'paramet
         max: type === 'integer' ? text(obj.max) || '1000000000' : '1000000000',
       } satisfies DraftParam
     }),
-    steps: steps.map((s, i): DraftStep => {
-      const obj = isObj(s) ? s : {}
-      const id = text(obj.id) || `s${i + 1}`
-      if (obj.type === 'group_sum') {
-        return { ...newStep('group_sum', []), id, groupBy: text(obj.groupBy), valueColumn: text(obj.valueColumn), as: text(obj.as) }
-      }
-      const value = isObj(obj.value) ? obj.value : {}
-      const operator = (['eq', 'neq', 'lt', 'lte', 'gt', 'gte'] as const).find((o) => o === obj.operator) ?? 'eq'
-      return {
-        ...newStep('filter', []),
-        id,
-        column: text(obj.column),
-        operator,
-        valueKind: 'parameter' in value ? 'parameter' : 'literal',
-        literal: text(value.literal),
-        parameter: text(value.parameter),
-      }
-    }),
+    steps: steps.map(draftStepFrom),
   }
 }

@@ -2,6 +2,7 @@ import type { DB } from './db'
 import { newId, nowIso } from './ids'
 import { notFound } from './http'
 import { canView, decide, type Relation } from '../lib/policy'
+import { describeParameters } from '../lib/workflow/describe'
 import { LIMITS, type StepLogEntry, type WorkflowDefinition } from '../lib/workflow/schema'
 import type {
   Attribution,
@@ -376,7 +377,12 @@ export function deleteFinishedRuns(db: DB, runnerId: string, workflowId?: string
 export function toRunSummary(db: DB, caller: Caller, run: RunRow): RunSummary {
   const wf = getWorkflow(db, run.workflow_id)
   const readable = !!wf && canView(relationTo(db, caller, wf), wf.visibility)
-  const versionNumber = (db.prepare('SELECT version_number FROM workflow_versions WHERE id = ?').pluck().get(run.version_id) as number) ?? 0
+  const version = db.prepare('SELECT version_number, definition FROM workflow_versions WHERE id = ?').get(run.version_id) as
+    | { version_number: number; definition: string }
+    | undefined
+  const parameters = JSON.parse(run.parameters) as Record<string, string | number>
+  // Formatted with the run's own version (amounts in rupees, counts as numbers).
+  const parametersText = version ? describeParameters(JSON.parse(version.definition) as WorkflowDefinition, parameters) : ''
   return {
     id: run.id,
     status: run.status,
@@ -384,8 +390,9 @@ export function toRunSummary(db: DB, caller: Caller, run: RunRow): RunSummary {
     workflowTitle: readable ? wf!.title : null,
     recipeAvailable: readable,
     versionId: run.version_id,
-    versionNumber,
-    parameters: JSON.parse(run.parameters),
+    versionNumber: version?.version_number ?? 0,
+    parameters,
+    parametersText,
     inputName: run.input_name,
     inputRows: run.input_rows,
     rowCount: run.row_count,

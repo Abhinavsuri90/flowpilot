@@ -157,6 +157,8 @@ export type RunSummary = {
   versionId: string
   versionNumber: number
   parameters: Record<string, string | number>
+  /** The parameters as people read them for this recipe ("threshold ₹50,000, top_n 3"); empty when none. */
+  parametersText: string
   inputName: string | null
   inputRows: number | null
   rowCount: number | null

@@ -1,7 +1,8 @@
 // A stand-in for the Anthropic Messages API, used only by the browser tests so
 // "Generate steps" can be exercised without a real key. It answers the demo
-// sentence with the demo recipe, email/Gmail requests with "unsupported", and
-// anything else with a clarification question. Point the app at it with
+// sentence with the demo recipe, "top N" requests with a summary + sort +
+// keep-first recipe, email/Gmail requests with "unsupported", and anything else
+// with a clarification question. Point the app at it with
 // ANTHROPIC_BASE_URL=http://localhost:4010 and a dummy ANTHROPIC_API_KEY.
 import { createServer } from 'node:http'
 
@@ -25,8 +26,31 @@ const BROKEN = {
   steps: [DEMO.steps[0], DEMO.steps[1], { ...DEMO.steps[2], column: 'sales_rep' }],
 }
 
+// "Top 2 sales reps by paid revenue": the v2 steps, in the flat shape the real model uses.
+const TOP_REPS = {
+  kind: 'workflow',
+  reason: null,
+  question: null,
+  parameters: [],
+  steps: [
+    { id: 's1', type: 'filter', column: 'status', operator: 'eq', value_kind: 'literal', literal_string: 'paid', literal_integer: null, parameter: null, list: null },
+    {
+      id: 's2',
+      type: 'aggregate',
+      group_by: ['sales_rep'],
+      measures: [
+        { op: 'sum', column: 'amount', as: 'revenue' },
+        { op: 'count', column: null, as: 'orders' },
+      ],
+    },
+    { id: 's3', type: 'sort', by: [{ column: 'revenue', direction: 'desc' }] },
+    { id: 's4', type: 'limit', rows_kind: 'literal', rows_integer: 2, parameter: null },
+  ],
+}
+
 function answer(prompt: string) {
   if (/broken draft/i.test(prompt)) return BROKEN
+  if (/\btop\b/i.test(prompt)) return TOP_REPS
   if (/gmail|e-?mail|slack|schedule|every monday/i.test(prompt)) {
     return {
       kind: 'unsupported',

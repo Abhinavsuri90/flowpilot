@@ -75,7 +75,7 @@ test('Advanced JSON rejects an invalid recipe and applies a valid one', async ({
   const bad = { ...ORIGINAL, steps: [{ id: 's1', type: 'sql', query: 'DROP TABLE runs' }] }
   await page.getByLabel('Definition JSON').fill(JSON.stringify(bad))
   await page.getByRole('button', { name: 'Apply to editor' }).click()
-  await expect(page.getByText('Unsupported step type "sql". Only filter and group_sum are allowed.')).toBeVisible()
+  await expect(page.getByText('Unsupported step type "sql". Only filter, group_sum, aggregate, sort, limit and select are allowed.')).toBeVisible()
   await page.getByLabel('Definition JSON').fill(JSON.stringify(ORIGINAL))
   await page.getByRole('button', { name: 'Apply to editor' }).click()
   await expect(page.getByText('JSON applied')).toBeVisible()
@@ -320,4 +320,40 @@ test('the library shows 60 recipes at a time and loads the rest on request', asy
   await expect(page.getByText(`Showing 60 of ${total} recipes`)).toBeVisible()
   await page.getByRole('button', { name: `Show ${Math.min(total - 60, 60)} more` }).click()
   await expect(cards).toHaveCount(Math.min(total, 120))
+})
+
+test('AI drafts a top-N summary; the new step cards show it, and the run ranks reps with plain-number counts', async ({ page }) => {
+  await signIn(page, 'Asha')
+  await open(page, '/workflows/new')
+  await page.getByRole('button', { name: 'Use sales_A.csv' }).click()
+  await page.getByLabel('Describe the report').fill('Top 2 sales reps by paid revenue, with how many orders each.')
+  await page.getByRole('button', { name: 'Generate steps' }).click()
+
+  // The draft arrives as editable cards of the new kinds.
+  await expect(page.getByLabel('Step 2 type')).toHaveValue('aggregate')
+  await expect(page.getByLabel('Figure 2', { exact: true })).toHaveValue('count')
+  await expect(page.getByLabel('Step 3 type')).toHaveValue('sort')
+  await expect(page.getByLabel('Step 4 type')).toHaveValue('limit')
+  await expect(page.getByText('Group by sales_rep: total amount as revenue, number of rows as orders')).toBeVisible()
+  await expect(page.getByText('Keep the first 2 rows')).toBeVisible()
+
+  // Add a column choice by hand, with a friendly header.
+  await page.getByRole('button', { name: 'Add column choice' }).click()
+  await page.getByRole('button', { name: /Keep all 3/ }).click()
+  await page.getByLabel('Header for column 2', { exact: true }).fill('Paid revenue')
+  await page.getByRole('textbox', { name: /title/i }).first().fill('Top reps')
+  await page.getByRole('button', { name: 'Save recipe' }).click()
+  await expect(page.getByRole('heading', { name: 'Top reps' })).toBeVisible()
+
+  await page.locator('#run-file').setInputFiles('fixtures/sales_A.csv')
+  await page.getByRole('button', { name: 'Run recipe' }).click()
+  await expect(page.getByText('Rows through each step')).toBeVisible()
+  const table = page.getByRole('table').filter({ hasText: 'Paid revenue' })
+  await expect(table.getByRole('row')).toHaveCount(3)
+  await expect(table.getByRole('row').nth(1)).toHaveText(/Asha\s*₹1,80,000\s*3/)
+  await expect(table.getByRole('row').nth(2)).toHaveText(/Vikram\s*₹40,000\s*1/)
+  // The summary line is shown as chips, one per step.
+  for (const chip of ['2 rows', 'status = "paid"', 'grouped by sales_rep', 'sorted by revenue ↓', 'first 2']) {
+    await expect(page.getByText(chip, { exact: true })).toBeVisible()
+  }
 })

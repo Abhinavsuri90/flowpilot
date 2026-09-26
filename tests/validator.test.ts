@@ -22,13 +22,13 @@ describe('validator', () => {
     expect(result).toEqual({ ok: true, definition: ORIGINAL, issues: [] })
   })
 
-  it('rejects any operation other than filter and group_sum', () => {
+  it('rejects any operation outside the allowlist', () => {
     const issues = issuesOf(variant((d) => d.steps.splice(1, 0, { id: 'j1', type: 'join', with: 'other.csv' })))
     expect(issues).toContainEqual({
       stepIndex: 1,
       stepId: 'j1',
       path: 'steps[1].type',
-      message: 'Unsupported step type "join". Only filter and group_sum are allowed.',
+      message: 'Unsupported step type "join". Only filter, group_sum, aggregate, sort, limit and select are allowed.',
     })
   })
 
@@ -53,9 +53,13 @@ describe('validator', () => {
     })
   })
 
-  it('allows lt/lte/gt/gte only on amounts', () => {
+  it('allows lt/lte/gt/gte only on numbers, and contains / is one of only on text', () => {
     const issues = issuesOf(variant((d) => (d.steps[0].operator = 'lt')))
-    expect(issues.map((i) => i.message)).toContain('"lt" compares amounts, but "status" is a text column. Use eq or neq for text')
+    expect(issues.map((i) => i.message)).toContain(
+      '"lt" compares numbers, but "status" is a text column. Use equals, does not equal, contains or is one of',
+    )
+    const onAmount = issuesOf(variant((d) => (d.steps[2].operator = 'contains')))
+    expect(onAmount.map((i) => i.message)).toContain('"contains" works on text, but "total" is a number column')
   })
 
   it('rejects duplicate step ids', () => {
@@ -99,7 +103,7 @@ describe('validator', () => {
     )
     expect(
       issuesOf(variant((d) => (d.steps[2].value = { literal: 5, parameter: 'threshold' }))).map((i) => i.message),
-    ).toContain('A value is exactly one of {"literal": …} or {"parameter": "<name>"}')
+    ).toContain('A value is exactly one of {"literal": …}, {"parameter": "<name>"} or {"list": […]}')
   })
 
   it('enforces 0 ≤ min ≤ default ≤ max ≤ 1,000,000,000 for integer parameters', () => {

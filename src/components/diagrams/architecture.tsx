@@ -18,7 +18,7 @@ const BOXES: Box[] = [
   { id: 'policy', x: 392, y: 196, w: 150, h: 56, title: 'Access policy', sub: ['role + visibility'], path: 'shared' },
   { id: 'validator', x: 578, y: 196, w: 146, h: 56, title: 'Validator', sub: ['strict schema'], path: 'shared' },
   { id: 'csv', x: 392, y: 314, w: 150, h: 56, title: 'CSV parser', sub: ['limits, typed amounts'], path: 'execution' },
-  { id: 'engine', x: 578, y: 314, w: 146, h: 56, title: 'Engine', sub: ['filter · group_sum'], path: 'execution' },
+  { id: 'engine', x: 578, y: 314, w: 146, h: 56, title: 'Engine', sub: ['6 allowlisted steps'], path: 'execution' },
   { id: 'model', x: 812, y: 72, w: 164, h: 68, title: 'Model provider', sub: ['Anthropic · OpenAI', 'or OpenRouter'], path: 'authoring' },
   { id: 'db', x: 812, y: 190, w: 164, h: 78, title: 'Database', sub: ['versions immutable', 'runs private'], path: 'shared' },
 ]

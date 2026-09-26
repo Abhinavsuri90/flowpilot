@@ -24,8 +24,9 @@ import {
 } from 'lucide-react'
 import { api, ApiError, qk, qs } from '~/lib/api'
 import { CsvError, literalMismatch, missingColumnsMessage, parseForContract, parseTable } from '~/lib/csv'
+import { formatParameterValue, parameterUnits } from '~/lib/workflow/describe'
 import { compatibleSamples, fetchSample } from '~/lib/samples'
-import { formatBytes, formatCount, formatDuration, formatINR, timeAgo } from '~/lib/format'
+import { formatBytes, formatCount, formatDuration, timeAgo } from '~/lib/format'
 import { LIMITS, type IntegerParameter, type WorkflowDefinition } from '~/lib/workflow/schema'
 import type { ApiIssue, RunDetail, RunList, WorkflowDetail } from '~/lib/types'
 import {
@@ -347,13 +348,13 @@ function defaultsFor(def: WorkflowDefinition): Record<string, string> {
   return Object.fromEntries(Object.entries(def.parameters).map(([name, p]) => [name, String(p.default)]))
 }
 
-function paramProblem(p: WorkflowDefinition['parameters'][string], raw: string): string | null {
+function paramProblem(p: WorkflowDefinition['parameters'][string], raw: string, unit: 'inr' | 'number' | undefined): string | null {
   if (p.type === 'string') return raw.length > LIMITS.textMax ? `At most ${LIMITS.textMax} characters` : null
   if (raw.trim() === '') return null // empty → default
-  if (!/^\d+$/.test(raw.trim())) return 'Whole rupees only (digits, no commas)'
+  if (!/^\d+$/.test(raw.trim())) return unit === 'number' ? 'Whole numbers only (digits, no commas)' : 'Whole rupees only (digits, no commas)'
   const n = Number(raw)
   const ip = p as IntegerParameter
-  if (n < ip.min || n > ip.max) return `Between ${formatINR(ip.min)} and ${formatINR(ip.max)}`
+  if (n < ip.min || n > ip.max) return `Between ${formatParameterValue(ip.min, unit)} and ${formatParameterValue(ip.max, unit)}`
   return null
 }
 
@@ -418,8 +419,9 @@ function RunPanel({ detail, busy, onRan }: { detail: WorkflowDetail; busy: boole
     },
   })
 
+  const units = parameterUnits(def)
   const problems = Object.fromEntries(
-    Object.entries(def.parameters).map(([name, p]) => [name, paramProblem(p, values[name] ?? '')]),
+    Object.entries(def.parameters).map(([name, p]) => [name, paramProblem(p, values[name] ?? '', units[name])]),
   )
   const paramsOk = Object.values(problems).every((p) => !p)
   const fileOk = !!file && check?.kind === 'ok' && check.missing.length === 0 && check.issues.length === 0
@@ -559,7 +561,7 @@ function RunPanel({ detail, busy, onRan }: { detail: WorkflowDetail; busy: boole
               const value = values[name] ?? ''
               const changed = value !== String(p.default)
               const problem = problems[name]
-              const preview = p.type === 'integer' && /^\d+$/.test(value.trim()) ? formatINR(Number(value)) : null
+              const preview = p.type === 'integer' && /^\d+$/.test(value.trim()) ? formatParameterValue(Number(value), units[name]) : null
               return (
                 <div key={name}>
                   <div className="mb-1 flex items-center justify-between">
@@ -572,7 +574,7 @@ function RunPanel({ detail, busy, onRan }: { detail: WorkflowDetail; busy: boole
                         onClick={() => setValues((prev) => ({ ...prev, [name]: String(p.default) }))}
                         className="inline-flex items-center gap-1 text-[12px] text-brand-ink hover:underline"
                       >
-                        <RotateCcw className="size-3" /> Reset to {p.type === 'integer' ? formatINR(p.default) : `“${p.default}”`}
+                        <RotateCcw className="size-3" /> Reset to {formatParameterValue(p.default, units[name])}
                       </button>
                     )}
                   </div>
@@ -586,7 +588,7 @@ function RunPanel({ detail, busy, onRan }: { detail: WorkflowDetail; busy: boole
                   <p className={cn('mt-1 text-[12px]', problem ? 'text-bad-ink' : 'text-muted')}>
                     {problem ??
                       (p.type === 'integer'
-                        ? `${preview ?? 'Default'} · allowed ${formatINR(p.min)}–${formatINR(p.max)}`
+                        ? `${preview ?? 'Default'} · allowed ${formatParameterValue(p.min, units[name])}–${formatParameterValue(p.max, units[name])}`
                         : `Default “${p.default}”`)}
                   </p>
                 </div>
@@ -691,6 +693,7 @@ function ResultCard({ runId, detail, onClose }: { runId: string; detail: Workflo
     )
   }
   const params = Object.entries(r.parameters)
+  const units = definition ? parameterUnits(definition) : {}
   return (
     <Card className="animate-rise">
       <CardHeader
@@ -748,7 +751,7 @@ function ResultCard({ runId, detail, onClose }: { runId: string; detail: Workflo
             {params.map(([name, value], i) => (
               <span key={name}>
                 {i > 0 && ', '}
-                <code className="text-ink-2">{name}</code> = <span className="tabular font-medium text-ink-2">{typeof value === 'number' ? formatINR(value) : `“${value}”`}</span>
+                <code className="text-ink-2">{name}</code> = <span className="tabular font-medium text-ink-2">{formatParameterValue(value, units[name])}</span>
               </span>
             ))}
             {ranOnOther && ' · ran on a different version than the one shown above'}
@@ -856,7 +859,6 @@ function MyRuns({
         ) : (
           <ul className="divide-y divide-line overflow-hidden rounded-xl border border-line">
             {list.map((r) => {
-              const params = Object.entries(r.parameters)
               return (
                 <li key={r.id}>
                   <button
@@ -874,11 +876,7 @@ function MyRuns({
                         v{r.versionNumber} · {r.inputName ?? 'file'}
                         {r.rowCount !== null && <span className="font-normal text-muted"> · {r.rowCount} row{r.rowCount === 1 ? '' : 's'}</span>}
                       </span>
-                      {params.length > 0 && (
-                        <span className="block truncate text-[12px] text-muted">
-                          {params.map(([k, v]) => `${k} ${typeof v === 'number' ? formatINR(v) : `“${v}”`}`).join(', ')}
-                        </span>
-                      )}
+                      {r.parametersText && <span className="block truncate text-[12px] text-muted">{r.parametersText}</span>}
                     </span>
                     <span className="shrink-0 text-[12px] text-faint">{timeAgo(r.createdAt)}</span>
                   </button>

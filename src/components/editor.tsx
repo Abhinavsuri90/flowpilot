@@ -5,13 +5,16 @@ import {
   AlertCircle,
   AlertTriangle,
   ArrowDown,
+  ArrowDownWideNarrow,
   ArrowUp,
   Braces,
+  Calculator,
   CheckCircle2,
   Columns3,
   FileSpreadsheet,
   Filter,
   ListOrdered,
+  ListStart,
   Plus,
   Save,
   Sigma,
@@ -20,22 +23,29 @@ import {
   Trash2,
   Type as TypeIcon,
   Wand2,
+  X,
 } from 'lucide-react'
 import { api, ApiError, qk } from '~/lib/api'
 import { CsvError, inferColumns, literalMismatch } from '~/lib/csv'
 import { SAMPLE_FILES, fetchSample, type SampleName } from '~/lib/samples'
-import { formatINR } from '~/lib/format'
-import { describeStep } from '~/lib/workflow/describe'
+import { formatCount, formatINR } from '~/lib/format'
+import { describeStep, formatParameterValue, STEP_LABEL } from '~/lib/workflow/describe'
 import { analyze, validateDefinition } from '~/lib/workflow/validate'
 import {
-  AMOUNT_ONLY_OPERATORS,
+  AGGREGATE_OPS,
   COLUMN_TYPE_LABEL,
   LIMITS,
   NAME_PATTERN,
+  NUMERIC_ONLY_OPERATORS,
   OPERATORS,
+  STEP_TYPES,
+  TEXT_ONLY_OPERATORS,
+  isNumericType,
+  type AggregateOp,
   type Column,
   type ColumnType,
   type Operator,
+  type StepType,
   type WorkflowDefinition,
 } from '~/lib/workflow/schema'
 import {
@@ -43,11 +53,19 @@ import {
   draftFromUnknown,
   draftToDefinition,
   mergeColumns,
+  newMeasure,
   newParam,
+  newPick,
+  newSortKey,
   newStep,
+  splitList,
+  typesBefore,
   type Draft,
   type DraftColumn,
+  type DraftMeasure,
   type DraftParam,
+  type DraftPick,
+  type DraftSortKey,
   type DraftStep,
 } from '~/lib/workflow/draft'
 import { OPERATOR_PHRASE } from '~/lib/workflow/describe'
@@ -84,6 +102,21 @@ export function RecipeEditor(props: Props) {
   const toast = useToast()
 
   const raw = React.useMemo(() => draftToDefinition(draft), [draft])
+  // Integer parameters read as rupees when they filter an amount, as plain numbers when they count rows.
+  const paramUnits = React.useMemo(() => {
+    const units: Record<string, 'inr' | 'number'> = {}
+    const types = typesBefore(draft)
+    draft.steps.forEach((s, i) => {
+      if (s.valueKind !== 'parameter' || !s.parameter) return
+      if (s.type === 'limit') units[s.parameter] ??= 'number'
+      else if (s.type === 'filter') {
+        const t = types[i]?.get(s.column)
+        if (t === 'integer_inr') units[s.parameter] = 'inr'
+        else if (t === 'integer') units[s.parameter] ??= 'number'
+      }
+    })
+    return units
+  }, [draft])
   const validation = React.useMemo(() => validateDefinition(raw), [raw])
   const analysis = React.useMemo(() => analyze(raw), [raw])
   const issues: ApiIssue[] = validation.ok ? [] : validation.issues
@@ -241,7 +274,7 @@ export function RecipeEditor(props: Props) {
         <Section
           number={4}
           title="Review the steps"
-          description="Each step works on the rows left by the step before it. Only filter and group & sum exist, so nothing here can run code."
+          description="Each step works on the rows left by the step before it. Steps come from a fixed list (filter, group, summarize, sort, keep first N, choose columns), so nothing here can run code."
           badge={
             draft.origin === 'ai' ? (
               <Badge tone="ai" icon={<Sparkles />}>
@@ -267,7 +300,8 @@ export function RecipeEditor(props: Props) {
                 issues={stepIssues(i)}
                 aiDraft={draft.origin === 'ai'}
                 definition={validation.ok ? validation.definition : null}
-                sampleValues={draft.columns.find((c) => c.name === step.column && c.type === 'string')?.values}
+                previousType={i > 0 ? draft.steps[i - 1]!.type : null}
+                sampleValues={analysis.stages[i]?.available.some((c) => c.name === step.column && c.type === 'string') ? draft.columns.find((c) => c.name === step.column)?.values : undefined}
                 onChange={(patch) => updateStep(step.key, patch)}
                 onMove={(dir) =>
                   setDraft((d) => {
@@ -279,12 +313,14 @@ export function RecipeEditor(props: Props) {
                   })
                 }
                 onRemove={() => setDraft((d) => ({ ...d, steps: d.steps.filter((s) => s.key !== step.key) }))}
-                onMakeParameter={(dflt, type) =>
+                onMakeParameter={(dflt, type, options) =>
                   setDraft((d) => {
                     const p = newParam(
                       d.parameters.map((x) => x.name),
                       type,
                       dflt,
+                      options?.base,
+                      options?.min,
                     )
                     return {
                       ...d,
@@ -312,6 +348,24 @@ export function RecipeEditor(props: Props) {
               >
                 Add group &amp; sum
               </Button>
+              {(
+                [
+                  ['aggregate', 'Add summary', <Calculator key="i" className="size-3.5" />],
+                  ['sort', 'Add sort', <ArrowDownWideNarrow key="i" className="size-3.5" />],
+                  ['limit', 'Add keep first N', <ListStart key="i" className="size-3.5" />],
+                  ['select', 'Add column choice', <Columns3 key="i" className="size-3.5" />],
+                ] as const
+              ).map(([type, label, icon]) => (
+                <Button
+                  key={type}
+                  size="sm"
+                  icon={icon}
+                  disabled={draft.steps.length >= LIMITS.steps}
+                  onClick={() => setDraft((d) => ({ ...d, steps: [...d.steps, newStep(type, d.steps.map((s) => s.id))] }))}
+                >
+                  {label}
+                </Button>
+              ))}
               <span className="self-center text-[12px] text-faint">
                 {draft.steps.length}/{LIMITS.steps} steps
               </span>
@@ -332,6 +386,7 @@ export function RecipeEditor(props: Props) {
               <ParamRow
                 key={p.key}
                 param={p}
+                unit={paramUnits[p.name]}
                 issues={paramIssues(p.name)}
                 used={draft.steps.some((s) => s.valueKind === 'parameter' && s.parameter === p.name)}
                 onChange={(patch) => updateParam(p.key, patch)}
@@ -607,6 +662,7 @@ function InputSection({ draft, setDraft, issues }: { draft: Draft; setDraft: Rea
                       >
                         <option value="string">Text</option>
                         <option value="integer_inr">Amount (₹, whole)</option>
+                        <option value="integer">Number (whole)</option>
                       </Select>
                     </td>
                     <td className="hidden max-w-0 truncate px-3 py-2 text-[12.5px] text-muted sm:table-cell">
@@ -646,6 +702,7 @@ function InputSection({ draft, setDraft, issues }: { draft: Draft; setDraft: Rea
           <Select aria-label="Type of the new column" value={newType} onChange={(e) => setNewType(e.target.value as ColumnType)} wrapperClassName="w-44">
             <option value="string">Text</option>
             <option value="integer_inr">Amount (₹, whole)</option>
+            <option value="integer">Number (whole)</option>
           </Select>
           <Button type="submit" icon={<Plus className="size-3.5" />} disabled={!newName.trim() || draft.columns.some((c) => c.name === newName.trim())}>
             Add
@@ -735,7 +792,7 @@ function DescribeSection({
         )}
         {note?.kind === 'unsupported' && (
           <Callout tone="warn" title="That isn't something a recipe can do">
-            {note.reason} Recipes can only filter rows and total amounts by a column, on a file you upload.
+            {note.reason} Recipes filter, group, summarize, sort and trim the rows of a file you upload; they can't join files, work with dates or send anything.
           </Callout>
         )}
         {note?.kind === 'clarification' && (
@@ -760,11 +817,53 @@ function DescribeSection({
 
 // ----- 4. Step card ---------------------------------------------------------------
 
-function columnOptions(available: Column[], current: string, want?: ColumnType) {
-  const options = available.filter((c) => !want || c.type === want)
+function columnOptions(available: Column[], current: string, want?: ColumnType[]) {
+  const options = available.filter((c) => !want || want.includes(c.type))
   const missing = current && !available.some((c) => c.name === current)
   return { options, missing }
 }
+
+const NUMERIC: ColumnType[] = ['integer_inr', 'integer']
+const TEXT: ColumnType[] = ['string']
+const FIGURE_LABEL: Record<AggregateOp, string> = { count: 'Count rows', sum: 'Total of', avg: 'Average of', min: 'Smallest', max: 'Largest' }
+const FIGURE_DEFAULT_NAME: Record<AggregateOp, string> = { count: 'rows', sum: 'total', avg: 'average', min: 'smallest', max: 'largest' }
+
+/** Fields a step needs when it becomes another type (kept if already filled in). */
+function switchType(step: DraftStep, type: StepType): Partial<DraftStep> {
+  const fresh = newStep(type, [])
+  return {
+    type,
+    as: type === 'group_sum' ? step.as || 'total' : step.as,
+    groupColumns: step.groupColumns.length ? step.groupColumns : fresh.groupColumns,
+    measures: step.measures.length ? step.measures : fresh.measures,
+    sortKeys: step.sortKeys.length ? step.sortKeys : fresh.sortKeys,
+    literal: type === 'limit' && !/^\d+$/.test(step.literal.trim()) ? fresh.literal : step.literal,
+    valueKind: type === 'limit' && step.valueKind === 'parameter' && !step.parameter ? 'literal' : step.valueKind,
+  }
+}
+
+/** A text filter value that never occurs in the sample file (e.g. "Paid" vs "paid"), with a one-click fix. */
+function filterMismatch(step: DraftStep, columnType: ColumnType | undefined, sampleValues?: string[]) {
+  if (step.type !== 'filter' || columnType !== 'string' || !sampleValues?.length) return null
+  if (step.operator === 'in') {
+    const values = splitList(step.list)
+    for (const value of values) {
+      const found = literalMismatch(step.column, value, sampleValues)
+      if (found) {
+        const fixed = found.suggestion ? values.map((v) => (v === value ? found.suggestion! : v)).join(', ') : null
+        return { message: found.message, suggestion: found.suggestion, apply: fixed !== null ? { list: fixed } : null }
+      }
+    }
+    return null
+  }
+  if ((step.operator === 'eq' || step.operator === 'neq') && step.valueKind === 'literal') {
+    const found = literalMismatch(step.column, step.literal.trim(), sampleValues)
+    return found ? { message: found.message, suggestion: found.suggestion, apply: found.suggestion ? { literal: found.suggestion } : null } : null
+  }
+  return null
+}
+
+type MakeParameter = (defaultValue: string, type: 'integer' | 'string', options?: { base?: string; min?: string }) => void
 
 function StepCard({
   step,
@@ -775,6 +874,7 @@ function StepCard({
   issues,
   aiDraft,
   definition,
+  previousType,
   onChange,
   onMove,
   onRemove,
@@ -789,24 +889,19 @@ function StepCard({
   issues: ApiIssue[]
   aiDraft: boolean
   definition: WorkflowDefinition | null
+  /** The step before this one, if any (a "keep first N" usually follows a sort). */
+  previousType: StepType | null
   onChange: (patch: Partial<DraftStep>) => void
   onMove: (dir: -1 | 1) => void
   onRemove: () => void
-  onMakeParameter: (defaultValue: string, type: 'integer' | 'string') => void
+  onMakeParameter: MakeParameter
   /** Distinct values of this step's column in the sample file, if one was read. */
   sampleValues?: string[]
 }) {
-  const columnType = available.find((c) => c.name === step.column)?.type
-  const isAmount = columnType === 'integer_inr'
-  const operators = OPERATORS.filter((op) => !(columnType === 'string' && AMOUNT_ONLY_OPERATORS.has(op)))
-  const matchingParams = parameters.filter((p) => (isAmount ? p.type === 'integer' : columnType === 'string' ? p.type === 'string' : true))
   const savedStep = definition?.steps[index]
-  const preview = savedStep && issues.length === 0 ? describeStep(savedStep, columnType, definition!) : null
+  const preview = savedStep && issues.length === 0 ? describeStep(savedStep, available, definition!) : null
   // The model never sees data, so a text value can be valid yet never match (e.g. "Paid" vs "paid").
-  const mismatch =
-    step.type === 'filter' && columnType === 'string' && step.valueKind === 'literal' && sampleValues?.length
-      ? literalMismatch(step.column, step.literal.trim(), sampleValues)
-      : null
+  const mismatch = filterMismatch(step, available.find((c) => c.name === step.column)?.type, sampleValues)
   const idOk = NAME_PATTERN.test(step.id)
 
   return (
@@ -823,14 +918,14 @@ function StepCard({
           aria-label={`Step ${index + 1} type`}
           value={step.type}
           className="!h-8 !rounded-lg text-[13px] font-medium"
-          wrapperClassName="w-40"
-          onChange={(e) => {
-            const type = e.target.value as DraftStep['type']
-            onChange(type === 'group_sum' ? { type, as: step.as || 'total' } : { type })
-          }}
+          wrapperClassName="w-44"
+          onChange={(e) => onChange(switchType(step, e.target.value as StepType))}
         >
-          <option value="filter">Filter rows</option>
-          <option value="group_sum">Group &amp; sum</option>
+          {STEP_TYPES.map((type) => (
+            <option key={type} value={type}>
+              {STEP_LABEL[type]}
+            </option>
+          ))}
         </Select>
         <label className="flex items-center gap-1 text-[12px] text-faint">
           id
@@ -861,98 +956,33 @@ function StepCard({
       </div>
 
       <div className="space-y-3 px-3.5 py-3.5">
-        {step.type === 'filter' ? (
-          <div className="grid gap-2.5 sm:grid-cols-[auto_minmax(0,1fr)_minmax(0,1fr)_minmax(0,1.3fr)] sm:items-center">
-            <span className="text-[13px] text-muted">Keep rows where</span>
-            <ColumnSelect label="Column" value={step.column} available={available} onChange={(column) => {
-              const t = available.find((c) => c.name === column)?.type
-              onChange({ column, operator: t === 'string' && AMOUNT_ONLY_OPERATORS.has(step.operator) ? 'eq' : step.operator })
-            }} />
-            <Select aria-label="Comparison" value={step.operator} className="text-[13px]" onChange={(e) => onChange({ operator: e.target.value as Operator })}>
-              {operators.map((op) => (
-                <option key={op} value={op}>
-                  {OPERATOR_PHRASE[op]}
-                </option>
-              ))}
-            </Select>
-            <div className="flex min-w-0 items-center gap-1.5">
-              {step.valueKind === 'literal' ? (
-                <div className="relative min-w-0 flex-1">
-                  {isAmount && <span className="pointer-events-none absolute top-1/2 left-3 -translate-y-1/2 text-[13px] text-faint">₹</span>}
-                  <Input
-                    aria-label="Value"
-                    value={step.literal}
-                    inputMode={isAmount ? 'numeric' : undefined}
-                    placeholder={isAmount ? '100000' : 'e.g. paid'}
-                    className={cn('text-[13px]', isAmount && 'pl-6')}
-                    onChange={(e) => onChange({ literal: e.target.value })}
-                  />
-                </div>
-              ) : (
-                <Select
-                  aria-label="Parameter"
-                  value={step.parameter}
-                  wrapperClassName="min-w-0 flex-1"
-                  className="font-mono text-[12.5px]"
-                  onChange={(e) => onChange({ parameter: e.target.value })}
-                >
-                  <option value="">Choose…</option>
-                  {matchingParams.map((p) => (
-                    <option key={p.key} value={p.name}>
-                      {p.name}
-                    </option>
-                  ))}
-                  {step.parameter && !parameters.some((p) => p.name === step.parameter) && <option value={step.parameter}>{step.parameter} (not declared)</option>}
-                </Select>
-              )}
-            </div>
-            <div className="sm:col-span-4 sm:col-start-2 flex flex-wrap items-center gap-2 text-[12px]">
-              <div className="inline-flex rounded-lg border border-line bg-sunken p-0.5">
-                {(['literal', 'parameter'] as const).map((kind) => (
-                  <button
-                    key={kind}
-                    type="button"
-                    onClick={() => onChange({ valueKind: kind })}
-                    aria-pressed={step.valueKind === kind}
-                    className={cn('rounded-md px-2 py-0.5 font-medium', step.valueKind === kind ? 'bg-surface text-ink shadow-soft' : 'text-muted hover:text-ink')}
-                  >
-                    {kind === 'literal' ? 'Fixed value' : 'Parameter'}
-                  </button>
-                ))}
-              </div>
-              {step.valueKind === 'literal' && columnType && (
-                <button
-                  type="button"
-                  className="inline-flex items-center gap-1 font-medium text-brand-ink hover:underline"
-                  onClick={() => onMakeParameter(isAmount ? step.literal.replace(/\D/g, '') : step.literal, isAmount ? 'integer' : 'string')}
-                >
-                  <SlidersHorizontal className="size-3" /> Make adjustable
-                </button>
-              )}
-              {step.valueKind === 'literal' && isAmount && /^\d+$/.test(step.literal.trim()) && (
-                <span className="tabular text-faint">= {formatINR(Number(step.literal))}</span>
-              )}
-              {columnType === 'string' && <span className="text-faint">Exact, case-sensitive match</span>}
-            </div>
-          </div>
-        ) : (
+        {step.type === 'filter' && (
+          <FilterBody step={step} available={available} parameters={parameters} onChange={onChange} onMakeParameter={onMakeParameter} />
+        )}
+        {step.type === 'group_sum' && (
           <div className="grid gap-2.5 sm:grid-cols-[auto_minmax(0,1fr)_auto_minmax(0,1fr)_auto_minmax(0,0.8fr)] sm:items-center">
             <span className="text-[13px] text-muted">Group by</span>
-            <ColumnSelect label="Group by" value={step.groupBy} available={available} want="string" onChange={(groupBy) => onChange({ groupBy })} />
+            <ColumnSelect label="Group by" value={step.groupBy} available={available} want={TEXT} onChange={(groupBy) => onChange({ groupBy })} />
             <span className="text-[13px] text-muted">sum</span>
-            <ColumnSelect label="Sum" value={step.valueColumn} available={available} want="integer_inr" onChange={(valueColumn) => onChange({ valueColumn })} />
+            <ColumnSelect label="Sum" value={step.valueColumn} available={available} want={['integer_inr']} onChange={(valueColumn) => onChange({ valueColumn })} />
             <span className="text-[13px] text-muted">as</span>
             <Input aria-label="New column name" value={step.as} className="font-mono text-[12.5px]" placeholder="total" onChange={(e) => onChange({ as: e.target.value })} />
             <p className="text-[12px] text-faint sm:col-span-6">After this step only the group-by column and the new total remain.</p>
           </div>
         )}
+        {step.type === 'aggregate' && <AggregateBody step={step} available={available} onChange={onChange} />}
+        {step.type === 'sort' && <SortBody step={step} available={available} onChange={onChange} />}
+        {step.type === 'limit' && (
+          <LimitBody step={step} parameters={parameters} previousType={previousType} onChange={onChange} onMakeParameter={onMakeParameter} />
+        )}
+        {step.type === 'select' && <SelectBody step={step} available={available} onChange={onChange} />}
 
         {mismatch && (
           <div className="flex flex-wrap items-center gap-2 rounded-lg border border-warn/25 bg-warn-soft px-3 py-2 text-[12.5px] text-warn-ink" role="status">
             <AlertTriangle className="size-3.5 shrink-0" aria-hidden />
             <span className="min-w-0 flex-1">In your sample file, {mismatch.message}</span>
-            {mismatch.suggestion && (
-              <Button size="sm" onClick={() => onChange({ literal: mismatch.suggestion! })}>
+            {mismatch.apply && (
+              <Button size="sm" onClick={() => onChange(mismatch.apply!)}>
                 Use “{mismatch.suggestion}”
               </Button>
             )}
@@ -970,6 +1000,312 @@ function StepCard({
   )
 }
 
+/** "Fixed value" / "Parameter" switch shared by filters and "keep first N". */
+function ValueKindToggle({ value, onChange }: { value: DraftStep['valueKind']; onChange: (kind: DraftStep['valueKind']) => void }) {
+  return (
+    <div className="inline-flex rounded-lg border border-line bg-sunken p-0.5">
+      {(['literal', 'parameter'] as const).map((kind) => (
+        <button
+          key={kind}
+          type="button"
+          onClick={() => onChange(kind)}
+          aria-pressed={value === kind}
+          className={cn('rounded-md px-2 py-0.5 font-medium', value === kind ? 'bg-surface text-ink shadow-soft' : 'text-muted hover:text-ink')}
+        >
+          {kind === 'literal' ? 'Fixed value' : 'Parameter'}
+        </button>
+      ))}
+    </div>
+  )
+}
+
+function ParameterSelect({ value, parameters, type, onChange }: { value: string; parameters: DraftParam[]; type: 'integer' | 'string' | null; onChange: (name: string) => void }) {
+  const matching = parameters.filter((p) => !type || p.type === type)
+  return (
+    <Select aria-label="Parameter" value={value} wrapperClassName="min-w-0 flex-1" className="font-mono text-[12.5px]" onChange={(e) => onChange(e.target.value)}>
+      <option value="">Choose…</option>
+      {matching.map((p) => (
+        <option key={p.key} value={p.name}>
+          {p.name}
+        </option>
+      ))}
+      {value && !parameters.some((p) => p.name === value) && <option value={value}>{value} (not declared)</option>}
+    </Select>
+  )
+}
+
+function FilterBody({
+  step,
+  available,
+  parameters,
+  onChange,
+  onMakeParameter,
+}: {
+  step: DraftStep
+  available: Column[]
+  parameters: DraftParam[]
+  onChange: (patch: Partial<DraftStep>) => void
+  onMakeParameter: MakeParameter
+}) {
+  const columnType = available.find((c) => c.name === step.column)?.type
+  const isAmount = columnType === 'integer_inr'
+  const numeric = isNumericType(columnType)
+  const operators = OPERATORS.filter((op) => (columnType === undefined ? true : numeric ? !TEXT_ONLY_OPERATORS.has(op) : !NUMERIC_ONLY_OPERATORS.has(op)))
+  const isList = step.operator === 'in'
+  return (
+    <div className="grid gap-2.5 sm:grid-cols-[auto_minmax(0,1fr)_minmax(0,1fr)_minmax(0,1.3fr)] sm:items-center">
+      <span className="text-[13px] text-muted">Keep rows where</span>
+      <ColumnSelect
+        label="Column"
+        value={step.column}
+        available={available}
+        onChange={(column) => {
+          const t = available.find((c) => c.name === column)?.type
+          const incompatible = isNumericType(t) ? TEXT_ONLY_OPERATORS.has(step.operator) : NUMERIC_ONLY_OPERATORS.has(step.operator)
+          onChange({ column, operator: incompatible ? 'eq' : step.operator })
+        }}
+      />
+      <Select aria-label="Comparison" value={step.operator} className="text-[13px]" onChange={(e) => onChange({ operator: e.target.value as Operator })}>
+        {operators.map((op) => (
+          <option key={op} value={op}>
+            {OPERATOR_PHRASE[op]}
+          </option>
+        ))}
+      </Select>
+      <div className="flex min-w-0 items-center gap-1.5">
+        {isList ? (
+          <Input aria-label="Values" value={step.list} placeholder="e.g. North, South" className="text-[13px]" onChange={(e) => onChange({ list: e.target.value })} />
+        ) : step.valueKind === 'literal' ? (
+          <div className="relative min-w-0 flex-1">
+            {isAmount && <span className="pointer-events-none absolute top-1/2 left-3 -translate-y-1/2 text-[13px] text-faint">₹</span>}
+            <Input
+              aria-label="Value"
+              value={step.literal}
+              inputMode={numeric ? 'numeric' : undefined}
+              placeholder={isAmount ? '100000' : numeric ? '10' : 'e.g. paid'}
+              className={cn('text-[13px]', isAmount && 'pl-6')}
+              onChange={(e) => onChange({ literal: e.target.value })}
+            />
+          </div>
+        ) : (
+          <ParameterSelect value={step.parameter} parameters={parameters} type={numeric ? 'integer' : columnType === 'string' ? 'string' : null} onChange={(parameter) => onChange({ parameter })} />
+        )}
+      </div>
+      <div className="flex flex-wrap items-center gap-2 text-[12px] sm:col-span-4 sm:col-start-2">
+        {!isList && <ValueKindToggle value={step.valueKind} onChange={(valueKind) => onChange({ valueKind })} />}
+        {!isList && step.valueKind === 'literal' && columnType && (
+          <button
+            type="button"
+            className="inline-flex items-center gap-1 font-medium text-brand-ink hover:underline"
+            onClick={() => onMakeParameter(numeric ? step.literal.replace(/\D/g, '') : step.literal, numeric ? 'integer' : 'string')}
+          >
+            <SlidersHorizontal className="size-3" /> Make adjustable
+          </button>
+        )}
+        {!isList && step.valueKind === 'literal' && numeric && /^\d+$/.test(step.literal.trim()) && (
+          <span className="tabular text-faint">= {isAmount ? formatINR(Number(step.literal)) : formatCount(Number(step.literal))}</span>
+        )}
+        {columnType === 'string' && (
+          <span className="text-faint">
+            {step.operator === 'contains' ? 'Ignores capitals' : isList ? 'Exact matches, separated by commas' : 'Exact, case-sensitive match'}
+          </span>
+        )}
+      </div>
+    </div>
+  )
+}
+
+function AggregateBody({ step, available, onChange }: { step: DraftStep; available: Column[]; onChange: (patch: Partial<DraftStep>) => void }) {
+  const setGroup = (g: number, value: string) => onChange({ groupColumns: step.groupColumns.map((c, i) => (i === g ? value : c)) })
+  const setMeasure = (key: string, patch: Partial<DraftMeasure>) =>
+    onChange({ measures: step.measures.map((m) => (m.key === key ? { ...m, ...patch } : m)) })
+  return (
+    <div className="space-y-3">
+      <div className="flex flex-wrap items-center gap-2">
+        <span className="text-[13px] text-muted">Group by</span>
+        {step.groupColumns.map((column, g) => (
+          <div key={g} className="flex items-center gap-1">
+            <ColumnSelect label={`Group by column ${g + 1}`} value={column} available={available} want={['string', 'integer']} onChange={(value) => setGroup(g, value)} />
+            <IconBtn label={`Remove group-by column ${g + 1}`} onClick={() => onChange({ groupColumns: step.groupColumns.filter((_, i) => i !== g) })}>
+              <X className="size-3.5" />
+            </IconBtn>
+          </div>
+        ))}
+        {step.groupColumns.length < LIMITS.groupColumns && (
+          <Button size="sm" variant="ghost" icon={<Plus className="size-3.5" />} onClick={() => onChange({ groupColumns: [...step.groupColumns, ''] })}>
+            Column
+          </Button>
+        )}
+        {step.groupColumns.length === 0 && <span className="text-[12px] text-faint">None: one summary row for all rows</span>}
+      </div>
+      <div className="space-y-2">
+        {step.measures.map((m, j) => (
+          <div key={m.key} className="grid gap-2 sm:grid-cols-[minmax(0,0.8fr)_minmax(0,1fr)_auto_minmax(0,0.8fr)_auto] sm:items-center">
+            <Select
+              aria-label={`Figure ${j + 1}`}
+              value={m.op}
+              className="text-[13px]"
+              onChange={(e) => {
+                const op = e.target.value as AggregateOp
+                // Keep a name the author typed; otherwise follow the figure.
+                const named = Object.values(FIGURE_DEFAULT_NAME).includes(m.as) || m.as === ''
+                setMeasure(m.key, { op, as: named ? FIGURE_DEFAULT_NAME[op] : m.as, column: op === 'count' ? '' : m.column })
+              }}
+            >
+              {AGGREGATE_OPS.map((op) => (
+                <option key={op} value={op}>
+                  {FIGURE_LABEL[op]}
+                </option>
+              ))}
+            </Select>
+            {m.op === 'count' ? (
+              <span className="text-[12.5px] text-faint">every row in the group</span>
+            ) : (
+              <ColumnSelect label={`Column for figure ${j + 1}`} value={m.column} available={available} want={NUMERIC} onChange={(column) => setMeasure(m.key, { column })} />
+            )}
+            <span className="text-[13px] text-muted">as</span>
+            <Input aria-label={`Name of figure ${j + 1}`} value={m.as} className="font-mono text-[12.5px]" onChange={(e) => setMeasure(m.key, { as: e.target.value })} />
+            <IconBtn label={`Remove figure ${j + 1}`} disabled={step.measures.length <= 1} onClick={() => onChange({ measures: step.measures.filter((x) => x.key !== m.key) })}>
+              <Trash2 className="size-3.5" />
+            </IconBtn>
+          </div>
+        ))}
+        {step.measures.length < LIMITS.measures && (
+          <Button size="sm" variant="ghost" icon={<Plus className="size-3.5" />} onClick={() => onChange({ measures: [...step.measures, newMeasure('count', 'rows')] })}>
+            Add a figure
+          </Button>
+        )}
+      </div>
+      <p className="text-[12px] text-faint">
+        After this step only the group-by columns and these figures remain. Averages are rounded to the nearest whole number.
+      </p>
+    </div>
+  )
+}
+
+function SortBody({ step, available, onChange }: { step: DraftStep; available: Column[]; onChange: (patch: Partial<DraftStep>) => void }) {
+  const setKey = (key: string, patch: Partial<DraftSortKey>) => onChange({ sortKeys: step.sortKeys.map((k) => (k.key === key ? { ...k, ...patch } : k)) })
+  return (
+    <div className="space-y-2">
+      {step.sortKeys.map((k, j) => {
+        const numeric = isNumericType(available.find((c) => c.name === k.column)?.type)
+        return (
+          <div key={k.key} className="flex flex-wrap items-center gap-2">
+            <span className="w-14 text-[13px] text-muted">{j === 0 ? 'Sort by' : 'then by'}</span>
+            <div className="min-w-40 flex-1">
+              <ColumnSelect label={`Sort column ${j + 1}`} value={k.column} available={available} onChange={(column) => setKey(k.key, { column })} />
+            </div>
+            <Select aria-label={`Order ${j + 1}`} value={k.direction} wrapperClassName="w-36" className="text-[13px]" onChange={(e) => setKey(k.key, { direction: e.target.value as 'asc' | 'desc' })}>
+              <option value="desc">{numeric ? 'Highest first' : 'Z → A'}</option>
+              <option value="asc">{numeric ? 'Lowest first' : 'A → Z'}</option>
+            </Select>
+            <IconBtn label={`Remove sort column ${j + 1}`} disabled={step.sortKeys.length <= 1} onClick={() => onChange({ sortKeys: step.sortKeys.filter((x) => x.key !== k.key) })}>
+              <Trash2 className="size-3.5" />
+            </IconBtn>
+          </div>
+        )
+      })}
+      {step.sortKeys.length < LIMITS.sortKeys && (
+        <Button size="sm" variant="ghost" icon={<Plus className="size-3.5" />} onClick={() => onChange({ sortKeys: [...step.sortKeys, newSortKey()] })}>
+          Then by another column
+        </Button>
+      )}
+    </div>
+  )
+}
+
+function LimitBody({
+  step,
+  parameters,
+  previousType,
+  onChange,
+  onMakeParameter,
+}: {
+  step: DraftStep
+  parameters: DraftParam[]
+  previousType: StepType | null
+  onChange: (patch: Partial<DraftStep>) => void
+  onMakeParameter: MakeParameter
+}) {
+  return (
+    <div className="space-y-2">
+      <div className="flex flex-wrap items-center gap-2">
+        <span className="text-[13px] text-muted">Keep the first</span>
+        {step.valueKind === 'literal' ? (
+          <div className="w-24">
+            <Input aria-label="Number of rows" value={step.literal} inputMode="numeric" className="text-[13px]" onChange={(e) => onChange({ literal: e.target.value })} />
+          </div>
+        ) : (
+          <div className="w-44">
+            <ParameterSelect value={step.parameter} parameters={parameters} type="integer" onChange={(parameter) => onChange({ parameter })} />
+          </div>
+        )}
+        <span className="text-[13px] text-muted">rows</span>
+      </div>
+      <div className="flex flex-wrap items-center gap-2 text-[12px]">
+        <ValueKindToggle value={step.valueKind} onChange={(valueKind) => onChange({ valueKind })} />
+        {step.valueKind === 'literal' && (
+          <button
+            type="button"
+            className="inline-flex items-center gap-1 font-medium text-brand-ink hover:underline"
+            onClick={() => onMakeParameter(step.literal.replace(/\D/g, '') || '10', 'integer', { base: 'top_n', min: '1' })}
+          >
+            <SlidersHorizontal className="size-3" /> Make adjustable
+          </button>
+        )}
+        {previousType !== 'sort' && <span className="text-faint">Tip: put a Sort step just before this one to keep the top rows.</span>}
+      </div>
+    </div>
+  )
+}
+
+function SelectBody({ step, available, onChange }: { step: DraftStep; available: Column[]; onChange: (patch: Partial<DraftStep>) => void }) {
+  const setPick = (key: string, patch: Partial<DraftPick>) => onChange({ picks: step.picks.map((p) => (p.key === key ? { ...p, ...patch } : p)) })
+  const move = (j: number, dir: -1 | 1) => {
+    const picks = [...step.picks]
+    const k = j + dir
+    if (k < 0 || k >= picks.length) return
+    ;[picks[j], picks[k]] = [picks[k]!, picks[j]!]
+    onChange({ picks })
+  }
+  return (
+    <div className="space-y-2">
+      {step.picks.length === 0 && <p className="text-[12.5px] text-muted">Choose the columns to keep, in the order you want them.</p>}
+      {step.picks.map((p, j) => (
+        <div key={p.key} className="grid gap-2 sm:grid-cols-[minmax(0,1fr)_auto_minmax(0,1fr)_auto] sm:items-center">
+          <ColumnSelect label={`Column ${j + 1}`} value={p.column} available={available} onChange={(column) => setPick(p.key, { column })} />
+          <span className="text-[13px] text-muted">shown as</span>
+          <Input aria-label={`Header for column ${j + 1}`} value={p.as} placeholder={p.column || 'same name'} className="text-[13px]" onChange={(e) => setPick(p.key, { as: e.target.value })} />
+          <div className="flex items-center gap-0.5">
+            <IconBtn label={`Move column ${j + 1} up`} disabled={j === 0} onClick={() => move(j, -1)}>
+              <ArrowUp className="size-3.5" />
+            </IconBtn>
+            <IconBtn label={`Move column ${j + 1} down`} disabled={j === step.picks.length - 1} onClick={() => move(j, 1)}>
+              <ArrowDown className="size-3.5" />
+            </IconBtn>
+            <IconBtn label={`Remove column ${j + 1}`} danger onClick={() => onChange({ picks: step.picks.filter((x) => x.key !== p.key) })}>
+              <Trash2 className="size-3.5" />
+            </IconBtn>
+          </div>
+        </div>
+      ))}
+      <div className="flex flex-wrap gap-2">
+        {step.picks.length < LIMITS.columns && (
+          <Button size="sm" variant="ghost" icon={<Plus className="size-3.5" />} onClick={() => onChange({ picks: [...step.picks, newPick()] })}>
+            Add a column
+          </Button>
+        )}
+        {available.length > 0 && (
+          <Button size="sm" variant="ghost" onClick={() => onChange({ picks: available.map((c) => newPick(c.name)) })}>
+            Keep all {available.length}
+          </Button>
+        )}
+      </div>
+      <p className="text-[12px] text-faint">Only these columns reach the result and the CSV download. Headers can use spaces and capitals.</p>
+    </div>
+  )
+}
+
 function ColumnSelect({
   label,
   value,
@@ -980,7 +1316,7 @@ function ColumnSelect({
   label: string
   value: string
   available: Column[]
-  want?: ColumnType
+  want?: ColumnType[]
   onChange: (value: string) => void
 }) {
   const { options, missing } = columnOptions(available, value, want)
@@ -989,7 +1325,7 @@ function ColumnSelect({
       <option value="">Choose a column…</option>
       {options.map((c) => (
         <option key={c.name} value={c.name}>
-          {c.name} · {c.type === 'integer_inr' ? '₹' : 'text'}
+          {c.name} · {c.type === 'integer_inr' ? '₹' : c.type === 'integer' ? '#' : 'text'}
         </option>
       ))}
       {missing && <option value={value}>{value} (not available here)</option>}
@@ -1019,12 +1355,15 @@ function IconBtn({ label, onClick, disabled, danger, children }: { label: string
 
 function ParamRow({
   param,
+  unit,
   issues,
   used,
   onChange,
   onRemove,
 }: {
   param: DraftParam
+  /** How an integer parameter reads (rupees or a plain number), from how steps use it. */
+  unit: 'inr' | 'number' | undefined
   issues: ApiIssue[]
   used: boolean
   onChange: (patch: Partial<DraftParam>) => void
@@ -1073,7 +1412,9 @@ function ParamRow({
         </IconBtn>
       </div>
       <div className="mt-2 flex flex-wrap items-center gap-2 text-[12px]">
-        {param.type === 'integer' && /^\d+$/.test(param.default) && <span className="tabular text-muted">Default {formatINR(Number(param.default))}</span>}
+        {param.type === 'integer' && /^\d+$/.test(param.default) && (
+          <span className="tabular text-muted">Default {formatParameterValue(Number(param.default), unit)}</span>
+        )}
         {!used && <span className="text-warn-ink">Not used by any step yet</span>}
       </div>
       {issues.length > 0 && (
@@ -1108,7 +1449,7 @@ function PipelineColumns({ input, stages, steps }: { input: Column[]; stages: Re
           <li key={step?.key ?? i} className="border-l-2 border-line pl-3">
             <div className="mb-1 flex items-center gap-1.5 text-[12px] font-medium text-ink-2">
               <StepIcon type={step?.type ?? 'filter'} className="size-3.5 text-faint" />
-              {i + 1}. {step?.type === 'group_sum' ? 'Group & sum' : 'Filter'}
+              {i + 1}. {STEP_LABEL[step?.type ?? 'filter']}
               <span className="font-mono text-faint">{step?.id}</span>
             </div>
             <div className="flex flex-wrap gap-1">
@@ -1207,7 +1548,7 @@ function JsonDialog({
         </div>
       )}
       <p className="mt-2 flex items-center gap-1.5 text-[12px] text-muted">
-        <TypeIcon className="size-3.5" /> Column types: {COLUMN_TYPE_LABEL.string} (<code>string</code>) and {COLUMN_TYPE_LABEL.integer_inr} (<code>integer_inr</code>).
+        <TypeIcon className="size-3.5" /> Column types: {COLUMN_TYPE_LABEL.string} (<code>string</code>), {COLUMN_TYPE_LABEL.integer_inr} (<code>integer_inr</code>) and {COLUMN_TYPE_LABEL.integer} (<code>integer</code>).
       </p>
     </Dialog>
   )

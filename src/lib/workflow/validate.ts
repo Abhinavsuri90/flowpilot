@@ -2,14 +2,18 @@ import type { core } from 'zod'
 import type { ApiIssue } from '../types'
 import { formatINR } from './describe'
 import {
-  AMOUNT_ONLY_OPERATORS,
+  AGGREGATE_OPS,
   LIMITS,
   NAME_PATTERN,
+  NUMERIC_ONLY_OPERATORS,
   RESERVED_NAMES,
   STEP_TYPES,
+  TEXT_ONLY_OPERATORS,
   WorkflowDefinitionSchema,
+  isNumericType,
   type Column,
   type ColumnType,
+  type Operator,
   type ParameterValues,
   type WorkflowDefinition,
 } from './schema'
@@ -84,7 +88,7 @@ export function analyze(raw: unknown): Analysis {
       const problem = columnNameProblem(name)
       if (problem) issues.push({ path: `input.columns.${name}`, message: problem })
       const type = columnsObj[name]
-      if (type === 'string' || type === 'integer_inr') input.push({ name, type })
+      if (type === 'string' || type === 'integer_inr' || type === 'integer') input.push({ name, type })
     }
   }
 
@@ -134,12 +138,14 @@ export function analyze(raw: unknown): Analysis {
   const steps = Array.isArray(root.steps) ? root.steps : []
   const seenIds = new Set<string>()
   let current: Column[] = input.slice()
-  const removedBy = new Map<string, { step: string; kept: [string, string] }>()
-  let grouped = false
+  // Why a column is no longer there (grouped away, not kept, renamed), for clear messages.
+  const gone = new Map<string, string>()
+  let reshaped = false
 
   steps.forEach((rawStep, i) => {
     const step = isRecord(rawStep) ? rawStep : {}
     const stepId = str(step.id)
+    const label = stepId ? `step ${stepId}` : `step ${i + 1}`
     const at = { stepIndex: i, ...(stepId ? { stepId } : {}) }
     const push = (field: string, message: string) => issues.push({ ...at, path: `steps[${i}]${field}`, message })
 
@@ -159,50 +165,70 @@ export function analyze(raw: unknown): Analysis {
     }
 
     const lookup = (column: string, field: string): ColumnType | undefined => {
-      const found = current.find((c) => c.name === column)
+      const found = available.find((c) => c.name === column)
       if (found) return found.type
-      const removal = removedBy.get(column)
-      if (removal) {
-        push(
-          field,
-          `Column "${column}" is no longer available: ${removal.step} grouped the rows, which keeps only "${removal.kept[0]}" and "${removal.kept[1]}"`,
-        )
-      } else if (!grouped) {
-        push(field, `Column "${column}" is not one of the declared input columns`)
-      } else {
-        push(field, `Column "${column}" is not available at this step. The rows now have only ${quoteList(current.map((c) => c.name))}`)
-      }
+      const why = gone.get(column)
+      if (why) push(field, `Column "${column}" is no longer available: ${why}`)
+      else if (!reshaped) push(field, `Column "${column}" is not one of the declared input columns`)
+      else push(field, `Column "${column}" is not available at this step. The rows now have only ${quoteList(available.map((c) => c.name))}`)
       return undefined
+    }
+    /** Replaces the columns after this step, remembering why the others went away. */
+    const reshape = (next: Column[], why: string, renamed: Array<[string, string]> = []) => {
+      const nextNames = new Set(next.map((c) => c.name))
+      stage.removed = available.filter((c) => !nextNames.has(c.name)).map((c) => c.name)
+      for (const name of stage.removed) gone.set(name, why)
+      for (const [from, to] of renamed) gone.set(from, `${label} renamed it to "${to}"`)
+      for (const name of nextNames) gone.delete(name)
+      current = next
+      reshaped = true
+    }
+    const checkAlias = (alias: string | undefined, field: string, taken: Set<string>) => {
+      if (!alias) return
+      if (RESERVED_NAMES.has(alias)) push(field, `"${alias}" is a reserved name`)
+      else if (taken.has(alias)) push(field, `Two columns would be called "${alias}". Choose another name`)
+      taken.add(alias)
+    }
+    const paramCheck = (name: string, field: string, want: 'integer' | 'string', what: string) => {
+      const pType = paramTypes.get(name)
+      if (!pType) push(field, `Parameter "${name}" is not declared. Add it under Parameters, or use a fixed value`)
+      else if (pType !== want) push(field, `Parameter "${name}" is ${pType === 'integer' ? 'a number' : 'text'}, but ${what}`)
     }
 
     if (step.type === 'filter') {
       const column = str(step.column)
       const columnType = column ? lookup(column, '.column') : undefined
-      const operator = step.operator
-      if (column && columnType === 'string' && typeof operator === 'string' && AMOUNT_ONLY_OPERATORS.has(operator as never)) {
-        push('.operator', `"${operator}" compares amounts, but "${column}" is a text column. Use eq or neq for text`)
+      const operator = typeof step.operator === 'string' ? step.operator : undefined
+      const numeric = isNumericType(columnType)
+      if (column && columnType === 'string' && operator && NUMERIC_ONLY_OPERATORS.has(operator as Operator)) {
+        push('.operator', `"${operator}" compares numbers, but "${column}" is a text column. Use equals, does not equal, contains or is one of`)
+      }
+      if (column && numeric && operator && TEXT_ONLY_OPERATORS.has(operator as Operator)) {
+        push('.operator', `"${operator === 'in' ? 'is one of' : operator}" works on text, but "${column}" is a number column`)
       }
       const value = step.value
       if (column && columnType && isRecord(value)) {
         const hasLiteral = 'literal' in value
         const hasParameter = 'parameter' in value
-        if (hasParameter && !hasLiteral && typeof value.parameter === 'string') {
-          const pType = paramTypes.get(value.parameter)
-          if (!pType) {
-            push('.value.parameter', `Parameter "${value.parameter}" is not declared. Add it under Parameters, or use a fixed value`)
-          } else if (columnType === 'integer_inr' && pType !== 'integer') {
-            push('.value.parameter', `Parameter "${value.parameter}" is text, but "${column}" is an amount column`)
-          } else if (columnType === 'string' && pType !== 'string') {
-            push('.value.parameter', `Parameter "${value.parameter}" is a number, but "${column}" is a text column`)
-          }
+        const hasList = 'list' in value
+        if (operator === 'in') {
+          if (!hasList || hasLiteral || hasParameter) push('.value', '"is one of" needs a list of values, like North, South')
+        } else if (hasList) {
+          push('.value', 'A list of values only works with "is one of"')
+        } else if (hasParameter && !hasLiteral && typeof value.parameter === 'string') {
+          const kind = columnType === 'integer_inr' ? 'an amount' : numeric ? 'a number' : 'a text'
+          paramCheck(value.parameter, '.value.parameter', numeric ? 'integer' : 'string', `"${column}" is ${kind} column`)
         } else if (hasLiteral && !hasParameter) {
           const lit = value.literal
-          if (columnType === 'integer_inr') {
-            if (typeof lit !== 'number') push('.value.literal', `"${column}" is an amount column, so the value must be a whole number of rupees`)
-            else if (!Number.isInteger(lit)) push('.value.literal', `Amounts are whole rupees; ${lit} has decimals`)
-            else if (lit < 0) push('.value.literal', 'Amounts cannot be negative')
+          if (numeric) {
+            const what = columnType === 'integer_inr' ? 'an amount column, so the value must be a whole number of rupees' : 'a number column, so the value must be a whole number'
+            if (typeof lit !== 'number') push('.value.literal', `"${column}" is ${what}`)
+            else if (!Number.isInteger(lit)) push('.value.literal', `Use whole numbers; ${lit} has decimals`)
+            else if (lit < 0) push('.value.literal', 'Values cannot be negative')
           } else if (typeof lit !== 'string') {
             push('.value.literal', `"${column}" is a text column, so the value must be text`)
+          } else if (operator === 'contains' && lit.trim() === '') {
+            push('.value.literal', 'Type the text to look for')
           }
         }
       }
@@ -212,24 +238,97 @@ export function analyze(raw: unknown): Analysis {
       const alias = str(step.as)
       if (groupBy) {
         const t = lookup(groupBy, '.groupBy')
-        if (t === 'integer_inr') push('.groupBy', `"${groupBy}" is an amount column. Group by a text column`)
+        if (t && t !== 'string') push('.groupBy', `"${groupBy}" is a number column. Group by a text column`)
       }
       if (valueColumn) {
         const t = lookup(valueColumn, '.valueColumn')
-        if (t === 'string') push('.valueColumn', `"${valueColumn}" is a text column. Sum an amount column`)
+        if (t && t !== 'integer_inr') push('.valueColumn', `"${valueColumn}" is not an amount column. Sum an amount column (use a summary step for whole numbers)`)
       }
       if (alias && groupBy && alias === groupBy) push('.as', `The new column can't also be named "${alias}", the group-by column`)
       if (alias && RESERVED_NAMES.has(alias)) push('.as', `"${alias}" is a reserved name`)
       if (groupBy) {
-        const label = stepId ? `step ${stepId}` : `step ${i + 1}`
-        const keep = alias ?? ''
-        stage.removed = available.filter((c) => c.name !== groupBy && c.name !== keep).map((c) => c.name)
-        for (const name of stage.removed) removedBy.set(name, { step: label, kept: [groupBy, alias ?? 'the total'] })
-        removedBy.delete(groupBy)
-        if (alias) removedBy.delete(alias)
-        current = [{ name: groupBy, type: 'string' }, ...(alias && alias !== groupBy ? [{ name: alias, type: 'integer_inr' as const }] : [])]
-        grouped = true
+        const next: Column[] = [{ name: groupBy, type: 'string' }, ...(alias && alias !== groupBy ? [{ name: alias, type: 'integer_inr' as const }] : [])]
+        reshape(next, `${label} grouped the rows, which keeps only "${groupBy}" and "${alias ?? 'the total'}"`)
       }
+    } else if (step.type === 'aggregate') {
+      const groupBy = Array.isArray(step.groupBy) ? step.groupBy.filter((c): c is string => typeof c === 'string' && c !== '') : []
+      const next: Column[] = []
+      const taken = new Set<string>()
+      groupBy.forEach((column, g) => {
+        const t = lookup(column, `.groupBy[${g}]`)
+        if (t === 'integer_inr') push(`.groupBy[${g}]`, `"${column}" is an amount column. Group by text or whole-number columns`)
+        if (taken.has(column)) push(`.groupBy[${g}]`, `"${column}" is listed twice`)
+        taken.add(column)
+        if (t) next.push({ name: column, type: t })
+      })
+      const measures = Array.isArray(step.measures) ? step.measures : []
+      measures.forEach((raw, m) => {
+        const measure = isRecord(raw) ? raw : {}
+        const op = typeof measure.op === 'string' ? measure.op : undefined
+        const column = str(measure.column)
+        const alias = str(measure.as)
+        let type: ColumnType | undefined
+        if (op === 'count') {
+          if (column) push(`.measures[${m}].column`, 'A count counts rows; it takes no column')
+          type = 'integer'
+        } else if (op && (AGGREGATE_OPS as readonly string[]).includes(op)) {
+          if (!column) push(`.measures[${m}].column`, `Choose the column to ${op === 'sum' ? 'total' : op === 'avg' ? 'average' : op === 'min' ? 'take the smallest of' : 'take the largest of'}`)
+          else {
+            const t = lookup(column, `.measures[${m}].column`)
+            if (t === 'string') push(`.measures[${m}].column`, `"${column}" is a text column. Choose an amount or whole-number column`)
+            else type = t
+          }
+        }
+        checkAlias(alias, `.measures[${m}].as`, taken)
+        if (alias && type) next.push({ name: alias, type })
+      })
+      const kept = next.map((c) => `"${c.name}"`).join(', ') || 'its figures'
+      reshape(next, `${label} summarized the rows, which keeps only ${kept}`)
+    } else if (step.type === 'sort') {
+      const keys = Array.isArray(step.by) ? step.by : []
+      const seen = new Set<string>()
+      keys.forEach((raw, k) => {
+        const key = isRecord(raw) ? raw : {}
+        const column = str(key.column)
+        if (!column) return
+        lookup(column, `.by[${k}].column`)
+        if (seen.has(column)) push(`.by[${k}].column`, `"${column}" is already a sort key`)
+        seen.add(column)
+      })
+    } else if (step.type === 'limit') {
+      const rows = isRecord(step.rows) ? step.rows : undefined
+      if (rows && typeof rows.parameter === 'string' && !('literal' in rows)) {
+        paramCheck(rows.parameter, '.rows.parameter', 'integer', 'the number of rows to keep is a whole number')
+        const p = paramsObj[rows.parameter]
+        if (isRecord(p) && p.type === 'integer' && typeof p.min === 'number' && p.min < 1) {
+          push('.rows.parameter', `Parameter "${rows.parameter}" needs a minimum of at least 1 to choose how many rows to keep`)
+        }
+      }
+    } else if (step.type === 'select') {
+      const cols = Array.isArray(step.columns) ? step.columns : []
+      const next: Column[] = []
+      const taken = new Set<string>()
+      const sources = new Set<string>()
+      const renamed: Array<[string, string]> = []
+      cols.forEach((raw, c) => {
+        const entry = isRecord(raw) ? raw : {}
+        const column = str(entry.column)
+        if (!column) return
+        const t = lookup(column, `.columns[${c}].column`)
+        if (sources.has(column)) push(`.columns[${c}].column`, `"${column}" is already kept`)
+        sources.add(column)
+        const alias = typeof entry.as === 'string' && entry.as !== '' ? entry.as : undefined
+        if (alias) {
+          const problem = columnNameProblem(alias)
+          if (problem) push(`.columns[${c}].as`, problem)
+          if (alias !== column) renamed.push([column, alias])
+        }
+        const name = alias ?? column
+        if (taken.has(name)) push(`.columns[${c}]${alias ? '.as' : '.column'}`, `Two columns would be called "${name}". Choose another name`)
+        taken.add(name)
+        if (t) next.push({ name, type: t })
+      })
+      if (next.length) reshape(next, `${label} kept only ${quoteList(next.map((c) => c.name))}`, renamed)
     }
 
     stage.output = current
@@ -294,13 +393,13 @@ export function validateDefinition(raw: unknown): ValidationResult {
       }
       const at = { stepIndex: i, ...(typeof step.id === 'string' && step.id ? { stepId: step.id } : {}) }
       if (step.type === undefined) {
-        structural.push({ ...at, path: `steps[${i}].type`, message: 'Each step needs a type: filter or group_sum' })
+        structural.push({ ...at, path: `steps[${i}].type`, message: 'Each step needs a type: filter, group_sum, aggregate, sort, limit or select' })
         skipSteps.add(i)
       } else if (!(STEP_TYPES as readonly unknown[]).includes(step.type)) {
         structural.push({
           ...at,
           path: `steps[${i}].type`,
-          message: `Unsupported step type "${String(step.type)}". Only filter and group_sum are allowed.`,
+          message: `Unsupported step type "${String(step.type)}". Only filter, group_sum, aggregate, sort, limit and select are allowed.`,
         })
         skipSteps.add(i)
       }

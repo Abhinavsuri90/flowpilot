@@ -69,7 +69,7 @@ describe.sequential('the demo loop', () => {
     const card = team.items.find((w: { id: string }) => w.id === recipeId)
     expect(card).toMatchObject({ title: 'Regional revenue exceptions', owner: { name: 'Asha Rao' }, canFork: true, forkedFrom: null })
     expect(card.parameterNames).toEqual(['threshold'])
-    expect(team.counts.team).toBe(2)
+    expect(team.counts.team).toBe(3) // Asha's recipe and Vikram's two examples
   })
 
   it('4 · Vikram opens the version-pinned share link', async () => {

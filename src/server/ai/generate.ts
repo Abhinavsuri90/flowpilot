@@ -2,7 +2,8 @@ import { z } from 'zod'
 import { modelConfig, type ModelConfig } from './config'
 import { ApiError } from '../http'
 import { validateDefinition } from '../../lib/workflow/validate'
-import { COLUMN_TYPE_LABEL, LIMITS, OPERATORS, type ColumnType, type WorkflowDefinition } from '../../lib/workflow/schema'
+import { AGGREGATE_OPS, COLUMN_TYPE_LABEL, LIMITS, OPERATORS, type Column, type ColumnType, type Step, type WorkflowDefinition } from '../../lib/workflow/schema'
+import { columnsAfter } from '../../lib/workflow/columns'
 import type { ApiIssue, GenerateResult } from '../../lib/types'
 
 // One server-side model call drafts parameters and steps for columns the author
@@ -45,16 +46,17 @@ export const OUTPUT_JSON_SCHEMA = {
           {
             type: 'object',
             additionalProperties: false,
-            required: ['id', 'type', 'column', 'operator', 'value_kind', 'literal_string', 'literal_integer', 'parameter'],
+            required: ['id', 'type', 'column', 'operator', 'value_kind', 'literal_string', 'literal_integer', 'parameter', 'list'],
             properties: {
               id: { type: 'string' },
               type: { type: 'string', enum: ['filter'] },
               column: { type: 'string' },
               operator: { type: 'string', enum: [...OPERATORS] },
-              value_kind: { type: 'string', enum: ['literal', 'parameter'] },
+              value_kind: { type: 'string', enum: ['literal', 'parameter', 'list'] },
               literal_string: nullable('string'),
               literal_integer: nullable('integer'),
               parameter: nullable('string'),
+              list: { type: ['array', 'null'], items: { type: 'string' }, description: 'For operator "in" (value_kind "list"): the values to keep.' },
             },
           },
           {
@@ -67,6 +69,77 @@ export const OUTPUT_JSON_SCHEMA = {
               group_by: { type: 'string' },
               value_column: { type: 'string' },
               as: { type: 'string' },
+            },
+          },
+          {
+            type: 'object',
+            additionalProperties: false,
+            required: ['id', 'type', 'group_by', 'measures'],
+            properties: {
+              id: { type: 'string' },
+              type: { type: 'string', enum: ['aggregate'] },
+              group_by: { type: 'array', items: { type: 'string' }, description: 'Zero to three text or whole-number columns; empty for one summary row.' },
+              measures: {
+                type: 'array',
+                items: {
+                  type: 'object',
+                  additionalProperties: false,
+                  required: ['op', 'column', 'as'],
+                  properties: {
+                    op: { type: 'string', enum: [...AGGREGATE_OPS] },
+                    column: { ...nullable('string'), description: 'null for count; an amount or whole-number column otherwise.' },
+                    as: { type: 'string' },
+                  },
+                },
+              },
+            },
+          },
+          {
+            type: 'object',
+            additionalProperties: false,
+            required: ['id', 'type', 'by'],
+            properties: {
+              id: { type: 'string' },
+              type: { type: 'string', enum: ['sort'] },
+              by: {
+                type: 'array',
+                items: {
+                  type: 'object',
+                  additionalProperties: false,
+                  required: ['column', 'direction'],
+                  properties: { column: { type: 'string' }, direction: { type: 'string', enum: ['asc', 'desc'] } },
+                },
+              },
+            },
+          },
+          {
+            type: 'object',
+            additionalProperties: false,
+            required: ['id', 'type', 'rows_kind', 'rows_integer', 'parameter'],
+            properties: {
+              id: { type: 'string' },
+              type: { type: 'string', enum: ['limit'] },
+              rows_kind: { type: 'string', enum: ['literal', 'parameter'] },
+              rows_integer: nullable('integer'),
+              parameter: nullable('string'),
+            },
+          },
+          {
+            type: 'object',
+            additionalProperties: false,
+            required: ['id', 'type', 'columns'],
+            properties: {
+              id: { type: 'string' },
+              type: { type: 'string', enum: ['select'] },
+              columns: {
+                type: 'array',
+                items: {
+                  type: 'object',
+                  additionalProperties: false,
+                  required: ['column', 'as'],
+                  properties: { column: { type: 'string' }, as: { ...nullable('string'), description: 'A new header, or null to keep the name.' } },
+                },
+              },
             },
           },
         ],
@@ -95,18 +168,34 @@ const ModelOutput = z.object({
     .nullish(),
   steps: z
     .array(
-      z.union([
+      z.discriminatedUnion('type', [
         z.object({
           id: z.string(),
           type: z.literal('filter'),
           column: z.string(),
           operator: z.string(),
-          value_kind: z.enum(['literal', 'parameter']),
+          value_kind: z.enum(['literal', 'parameter', 'list']),
           literal_string: z.string().nullish(),
           literal_integer: z.number().nullish(),
           parameter: z.string().nullish(),
+          list: z.array(z.string()).nullish(),
         }),
         z.object({ id: z.string(), type: z.literal('group_sum'), group_by: z.string(), value_column: z.string(), as: z.string() }),
+        z.object({
+          id: z.string(),
+          type: z.literal('aggregate'),
+          group_by: z.array(z.string()).nullish(),
+          measures: z.array(z.object({ op: z.string(), column: z.string().nullish(), as: z.string() })),
+        }),
+        z.object({ id: z.string(), type: z.literal('sort'), by: z.array(z.object({ column: z.string(), direction: z.string() })) }),
+        z.object({
+          id: z.string(),
+          type: z.literal('limit'),
+          rows_kind: z.enum(['literal', 'parameter']),
+          rows_integer: z.number().nullish(),
+          parameter: z.string().nullish(),
+        }),
+        z.object({ id: z.string(), type: z.literal('select'), columns: z.array(z.object({ column: z.string(), as: z.string().nullish() })) }),
       ]),
     )
     .nullish(),
@@ -115,19 +204,28 @@ type ModelOutput = z.infer<typeof ModelOutput>
 
 export const SYSTEM_PROMPT = `You turn one sentence from a business user into a FlowPilot recipe: a short, linear list of steps over the rows of a CSV file. You only draft. A person reviews the draft, and a fixed engine runs it later without you.
 
+Column types: text, amount (whole Indian rupees) and whole number (a count or quantity). Amounts and whole numbers are both "number columns".
+
 The only operations:
-- filter: keep rows where <column> <operator> <value>. Operators: eq and neq work on text or amount columns; lt, lte, gt and gte work on amount columns only. Text matching is exact and case-sensitive.
-- group_sum: group rows by one text column (group_by) and sum one amount column (value_column) into a new amount column named by "as". After a group_sum ONLY the group_by column and the "as" column exist; later steps can use only those two.
+- filter: keep rows where <column> <operator> <value>. eq and neq work on any column; lt, lte, gt and gte on number columns; contains (ignores capitals, value_kind "literal") and in (is one of a list, value_kind "list", values in "list") on text columns. eq, neq and in match text exactly and case-sensitively.
+- group_sum: group rows by one text column (group_by) and total one amount column (value_column) into a new amount column named by "as". After it ONLY the group_by column and the "as" column exist.
+- aggregate: group rows by zero to three text or whole-number columns (group_by) and compute one to five figures (measures): count (number of rows, column null), sum, avg, min or max of a number column, each named by "as". An empty group_by gives one summary row over all rows. After it ONLY the group_by columns and the figures exist; a count is a whole number, the other figures keep their column's type, and averages are rounded to whole numbers.
+- sort: order rows by one to three columns, direction "desc" (highest first, or Z to A) or "asc".
+- limit: keep the first N rows: rows_kind "literal" with rows_integer N, or rows_kind "parameter".
+- select: keep only the listed columns in that order, optionally renaming each ("as") for the output.
 
 Rules:
-- Use only the declared columns, plus columns created by earlier group_sum steps. Never invent column names.
-- Amounts are whole Indian rupees. Put amount values in literal_integer and text values in literal_string.
-- Text matching is case-sensitive and you cannot see the data, so write text values the way they are usually stored: lowercase for status-like words (paid, refunded, live). Never copy a capital letter that only comes from starting a sentence ("Paid orders…" means "paid"). Keep the user's exact casing only when they quote a value, e.g. "Enterprise".
-- A condition about a total per group ("regions with revenue below X", "reps whose paid total is at least X") filters the group_sum's new column in a step AFTER the group_sum, never the raw amount before it.
-- If the user calls a value configurable, adjustable, a threshold or a limit, or gives "default N", make it a parameter: type "integer" for amounts (integer_default N, min 0, max 1000000000) or "string" for text (string_default). Reference it with value_kind "parameter".
-- Step ids are s1, s2, s3 in order. Parameter names and "as" names use lowercase letters, digits and underscores, starting with a letter.
+- Use only the declared columns, plus columns created by earlier steps. Never invent column names.
+- Put amount and whole-number values in literal_integer and text values in literal_string.
+- Text matching is case-sensitive and you cannot see the data, so write text values the way they are usually stored: lowercase for status-like words (paid, refunded, live). Never copy a capital letter that only comes from starting a sentence ("Paid orders…" means "paid"). Keep the user's exact casing only when they quote a value, e.g. "Enterprise", or name something proper like a region or a person.
+- A condition about a figure per group ("regions with revenue below X", "reps with more than 5 orders") filters the new column in a step AFTER the grouping, never the raw rows before it.
+- Use group_sum when the only figure asked for is one total per group. Use aggregate for counts, averages, smallest or largest values, several figures, or totals over all rows.
+- "Top N" or "the N largest": group if needed, then sort desc by the figure, then limit N. "Bottom N" or "lowest": sort asc, then limit.
+- Only add a select step when the user asks for particular columns, an order of columns, or names for them.
+- If the user calls a value configurable, adjustable, a threshold or a limit, or gives "default N", make it a parameter: type "integer" for numbers (integer_default N, min 0, max 1000000000; min 1 when it is how many rows to keep) or "string" for text (string_default). Reference it with value_kind "parameter" (or rows_kind "parameter" in a limit).
+- Step ids are s1, s2, s3 in order. Parameter names and "as" names in group_sum and aggregate use lowercase letters, digits and underscores, starting with a letter.
 - Use as few steps as the request needs, and never more than 10.
-- Answer kind "unsupported", with a one-sentence reason, for anything these two operations cannot do: sending email, Gmail, Slack or Sheets; calling APIs or URLs; scheduling or recurring runs; joining files; charts; averages, counts, minimums or maximums; writing code or SQL.
+- Answer kind "unsupported", with a one-sentence reason, for anything these operations cannot do: sending email, Gmail, Slack or Sheets; calling APIs or URLs; scheduling or recurring runs; joining files; charts; dates and periods (by month, last 30 days); percentages, ratios or shares of a total; writing code or SQL.
 - Answer kind "clarification", with one short question, when a column reference is ambiguous (for example when two declared columns could match a word in the request).
 - Otherwise answer kind "workflow". Set fields that don't apply to null, and empty lists to [].`
 
@@ -272,32 +370,57 @@ export function toDefinition(out: ModelOutput, columns: Record<string, ColumnTyp
         ? { type: 'integer', default: p.integer_default ?? 0, min: p.min ?? 0, max: p.max ?? LIMITS.integerParameterMax }
         : { type: 'string', default: p.string_default ?? '' }
   }
-  // Track column types so a number written as text (or vice versa) lands in the right slot.
-  let types = new Map(Object.entries(columns))
+  // Track the columns step by step (the same rule as the engine) so a number
+  // written as text, or vice versa, lands in the right slot.
+  let current: Column[] = Object.entries(columns).map(([name, type]) => ({ name, type }))
   const steps = (out.steps ?? []).map((s) => {
-    if (s.type === 'group_sum') {
-      types = new Map<string, ColumnType>([
-        [s.group_by, 'string'],
-        [s.as, 'integer_inr'],
-      ])
-      return { id: s.id, type: 'group_sum', groupBy: s.group_by, valueColumn: s.value_column, as: s.as }
-    }
-    let literal: string | number = s.literal_string ?? (s.literal_integer ?? '')
-    if (types.get(s.column) === 'integer_inr') {
-      if (typeof s.literal_integer === 'number') literal = s.literal_integer
-      else if (typeof s.literal_string === 'string' && /^\d+$/.test(s.literal_string.trim())) literal = Number(s.literal_string.trim())
-    } else if (typeof s.literal_string === 'string') {
-      literal = s.literal_string
-    }
-    return {
-      id: s.id,
-      type: 'filter',
-      column: s.column,
-      operator: s.operator,
-      value: s.value_kind === 'parameter' ? { parameter: s.parameter ?? '' } : { literal },
-    }
+    const step = toStep(s, current)
+    current = columnsAfter(step as Step, current)
+    return step
   })
   return { schemaVersion: 1, input: { format: 'csv', columns }, parameters, steps, output: { format: 'table' } }
+}
+
+type ModelStep = NonNullable<ModelOutput['steps']>[number]
+
+function toStep(s: ModelStep, available: Column[]): unknown {
+  switch (s.type) {
+    case 'group_sum':
+      return { id: s.id, type: 'group_sum', groupBy: s.group_by, valueColumn: s.value_column, as: s.as }
+    case 'aggregate':
+      return {
+        id: s.id,
+        type: 'aggregate',
+        groupBy: s.group_by ?? [],
+        measures: s.measures.map((m) => (m.op === 'count' ? { op: 'count', as: m.as } : { op: m.op, column: m.column ?? '', as: m.as })),
+      }
+    case 'sort':
+      return { id: s.id, type: 'sort', by: s.by.map((k) => ({ column: k.column, direction: k.direction })) }
+    case 'limit':
+      return { id: s.id, type: 'limit', rows: s.rows_kind === 'parameter' ? { parameter: s.parameter ?? '' } : { literal: s.rows_integer ?? 0 } }
+    case 'select':
+      return { id: s.id, type: 'select', columns: s.columns.map((c) => (c.as ? { column: c.column, as: c.as } : { column: c.column })) }
+    case 'filter': {
+      if (s.operator === 'in' || s.value_kind === 'list') {
+        return { id: s.id, type: 'filter', column: s.column, operator: s.operator, value: { list: s.list ?? [] } }
+      }
+      const type = available.find((c) => c.name === s.column)?.type
+      let literal: string | number = s.literal_string ?? (s.literal_integer ?? '')
+      if (type === 'integer_inr' || type === 'integer') {
+        if (typeof s.literal_integer === 'number') literal = s.literal_integer
+        else if (typeof s.literal_string === 'string' && /^\d+$/.test(s.literal_string.trim())) literal = Number(s.literal_string.trim())
+      } else if (typeof s.literal_string === 'string') {
+        literal = s.literal_string
+      }
+      return {
+        id: s.id,
+        type: 'filter',
+        column: s.column,
+        operator: s.operator,
+        value: s.value_kind === 'parameter' ? { parameter: s.parameter ?? '' } : { literal },
+      }
+    }
+  }
 }
 
 function describeProblems(issues: ApiIssue[]): string {
@@ -327,7 +450,7 @@ export async function generateRecipe(input: { request: string; columns: Record<s
       if (parsed.success) {
         const out = parsed.data
         if (out.kind === 'unsupported') {
-          return { kind: 'unsupported', reason: out.reason?.trim() || 'Recipes can only filter rows and total amounts.' }
+          return { kind: 'unsupported', reason: out.reason?.trim() || 'Recipes can only filter, group, summarize, sort and trim rows.' }
         }
         if (out.kind === 'clarification') {
           return { kind: 'clarification', question: out.question?.trim() || 'Which column do you mean?' }

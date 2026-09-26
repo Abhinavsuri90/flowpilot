@@ -206,6 +206,23 @@ export function checkAmount(raw: string): AmountCheck {
   return { ok: false, problem: `"${s}" is not a number` }
 }
 
+/** Whole numbers (counts, quantities): digits only, no separators, decimals or sign, at most 1,00,00,00,000. */
+export function checkWholeNumber(raw: string): AmountCheck {
+  const s = raw.trim()
+  if (s === '') return { ok: false, problem: 'is blank; every row needs a number (blanks are not treated as zero)' }
+  if (/^\d+$/.test(s)) {
+    const value = Number(s)
+    if (s.replace(/^0+/, '').length > 10 || value > LIMITS.integerMax) {
+      return { ok: false, problem: `${s} is over the ${formatCount(LIMITS.integerMax)} limit per row` }
+    }
+    return { ok: true, value }
+  }
+  if (/^-\s*[\d.,\s]*\d/.test(s)) return { ok: false, problem: `"${s}" is negative; numbers must be zero or more` }
+  if (/^\d[\d,]*\.\d+$/.test(s)) return { ok: false, problem: `"${s}" has decimals; use whole numbers (nothing is rounded)` }
+  if (/^\d[\d,_' ]*\d$/.test(s)) return { ok: false, problem: `"${s}" contains separators; write it as ${s.replace(/[,_' ]/g, '')}` }
+  return { ok: false, problem: `"${s}" is not a whole number` }
+}
+
 export type ContractParse = {
   rows: Row[]
   headers: string[]
@@ -235,8 +252,8 @@ export function parseForContract(input: CsvInput, contract: Record<string, Colum
     let rowOk = true
     for (const column of required) {
       const raw = cells[index.get(column)!] ?? ''
-      if (contract[column] === 'integer_inr') {
-        const check = checkAmount(raw)
+      if (contract[column] === 'integer_inr' || contract[column] === 'integer') {
+        const check = contract[column] === 'integer_inr' ? checkAmount(raw) : checkWholeNumber(raw)
         if (check.ok) row[column] = check.value
         else {
           rowOk = false
@@ -273,21 +290,26 @@ export type InferredColumn = {
 
 const DISTINCT_CAP = 200
 
+/** Names that usually hold counts or quantities rather than rupees. */
+const COUNT_LIKE = /(^|[_\s-])(qty|quantity|units?|count|number|num|no|pieces|pcs|items|seats|headcount|age|year|rank|days?|hours?)($|[_\s-])/i
+
 /**
  * Suggests a type per column from a sample file (runs in the browser; the file
- * is not uploaded). A column is an amount if every non-blank value passes the
- * whole-rupee rule.
+ * is not uploaded). A column is numeric if every non-blank value passes the
+ * whole-number rule: a whole number when its name looks like a count or
+ * quantity, otherwise an amount in rupees. The author can change either.
  */
 export function inferColumns(input: CsvInput): { columns: InferredColumn[]; rowCount: number; issues: ApiIssue[] } {
   const table = parseTable(input)
   const columns = table.headers.map((name, i) => {
     const values = table.records.map((r) => (r.cells[i] ?? '').trim())
     const nonBlank = values.filter((v) => v !== '')
-    const isAmount = nonBlank.length > 0 && nonBlank.every((v) => checkAmount(v).ok)
+    const numeric = nonBlank.length > 0 && nonBlank.every((v) => checkWholeNumber(v).ok)
+    const isAmount = numeric && !COUNT_LIKE.test(name) && nonBlank.every((v) => checkAmount(v).ok)
     const distinct = [...new Set(nonBlank)]
     return {
       name,
-      type: (isAmount ? 'integer_inr' : 'string') as ColumnType,
+      type: (isAmount ? 'integer_inr' : numeric ? 'integer' : 'string') as ColumnType,
       samples: distinct.slice(0, 3),
       blanks: values.length - nonBlank.length,
       values: distinct.slice(0, DISTINCT_CAP),

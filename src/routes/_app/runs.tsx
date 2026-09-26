@@ -14,7 +14,7 @@ import {
 import { z } from 'zod'
 import { ArrowDown, ArrowUp, ChevronsUpDown, Download, History, Trash2 } from 'lucide-react'
 import { api, qk, qs } from '~/lib/api'
-import { formatCount, formatDateTime, formatDuration, formatINR, timeAgo } from '~/lib/format'
+import { formatCount, formatDateTime, formatDuration, timeAgo } from '~/lib/format'
 import type { RunList, RunSummary } from '~/lib/types'
 import { Button, Card, Dialog, EmptyState, PageHeader, Segmented, Skeleton, buttonClass, cn } from '~/components/ui'
 import { RunStatusBadge } from '~/components/workflow-bits'
@@ -82,11 +82,8 @@ const COLUMNS: Array<ColumnDef<typeof features, RunSummary, any>> = [
     header: 'Parameters',
     sortFn: 'text',
     cell: ({ row }) => {
-      const entries = Object.entries(row.original.parameters)
-      return entries.length ? (
-        <span className="text-[12.5px] text-muted">
-          {entries.map(([k, v]) => `${k} ${typeof v === 'number' ? formatINR(v) : `“${v}”`}`).join(', ')}
-        </span>
+      return row.original.parametersText ? (
+        <span className="text-[12.5px] text-muted">{row.original.parametersText}</span>
       ) : (
         <span className="text-faint">—</span>
       )

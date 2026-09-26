@@ -98,6 +98,42 @@ describe('AI authoring', () => {
     expect(counts()).toEqual(before) // generation never writes
   })
 
+  it('builds summaries, sorts, top-N limits, column choices and lists from the flat model reply', async () => {
+    vi.stubEnv('OPENROUTER_API_KEY', 'test-key')
+    stubFetch(
+      openai({
+        kind: 'workflow',
+        reason: null,
+        question: null,
+        parameters: [{ name: 'top_n', type: 'integer', integer_default: 3, string_default: null, min: 1, max: 100 }],
+        steps: [
+          { id: 's1', type: 'filter', column: 'region', operator: 'in', value_kind: 'list', literal_string: null, literal_integer: null, parameter: null, list: ['North', 'West'] },
+          { id: 's2', type: 'aggregate', group_by: ['sales_rep'], measures: [{ op: 'count', column: null, as: 'orders' }, { op: 'avg', column: 'amount', as: 'avg_deal' }] },
+          { id: 's3', type: 'filter', column: 'orders', operator: 'gte', value_kind: 'literal', literal_string: '2', literal_integer: null, parameter: null, list: null },
+          { id: 's4', type: 'sort', by: [{ column: 'avg_deal', direction: 'desc' }] },
+          { id: 's5', type: 'limit', rows_kind: 'parameter', rows_integer: null, parameter: 'top_n' },
+          { id: 's6', type: 'select', columns: [{ column: 'sales_rep', as: 'Rep' }, { column: 'avg_deal', as: null }] },
+        ],
+      }),
+    )
+    const res = await generate('Top reps in North or West with at least 2 orders, by average deal size; how many is adjustable (3).')
+    expect(res.status).toBe(200)
+    expect(res.body.definition.steps).toEqual([
+      { id: 's1', type: 'filter', column: 'region', operator: 'in', value: { list: ['North', 'West'] } },
+      { id: 's2', type: 'aggregate', groupBy: ['sales_rep'], measures: [{ op: 'count', as: 'orders' }, { op: 'avg', column: 'amount', as: 'avg_deal' }] },
+      // "2" written as text lands as a number: the count column is a whole number.
+      { id: 's3', type: 'filter', column: 'orders', operator: 'gte', value: { literal: 2 } },
+      { id: 's4', type: 'sort', by: [{ column: 'avg_deal', direction: 'desc' }] },
+      { id: 's5', type: 'limit', rows: { parameter: 'top_n' } },
+      { id: 's6', type: 'select', columns: [{ column: 'sales_rep', as: 'Rep' }, { column: 'avg_deal' }] },
+    ])
+    // Every step shape is allowed by the strict schema the provider enforces.
+    const variants = (OUTPUT_JSON_SCHEMA.properties.steps.items.anyOf as ReadonlyArray<{ properties: { type: { enum: readonly string[] } } }>).map(
+      (v) => v.properties.type.enum[0],
+    )
+    expect(variants).toEqual(['filter', 'group_sum', 'aggregate', 'sort', 'limit', 'select'])
+  })
+
   it('repairs exactly once, then returns 422 DRAFT_INVALID with the draft for the editor', async () => {
     vi.stubEnv('ANTHROPIC_API_KEY', 'test-key')
     const fetchFn = stubFetch(anthropic(BAD), anthropic(BAD), anthropic(GOOD))

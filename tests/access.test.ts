@@ -170,7 +170,7 @@ describe('access control', () => {
     const olivia = await signIn('olivia')
     const salesTeam = (await asha.get('/api/workflows?scope=team')).body
     const marketingTeam = (await olivia.get('/api/workflows?scope=team')).body
-    expect(salesTeam.items.map((w: { title: string }) => w.title)).toEqual(['Paid revenue by sales rep'])
+    expect(salesTeam.items.map((w: { title: string }) => w.title).sort()).toEqual(['Paid revenue by sales rep', 'Top sales reps by paid revenue'])
     expect(marketingTeam.items.map((w: { title: string }) => w.title)).toEqual(['Live spend by channel'])
     expect((await olivia.get(`/api/workflows/${app.seed.examples.paid_by_rep}`)).status).toBe(404)
     expect((await asha.get(`/api/workflows/${app.seed.examples.live_spend}`)).status).toBe(404)
@@ -266,7 +266,7 @@ describe('access control', () => {
       definition: { ...ORIGINAL, steps: [{ id: 's1', type: 'sql', query: 'DROP TABLE runs' }] },
     })
     expect(crafted.status).toBe(422)
-    expect(crafted.body.error.issues[0].message).toBe('Unsupported step type "sql". Only filter and group_sum are allowed.')
+    expect(crafted.body.error.issues[0].message).toBe('Unsupported step type "sql". Only filter, group_sum, aggregate, sort, limit and select are allowed.')
 
     const run = await vikram.run(created.body.version.id, fixture('sales_A.csv'), undefined, { runner_id: app.seed.users.asha })
     expect(run.status).toBe(201)
