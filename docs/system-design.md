@@ -104,6 +104,8 @@ A strict JSON document: a declared input, typed parameters, and up to 10 linear 
 - **One shape rule.** `lib/workflow/columns.ts` decides which columns exist after each step. The engine, the validator, the editor, the plain-language descriptions and the AI adapter all use it, so they can't disagree. The validator explains problems in terms people understand: *"Column "status" is no longer available: step s2 summarized the rows, which keeps only "region", "orders"."*
 - **Immutable versions.** The language only grows. Every version saved before a step type existed still runs exactly as before.
 
+- **Templates.** `lib/workflow/templates.ts` holds ten hand-written recipes, each paired with a sample file; the New recipe page loads one as an ordinary draft (with the sample's values for hints). They are validated and run on their samples in `tests/templates.test.ts`, so a template can never go stale silently.
+
 ## 4. AI authoring
 
 - **What the model sees:** the user's sentence and the declared column names and types, never data rows.

@@ -1,5 +1,5 @@
 # FlowPilot: context
-_Last updated: 2026-09-27 · Phase 17 (dates) done; phase 18 (templates, charts, landing page) starting · Free hosting kit for Oracle Cloud verified on a laptop; the owner runs the console steps_
+_Last updated: 2026-09-27 · Phase 18 (templates, result charts, landing page) done; phase 19 (API tokens) starting · Free hosting kit for Oracle Cloud verified on a laptop; the owner runs the console steps_
 
 ## What this is
 FlowPilot turns a one-sentence description of a repetitive CSV report into a saved, versioned recipe that a workspace can run on their own files, share and fork. AI drafts; a deterministic server executes; one access policy guards every request.
@@ -7,11 +7,18 @@ Stack: TanStack Start 1.168 (React 19.3, Vite 8, Nitro 3 beta), TanStack Router/
 Run: `npm install && npm run dev` → http://localhost:3000 (demo password `flowpilot-demo`)
 
 ## Current status
-- Phase: 17 done (owner: "make it the best ever"); phase 18 templates gallery + result charts + landing page next
-- Tests: 157/157 (`npm test`: engine 13, csv 18, validator 13, access 20, demo-loop 12, ai 12, hardening 15, accounts 17, language 14, governance 4, spreadsheet 8, dates 11) · Browser 28/28 (`npm run test:e2e`: demo 4, features 17, accounts 5, a11y 2) · Smoke 71/71 checks over all 42 endpoints (`npm run smoke`, local dev) · Model eval 28/28 (median 3.6 s) · Typecheck: pass (strict unused) · Build: pass
+- Phase: 18 done (owner: "make it the best ever"); phase 19 personal API tokens next
+- Tests: 160/160 (`npm test`: engine 13, csv 18, validator 13, access 20, demo-loop 12, ai 12, hardening 15, accounts 17, language 14, governance 4, spreadsheet 8, dates 11, templates 3) · Browser 30/30 (`npm run test:e2e`: demo 4, features 19, accounts 5, a11y 2) · Smoke 71/71 checks over all 42 endpoints (`npm run smoke`, local dev) · Model eval 28/28 (median 3.6 s) · Typecheck: pass (strict unused) · Build: pass
 - App runs with: `npm install && npm run dev` → http://localhost:3000
 
 ## Done (with evidence)
+Phase 18: templates, result charts, landing page (evidence: `tests/templates.test.ts` 3 (every template validates, matches its sample, runs to hand-computed rows as of 2026-09-27); browser tests "the front door…" and "templates: pick one in the gallery…"; a11y scans incl. `/welcome`; the phone-width test now includes `/welcome`; smoke 71/71)
+- [x] `src/lib/workflow/templates.ts`: 10 hand-written templates (regional exceptions, monthly revenue, top reps, large orders since a date with a date parameter, refunds last quarter, weekly orders, average deal by region, paid by rep, lost orders by rep with an `in` list, live spend), each with tags, a request sentence and a sample file
+- [x] New recipe page: `TemplateGallery` (tag filter, cards with the first three step descriptions, "Use this template"); loading a template also reads its sample file in the browser so column sample values and hints come along; `?template=<key>` links (library empty state, landing page) load one once (ref guard: React StrictMode ran the effect twice → two toasts)
+- [x] Results: `ResultView` = table or a direct-labelled horizontal bar chart (`ResultChart`, brand colour, first 30 rows in the result's own order, figure picker when several number columns, table one click away)
+- [x] `/welcome` public landing page (hero, example pipeline, the Describe/Check/Run loop, six feature cards, six template links, sign-in/sign-up CTAs by `REGISTRATION`/`DEMO_MODE`, dashboard link when signed in); signed-out visitors to `/` are redirected there, deeper links still go to `/login?redirect=`
+- [x] Fixed while testing: template cards (grid items) could not shrink below their longest step line → New recipe was 722 px wide on a phone (`min-w-0`)
+
 Phase 17: dates in the recipe language (evidence: `tests/dates.test.ts` 11, `tests/ai.test.ts` +2, browser test "dates: the monthly example runs as of a chosen day…", `npm run eval:model` 28/28 incl. 7 date cases on the first run, smoke 71/71)
 - [x] Column type `date`: cells read strictly by `src/lib/dates.ts` `checkDate` (ISO with optional time, `3 Apr 2026`, `03-Apr-2026`, `April 3, 2026`, `2026/04/03`, and day/month/year digits only when exactly one reading is a real date; `03/04/2026` is reported with both readings; two-digit years refused); stored as `YYYY-MM-DD` text so text order is calendar order; inferred from samples
 - [x] Calendar maths on day numbers (Hinnant's civil algorithms), never on Date objects: `relativeDate` (day / week from Monday / month / quarter / year, start or end, offset), `datePart` (`2026`, `2026-Q3`, `2026-09`, ISO `2026-W39`), leap years and month ends tested
@@ -36,7 +43,7 @@ Phase 15: free hosting kit (evidence: `deploy/oracle` stack built and run on thi
 - [x] `.dockerignore` excludes `deploy/`, `fly.toml` and any nested `.env`; README deployment section rewritten (cost/card table with sources, Oracle first, Fly paid, any Docker host); system design page/doc updated
 
 Foundation
-- [x] TanStack Start app; SSR guard redirects signed-out visitors to /login. Evidence: `curl /` → 307 `/login?redirect=%2F`
+- [x] TanStack Start app; SSR guard redirects signed-out visitors to /login (since phase 18: `/` itself goes to the public `/welcome` page). Evidence: browser test "the front door"
 - [x] SQLite schema: 8 tables, 12 invariant triggers, migrations in `schema_migrations`. Evidence: `src/server/migrations.ts`; access "enforces the invariants in the database itself"
 - [x] Auth: scrypt, SHA-256 session tokens, HttpOnly SameSite=Lax cookie, 10-failure throttle, uniform login errors. Evidence: access suite (401s, throttle)
 - [x] Seed: 4 demo accounts, Sales/Marketing, 2 labelled examples. Evidence: access "isolates workspaces"
@@ -135,12 +142,12 @@ Phase 8 hardening
 - [x] README: quick start, AI setup, OpenRouter model comparison, demo script, architecture, security, tests, limitations
 
 ## In progress
-- Phase 18: a templates gallery on New recipe (start from a hand-written recipe with a matching sample), a chart view of results (bars per group, validated palette, table view kept), and a public landing page for signed-out visitors. Then phase 19 personal API tokens for automation
+- Phase 19: personal API tokens (create/revoke on the account page, `Authorization: Bearer` on every endpoint, hashed at rest, last-used tracking, audit events), a README "Automation" section with curl examples, smoke checks
 
 ## Next steps (ordered)
 1. Owner: Oracle Cloud account (card for verification only) → Ubuntu 24.04 A1.Flex VM → security list TCP 80/443 → `deploy/oracle/push.sh ubuntu@<ip>` → `npm run smoke -- --base https://<ip-dashes>.sslip.io` (steps in `deploy/oracle/README.md`)
 2. Owner: rotate the OpenRouter key that was shared in chat (enter the new one when `push.sh` asks, or later in the server's `deploy/oracle/.env`)
-3. Phases 18–19 (see In progress), each with tests, smoke, docs and a phase commit
+3. Phase 19 (see In progress), then a final report; each phase with tests, smoke, docs and a commit
 4. Optional, for the resume: a public GitHub repo (`brew install gh`, `gh auth login`, then `gh repo create flowpilot --public --source . --push`)
 
 ## Decisions log
@@ -215,6 +222,9 @@ Phase 8 hardening
 | 2026-09-27 | Numeric day/month/year cells read only when exactly one reading is a real date; ambiguous cells reported with both readings | "Nothing is guessed": a US file must not be silently read as Indian dates or vice versa; the Excel upload path carries exact dates anyway | Assuming day-first (Indian convention); a per-column format setting |
 | 2026-09-27 | Relative dates = `{unit, offset, edge}` resolved from an "as of" day the runner can set; stored as `as_of` in the run's parameters | Reproducible reruns ("as of 27 Sep 2026" is visible), and "this month" / "last 30 days" / "year to date" all reduce to one shape | Named presets only; server-only "today" (not reproducible, wrong day near midnight in IST) |
 | 2026-09-27 | `date_part` appends the period column (keeps every column) | Group by month while still summarizing amounts or taking the last order date; matches how analysts add a helper column | Replacing the date column in place |
+| 2026-09-27 | Templates are code (`templates.ts`), tested like recipes, not database rows | Can't go stale silently; no admin UI needed; load as ordinary drafts with origin `blank` (no AI badge) | Seeding templates as example recipes per workspace |
+| 2026-09-27 | Result chart: single-series bars in the brand colour, table default | Grouped results are the common case; one hue needs no legend; the table stays one click away | Multi-series charts, a charting library |
+| 2026-09-27 | `/` for a signed-out visitor → `/welcome`; every other path → `/login?redirect=` | A public front door for the showcase without moving the dashboard | A separate marketing site; landing at `/` with the dashboard elsewhere |
 
 ## Deviations from the brief
 - Added optional `ANTHROPIC_BASE_URL` / `OPENAI_BASE_URL` / `OPENROUTER_BASE_URL` · the browser test needs a local mock model (the model call is server-side) · no change when unset
@@ -248,15 +258,15 @@ Phase 8 hardening
 DATABASE_PATH, SEED_PASSWORD, DEMO_MODE, REGISTRATION, APP_URL, TRUST_PROXY (`true` behind Caddy/nginx, `fly` on Fly.io), RESEND_API_KEY, MAIL_FROM, MODEL_PROVIDER, MODEL_NAME, ANTHROPIC_API_KEY, OPENAI_API_KEY, OPENROUTER_API_KEY (+ optional ANTHROPIC_BASE_URL, OPENAI_BASE_URL, OPENROUTER_BASE_URL). The local git-ignored `.env` sets MODEL_PROVIDER=openrouter and OPENROUTER_API_KEY.
 
 ## File map
-- `src/lib/workflow/`: `schema.ts` (contract, LIMITS, 7 step types, 4 column types) · `columns.ts` (shape rule) · `validate.ts` (validateDefinition, analyze, resolveParameters) · `execute.ts` (engine) · `describe.ts` (INR, steps, summary, parameter units) · `draft.ts` (editor model) · `examples.ts`
+- `src/lib/workflow/`: `schema.ts` (contract, LIMITS, 7 step types, 4 column types) · `templates.ts` (10 templates) · `columns.ts` (shape rule) · `validate.ts` (validateDefinition, analyze, resolveParameters) · `execute.ts` (engine) · `describe.ts` (INR, steps, summary, parameter units) · `draft.ts` (editor model) · `examples.ts`
 - `src/lib/`: `csv.ts` · `dates.ts` (strict date reading, day-number calendar maths, relative dates, periods) · `spreadsheet.ts` (workbook → CSV in the browser, results → .xlsx) · `policy.ts` (pure access policy + matrix) · `account.ts` (name/email/password rules) · `api.ts` (client + query keys) · `types.ts` · `format.ts` · `session.ts` (server fns) · `demo.ts` · `redirect.ts` (safe post-login paths)
 - `src/server/`: `migrations.ts` (schema + triggers, 3 migrations) · `db.ts` · `auth.ts` (sessions, throttle) · `accounts.ts` (users, workspaces, invites, resets) · `repo.ts` (access-aware queries, stale reaper) · `events.ts` (audit + feed) · `config.ts` (env settings, client address) · `mail.ts` · `boot.ts` (first-request setup) · `seed.ts` · `http.ts` · `env.ts` · `ids.ts`
 - `src/server/api/`: `router.ts` (dispatcher, 40 routes) · `auth.ts` · `account.ts` (register, resets, me, workspaces) · `invites.ts` · `workflows.ts` · `runs.ts` · `generate.ts` · `workspace.ts` · `dashboard.ts` · `system.ts`
 - `src/server/ai/`: `config.ts` (providers, env) · `generate.ts` (prompt, schema, adapters, repair loop)
-- `src/routes/`: `__root.tsx` · `login.tsx` · `signup.tsx` · `invite.$token.tsx` · `forgot-password.tsx` · `reset-password.$token.tsx` · `_app.tsx` (guard + shell) · `_app/{index,library,runs,access,account,system-design,workflows.new,w.$workflowId.index,w.$workflowId.edit}.tsx` · `_app/$.tsx` (in-app 404) · `api/$.ts`
-- `src/components/`: `ui.tsx` (incl. `Menu`) · `shell.tsx` (workspace switcher, create-workspace dialog) · `auth-layout.tsx` (sign-in pages layout, password input) · `command.tsx` · `editor.tsx` · `results.tsx` · `charts.tsx` · `workflow-bits.tsx` · `file-drop.tsx` · `share-dialog.tsx` · `fork-dialog.tsx` · `access-panel.tsx` · `states.tsx` · `toast.tsx` · `logo.tsx` · `theme.ts` · `diagrams/{architecture,versioning}.tsx`
+- `src/routes/`: `__root.tsx` · `welcome.tsx` (public landing) · `login.tsx` · `signup.tsx` · `invite.$token.tsx` · `forgot-password.tsx` · `reset-password.$token.tsx` · `_app.tsx` (guard + shell) · `_app/{index,library,runs,access,account,system-design,workflows.new,w.$workflowId.index,w.$workflowId.edit}.tsx` · `_app/$.tsx` (in-app 404) · `api/$.ts`
+- `src/components/`: `ui.tsx` (incl. `Menu`) · `templates.tsx` (gallery) · `charts.tsx` (run chart + `ResultChart`) · `shell.tsx` (workspace switcher, create-workspace dialog) · `auth-layout.tsx` (sign-in pages layout, password input) · `command.tsx` · `editor.tsx` · `results.tsx` · `charts.tsx` · `workflow-bits.tsx` · `file-drop.tsx` · `share-dialog.tsx` · `fork-dialog.tsx` · `access-panel.tsx` · `states.tsx` · `toast.tsx` · `logo.tsx` · `theme.ts` · `diagrams/{architecture,versioning}.tsx`
 - `src/start.ts`: global request middleware (security headers, server-fn CSRF)
-- `tests/`: 12 Vitest suites (incl. `hardening`, `accounts`, `language`, `governance`, `spreadsheet`, `dates`) + `helpers/` · `tests/e2e/`: `demo.spec.ts`, `features.spec.ts`, `accounts.spec.ts`, `a11y.spec.ts`, `mock-model.ts` · `playwright.config.ts`
+- `tests/`: 13 Vitest suites (incl. `hardening`, `accounts`, `language`, `governance`, `spreadsheet`, `dates`, `templates`) + `helpers/` · `tests/e2e/`: `demo.spec.ts`, `features.spec.ts`, `accounts.spec.ts`, `a11y.spec.ts`, `mock-model.ts` · `playwright.config.ts`
 - `scripts/`: `seed.ts`, `check-model.ts`, `eval-model.ts`, `smoke.ts`, `screenshots.ts`, `backup-db.mjs` (also in the image), `make-fixtures.mjs` (xlsx fixtures) · `fixtures/`, `public/samples/`, `docs/system-design.md`, `docs/screenshots/`
 - `deploy/oracle/`: `README.md` (console walkthrough) · `docker-compose.yml` · `Caddyfile` · `setup.sh` · `backup.sh` · `push.sh` · `Dockerfile`, `docker-entrypoint.sh`, `.dockerignore`, `fly.toml` at the root
 - `src/lib/samples.ts` (sample catalogue) · `src/server/ratelimit.ts` (drafting limits)

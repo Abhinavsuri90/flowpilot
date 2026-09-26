@@ -7,7 +7,11 @@ import { AppShell } from '~/components/shell'
 export const Route = createFileRoute('/_app')({
   beforeLoad: async ({ location }) => {
     const me = await getSessionFn()
-    if (!me) throw redirect({ to: '/login', search: { redirect: location.href } })
+    if (!me) {
+      // The front door shows what FlowPilot is; deeper links go to sign-in and come back.
+      if (location.pathname === '/') throw redirect({ to: '/welcome' })
+      throw redirect({ to: '/login', search: { redirect: location.href } })
+    }
     return { me }
   },
   component: AppLayout,

@@ -4,7 +4,7 @@ import { REGIONAL_REVENUE_EXCEPTIONS as ORIGINAL } from '../../src/lib/workflow/
 
 // Every page must pass an automated WCAG 2.1 AA scan (axe-core) in both themes.
 
-const PUBLIC_PAGES = ['/login', '/signup', '/forgot-password', '/reset-password/not-a-real-token', '/invite/not-a-real-token'] as const
+const PUBLIC_PAGES = ['/welcome', '/login', '/signup', '/forgot-password', '/reset-password/not-a-real-token', '/invite/not-a-real-token'] as const
 const APP_PAGES = ['/', '/library?tab=team', '/library?tab=archived', '/workflows/new', '/runs', '/access', '/audit', '/system-design', '/account'] as const
 
 for (const colorScheme of ['light', 'dark'] as const) {

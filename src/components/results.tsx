@@ -15,6 +15,7 @@ import { isNumericType, type Column, type Row, type StepLogEntry, type WorkflowD
 import { describeRecipe } from '~/lib/workflow/describe'
 import { cn } from './ui'
 import { StepIcon } from './workflow-bits'
+import { ChartTableToggle, ResultChart, chartable } from './charts'
 
 // ---------------------------------------------------------------------------
 // Sortable result grid (TanStack Table v9)
@@ -131,6 +132,20 @@ export function ResultTable({ columns, rows, caption }: { columns: Column[]; row
           </span>
         </div>
       )}
+    </div>
+  )
+}
+
+/** The result as a table, or as a bar chart when it has a figure to plot. */
+export function ResultView({ columns, rows, caption }: { columns: Column[]; rows: Row[]; caption?: string }) {
+  const [view, setView] = React.useState<'table' | 'chart'>('table')
+  if (!chartable(columns, rows)) return <ResultTable columns={columns} rows={rows} caption={caption} />
+  return (
+    <div>
+      <div className="mb-2 flex justify-end">
+        <ChartTableToggle view={view} onChange={setView} />
+      </div>
+      {view === 'chart' ? <ResultChart columns={columns} rows={rows} /> : <ResultTable columns={columns} rows={rows} caption={caption} />}
     </div>
   )
 }

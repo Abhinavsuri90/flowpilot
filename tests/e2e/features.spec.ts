@@ -299,7 +299,7 @@ test('wide tables scroll inside their card: no page scrolls sideways on a phone,
   expect(result!.x + result!.width).toBeLessThanOrEqual(panel!.x)
 
   await page.setViewportSize({ width: 390, height: 844 })
-  for (const path of ['/', '/library', '/runs', '/access', '/audit', '/account', '/system-design', '/workflows/new', page.url().replace(/^https?:\/\/[^/]+/, ''), `/w/${id}/edit`]) {
+  for (const path of ['/welcome', '/', '/library', '/runs', '/access', '/audit', '/account', '/system-design', '/workflows/new', page.url().replace(/^https?:\/\/[^/]+/, ''), `/w/${id}/edit`]) {
     await open(page, path)
     await page.waitForLoadState('networkidle')
     expect(await page.evaluate(() => document.documentElement.scrollWidth), path).toBeLessThanOrEqual(390)
@@ -334,7 +334,7 @@ test('AI drafts a top-N summary; the new step cards show it, and the run ranks r
   await expect(page.getByLabel('Figure 2', { exact: true })).toHaveValue('count')
   await expect(page.getByLabel('Step 3 type')).toHaveValue('sort')
   await expect(page.getByLabel('Step 4 type')).toHaveValue('limit')
-  await expect(page.getByText('Group by sales_rep: total amount as revenue, number of rows as orders')).toBeVisible()
+  await expect(page.getByText('Group by sales_rep: total amount as revenue, number of rows as orders', { exact: true })).toBeVisible()
   await expect(page.getByText('Keep the first 2 rows')).toBeVisible()
 
   // Add a column choice by hand, with a friendly header.
@@ -467,4 +467,51 @@ test('dates: the monthly example runs as of a chosen day, and the editor drafts 
   await page.getByPlaceholder('YYYY-MM-DD').fill('2026-04-01')
   await expect(page.getByText('= 1 Apr 2026')).toBeVisible()
   await expect(page.getByText('Keep rows where ordered_on is on or after 1 Apr 2026').first()).toBeVisible()
+})
+
+test('the front door: signed-out visitors to / see the landing page, and a template link opens the editor pre-filled', async ({ page }) => {
+  await page.context().clearCookies()
+  await page.goto('/')
+  await expect(page).toHaveURL(/\/welcome$/)
+  await expect(page.getByRole('heading', { level: 1 })).toContainText('Describe the report once.')
+  await expect(page.getByRole('link', { name: /Try the demo|Sign in/ }).first()).toBeVisible()
+  // A deeper link still goes to sign-in and comes back.
+  await page.goto('/library')
+  await expect(page).toHaveURL(/\/login\?redirect=%2Flibrary$/)
+
+  await signIn(page, 'Asha')
+  await open(page, '/welcome')
+  await expect(page.getByRole('link', { name: 'Dashboard', exact: true })).toBeVisible()
+  await page.getByRole('link', { name: 'Refunds last quarter by region' }).click()
+  await expect(page).toHaveURL(/\/workflows\/new\?template=refunds_last_quarter$/)
+  await expect(page.getByText('Loaded “Refunds last quarter by region”')).toBeVisible()
+  await expect(page.getByLabel('Title', { exact: true })).toHaveValue('Refunds last quarter by region')
+  await expect(page.getByLabel(/^Step \d+ type$/)).toHaveCount(5)
+  // Sample values came along with the template (the sample file was read in the browser).
+  await expect(page.getByText('2026-01-08').first()).toBeVisible()
+})
+
+test('templates: pick one in the gallery, save it, run it on its sample, and read the result as a chart', async ({ page }) => {
+  await signIn(page, 'Asha')
+  await open(page, '/workflows/new')
+  await page.getByRole('button', { name: 'Dates' }).click()
+  await expect(page.getByRole('article')).toHaveCount(4)
+  await page.getByRole('button', { name: 'All' }).click()
+  await page.getByRole('article').filter({ hasText: 'Average deal size by region' }).getByRole('button', { name: 'Use this template' }).click()
+  await expect(page.getByText('Started from “Average deal size by region”')).toBeVisible()
+  await page.getByRole('button', { name: 'Save recipe' }).click()
+  await expect(page).toHaveURL(/\/w\/wf_/)
+  await expect(page.getByRole('heading', { name: 'Average deal size by region', exact: true }).first()).toBeVisible()
+
+  await runFile(page, F + 'sales_A.csv')
+  await page.getByRole('button', { name: 'Run recipe' }).click()
+  const table = page.getByRole('table', { name: /Result of run/ })
+  await expect(table.locator('tbody tr')).toHaveCount(3)
+  await page.getByRole('button', { name: 'Chart' }).click()
+  await expect(page.getByRole('list', { name: 'avg_deal per row' })).toBeVisible()
+  await expect(page.getByRole('img', { name: 'West: ₹70,000' })).toBeVisible()
+  await page.getByLabel('Figure to chart').selectOption('orders')
+  await expect(page.getByRole('img', { name: 'North: 2' })).toBeVisible()
+  await page.getByRole('button', { name: 'Table' }).click()
+  await expect(table).toBeVisible()
 })

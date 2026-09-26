@@ -138,9 +138,14 @@ function Library() {
             }
             action={
               canCreate ? (
-                <Link to="/workflows/new" className={buttonClass('brand')}>
-                  <Plus className="size-4" /> New recipe
-                </Link>
+                <span className="flex flex-wrap justify-center gap-2">
+                  <Link to="/workflows/new" className={buttonClass('brand')}>
+                    <Plus className="size-4" /> New recipe
+                  </Link>
+                  <Link to="/workflows/new" search={{ template: 'monthly_revenue' }} className={buttonClass('secondary')}>
+                    Start from a template
+                  </Link>
+                </span>
               ) : (
                 <Link to="/library" search={{ tab: 'team' }} className={buttonClass('secondary')}>
                   Open the team library

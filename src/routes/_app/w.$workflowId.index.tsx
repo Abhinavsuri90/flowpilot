@@ -63,7 +63,7 @@ import {
   VisibilityBadge,
 } from '~/components/workflow-bits'
 import { FileDrop } from '~/components/file-drop'
-import { ResultTable, StepFunnel } from '~/components/results'
+import { ResultView, StepFunnel } from '~/components/results'
 import { ShareDialog, CopyLinkButton, shareLink } from '~/components/share-dialog'
 import { ForkDialog } from '~/components/fork-dialog'
 import { WhoHasAccess } from '~/components/access-panel'
@@ -910,7 +910,7 @@ function ResultCard({ runId, detail, onClose }: { runId: string; detail: Workflo
             }
           />
         ) : (
-          <ResultTable columns={r.columns} rows={r.rows} caption={`Result of run ${r.id}`} />
+          <ResultView columns={r.columns} rows={r.rows} caption={`Result of run ${r.id}`} />
         )}
 
         {r.stepLog.length > 0 && (
