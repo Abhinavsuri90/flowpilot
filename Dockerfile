@@ -16,6 +16,7 @@ ENV NODE_ENV=production \
     DATABASE_PATH=/data/flowpilot.db
 WORKDIR /app
 COPY --from=build /app/.output ./.output
+COPY --from=build /app/scripts/backup-db.mjs ./scripts/backup-db.mjs
 COPY docker-entrypoint.sh /usr/local/bin/docker-entrypoint.sh
 RUN chmod +x /usr/local/bin/docker-entrypoint.sh && mkdir -p /data && chown -R node:node /data
 EXPOSE 3000

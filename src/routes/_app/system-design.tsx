@@ -611,7 +611,7 @@ function DeploymentSection() {
         label="Production request path"
         steps={[
           { title: 'Browser', lines: ['HTTPS only', 'Secure cookies automatically'] },
-          { title: 'Edge proxy', lines: ['TLS termination', 'Client address forwarded'], tag: 'TRUST_PROXY' },
+          { title: 'Proxy', lines: ['Caddy on your own server, or the platform edge', 'TLS termination, client address forwarded'], tag: 'TRUST_PROXY' },
           { title: 'App machine', lines: ['node .output/server/index.mjs', 'Migrations on start'], tag: 'Docker' },
           { title: 'Volume', lines: ['/data/flowpilot.db', 'SQLite WAL, single writer'] },
           { title: 'Checks', lines: ['GET /api/health for the platform', 'npm run smoke -- --base <url>'] },
@@ -624,7 +624,7 @@ function DeploymentSection() {
           [code('DATABASE_PATH'), '/data/flowpilot.db on a volume', 'Survives restarts and redeploys'],
           [code('REGISTRATION'), 'open (or invite-only for one company)', 'Who may create accounts'],
           [code('DEMO_MODE'), 'on for a public showcase, else off', 'One-click demo accounts, locked against changes'],
-          [code('TRUST_PROXY'), 'true behind the platform’s proxy', 'Rate limits see each visitor’s own address'],
+          [code('TRUST_PROXY'), 'true behind Caddy or nginx, fly on Fly.io', 'Rate limits read the one header that proxy writes; a visitor’s own forwarded headers are never believed'],
           [code('APP_URL'), 'the public https:// address', 'Correct links in invite and reset emails'],
           [code('OPENROUTER_API_KEY'), 'a secret, never in the image', 'AI drafting; runs work without it'],
         ]}

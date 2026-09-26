@@ -16,8 +16,8 @@ primary_region = "bom"
   HOST = "0.0.0.0"
   PORT = "3000"
   DATABASE_PATH = "/data/flowpilot.db"
-  # Fly's proxy sets Fly-Client-IP, so rate limits see each visitor's own address.
-  TRUST_PROXY = "true"
+  # Fly's proxy sets Fly-Client-IP on every request, so rate limits see each visitor's own address.
+  TRUST_PROXY = "fly"
   REGISTRATION = "open"
   # A public showcase: one-click demo accounts (locked against changes) next to real sign-up.
   DEMO_MODE = "true"

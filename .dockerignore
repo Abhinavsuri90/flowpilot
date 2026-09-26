@@ -6,9 +6,12 @@ data
 *.db
 *.db-wal
 *.db-shm
-.env
-.env.*
+**/.env
+**/.env.*
 !.env.example
+# Deployment kits (and the server's own settings file) never go into the image.
+deploy
+fly.toml
 test-results
 playwright-report
 docs/screenshots

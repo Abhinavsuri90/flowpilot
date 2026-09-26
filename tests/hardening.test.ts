@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { BASE, Client, PASSWORD, freshApp, signIn } from './helpers/app'
 import { fixture } from './helpers/fixtures'
 import { handleApi } from '../src/server/api/router'
@@ -6,6 +6,7 @@ import { recordEvent } from '../src/server/events'
 import { finishRunFailed, insertRun } from '../src/server/repo'
 import { hashToken } from '../src/server/auth'
 import { safeRedirect } from '../src/lib/redirect'
+import { clientIp } from '../src/server/config'
 import { REGIONAL_REVENUE_EXCEPTIONS as ORIGINAL } from '../src/lib/workflow/examples'
 
 // Problems found in the phase 10 review, each pinned by a test.
@@ -182,5 +183,37 @@ describe('lists page instead of returning everything', () => {
     expect((await asha.get('/api/runs?status=bogus')).body.runs).toHaveLength(4)
     // Other people's runs never count.
     expect((await (await signIn('vikram')).get('/api/runs')).body.counts.all).toBe(0)
+  })
+})
+
+describe('client address behind a proxy', () => {
+  afterEach(() => {
+    vi.unstubAllEnvs()
+  })
+
+  const login = (email: string, password: string, headers: Record<string, string>) =>
+    new Client().call('POST', '/api/auth/login', { json: { email, password }, headers })
+
+  it('believes only the address the nearest proxy appended, so forged hops cannot dodge the sign-in throttle', async () => {
+    vi.stubEnv('TRUST_PROXY', 'true')
+    // Caddy/nginx append the address they saw; everything before it is the client's own claim.
+    for (let i = 0; i < 10; i++) {
+      const res = await login('asha@demo.local', 'wrong-password', { 'x-forwarded-for': `10.0.0.${i}, 203.0.113.9`, 'fly-client-ip': `10.1.0.${i}` })
+      expect(res.status).toBe(401)
+    }
+    const blocked = await login('asha@demo.local', PASSWORD, { 'x-forwarded-for': '10.9.9.9, 203.0.113.9' })
+    expect(blocked.status).toBe(429)
+    // Someone at another address is unaffected.
+    expect((await login('asha@demo.local', PASSWORD, { 'x-forwarded-for': '198.51.100.7' })).status).toBe(200)
+  })
+
+  it('reads Fly-Client-IP only on Fly, and nothing forwarded unless told to', () => {
+    const request = new Request(`${BASE}/api/health`, { headers: { 'x-forwarded-for': '1.1.1.1, 2.2.2.2', 'fly-client-ip': '3.3.3.3' } })
+    vi.stubEnv('TRUST_PROXY', 'fly')
+    expect(clientIp(request)).toBe('3.3.3.3')
+    vi.stubEnv('TRUST_PROXY', 'true')
+    expect(clientIp(request)).toBe('2.2.2.2')
+    vi.stubEnv('TRUST_PROXY', '')
+    expect(clientIp(request)).toBe('unknown')
   })
 })

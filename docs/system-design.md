@@ -288,19 +288,20 @@ Every failure has an outcome the user can read, and none can corrupt a stored re
 
 ```mermaid
 flowchart LR
-  U[Browser] -- HTTPS --> E[Platform edge proxy<br/>TLS, client address]
-  E --> M[App machine<br/>Docker: node .output/server/index.mjs]
-  M --> V[(Volume<br/>/data/flowpilot.db)]
+  U[Browser] -- HTTPS --> E[Proxy: Caddy on the VM, or the platform edge<br/>TLS, client address]
+  E --> M[App container<br/>node .output/server/index.mjs]
+  M --> V[(Disk<br/>/data/flowpilot.db + daily backups)]
   M -. drafts only .-> P[(Model provider)]
   H[Health check<br/>GET /api/health] --> M
 ```
 
-- **One process, one volume.** SQLite has a single writer, so production runs one machine with the database on a persistent volume. Migrations apply on start. In `DEMO_MODE`, an empty database is seeded on the first request.
+- **One process, one disk.** SQLite has a single writer, so production runs one machine with the database on a persistent disk. Migrations apply on start. In `DEMO_MODE`, an empty database is seeded on the first request.
+- **Two kits.** `deploy/oracle/` runs the app behind Caddy (automatic HTTPS) on an Oracle Cloud Always Free VM at no cost, with a daily online SQLite backup (`scripts/backup-db.mjs`: consistent snapshot, integrity check, newest 14 kept). `fly.toml` runs it on Fly.io (paid after the trial) with a volume.
 - **Configuration:**
   - `DATABASE_PATH=/data/flowpilot.db`
   - `REGISTRATION`
   - `DEMO_MODE`
-  - `TRUST_PROXY=true` behind the platform proxy
+  - `TRUST_PROXY=true` behind Caddy or nginx (the last `X-Forwarded-For` hop, the one the proxy appended), `fly` on Fly.io (`Fly-Client-IP`); each mode believes exactly one header the proxy writes, so a client's own forwarded headers can't spoof rate limits
   - `APP_URL`
   - secrets: `OPENROUTER_API_KEY`, and optionally `RESEND_API_KEY` and `MAIL_FROM`
 - **Verification:** the platform polls `/api/health`, and `npm run smoke -- --base https://<app>` exercises all 42 endpoints and their error codes against the deployment.

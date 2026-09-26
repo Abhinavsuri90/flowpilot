@@ -4,6 +4,16 @@ import { loadEnv } from './env'
 
 export type RegistrationMode = 'open' | 'invite-only' | 'closed'
 
+/**
+ * Which header carries the visitor's address. Each mode believes exactly one
+ * header that the proxy in front of the app writes itself:
+ * - `off`: nothing forwarded is believed; the socket address is used
+ * - `forwarded`: the last X-Forwarded-For entry, i.e. the address the nearest
+ *   proxy saw (Caddy, nginx, a load balancer); earlier entries are the client's own claim
+ * - `fly`: Fly-Client-IP, which Fly.io's edge sets on every request
+ */
+export type ProxyTrust = 'off' | 'forwarded' | 'fly'
+
 export type AppConfig = {
   /** Shows the one-click demo accounts and seeds them into an empty database. */
   demoMode: boolean
@@ -11,8 +21,8 @@ export type AppConfig = {
   registration: RegistrationMode
   /** Public base URL for links in emails, e.g. https://flowpilot.example.com (else the request's origin). */
   appUrl: string | null
-  /** Trust X-Forwarded-For / Fly-Client-IP for rate limits (only behind a proxy you control). */
-  trustProxy: boolean
+  /** Where rate limits read the visitor's address (only trust a proxy you control). */
+  trustProxy: ProxyTrust
   /** Email delivery (Resend). Without it, emails are written to the server log instead. */
   mail: { apiKey: string; from: string } | null
 }
@@ -20,6 +30,11 @@ export type AppConfig = {
 function flag(raw: string | undefined, fallback: boolean): boolean {
   if (raw === undefined || raw.trim() === '') return fallback
   return /^(1|true|yes|on)$/i.test(raw.trim())
+}
+
+function proxyTrust(raw: string | undefined): ProxyTrust {
+  if (raw?.trim().toLowerCase() === 'fly') return 'fly'
+  return flag(raw, false) ? 'forwarded' : 'off'
 }
 
 export function appConfig(): AppConfig {
@@ -32,7 +47,7 @@ export function appConfig(): AppConfig {
     demoMode: flag(process.env.DEMO_MODE, !production),
     registration: registration === 'invite-only' || registration === 'closed' ? registration : 'open',
     appUrl: process.env.APP_URL?.trim().replace(/\/+$/, '') || null,
-    trustProxy: flag(process.env.TRUST_PROXY, false),
+    trustProxy: proxyTrust(process.env.TRUST_PROXY),
     mail: apiKey && from ? { apiKey, from } : null,
   }
 }
@@ -45,16 +60,19 @@ export function absoluteUrl(request: Request, path: string): string {
 
 /**
  * The caller's address for rate limits. Forwarded headers are only believed
- * when TRUST_PROXY is set, since anyone can send them.
+ * when TRUST_PROXY says which proxy writes them, since anyone can send them:
+ * a proxy passes headers it doesn't own straight through, and appends to
+ * X-Forwarded-For rather than replacing what the client claimed.
  */
 export function clientIp(request: Request): string {
-  if (appConfig().trustProxy) {
+  const trust = appConfig().trustProxy
+  if (trust === 'fly') {
     const fly = request.headers.get('fly-client-ip')?.trim()
     if (fly) return fly
-    const forwarded = request.headers.get('x-forwarded-for')?.split(',')[0]?.trim()
-    if (forwarded) return forwarded
-    const real = request.headers.get('x-real-ip')?.trim()
-    if (real) return real
+  } else if (trust === 'forwarded') {
+    const hops = request.headers.get('x-forwarded-for')?.split(',')
+    const nearest = hops?.[hops.length - 1]?.trim()
+    if (nearest) return nearest
   }
   // srvx (Nitro's server layer) exposes the socket address as request.ip.
   const direct = (request as Request & { ip?: unknown }).ip

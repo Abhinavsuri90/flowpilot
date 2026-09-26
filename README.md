@@ -314,7 +314,7 @@ npm run smoke                     # every endpoint and error code against a runn
 | `DEMO_MODE` | on in development, off in production | One-click demo accounts on the sign-in page; in production also seeds them into an empty database |
 | `REGISTRATION` | `open` | `open`, `invite-only` (only through an invite link) or `closed` |
 | `APP_URL` | the request's origin | Public URL used in emailed links |
-| `TRUST_PROXY` | `false` | Believe `Fly-Client-IP` / `X-Forwarded-For` for rate limits (only behind a proxy you control) |
+| `TRUST_PROXY` | `false` | `true` behind Caddy/nginx (last `X-Forwarded-For` hop), `fly` on Fly.io (`Fly-Client-IP`); rate limits use that address |
 | `RESEND_API_KEY` / `MAIL_FROM` | none | Send invite and reset emails through Resend; without them the emails are written to the server log |
 | `MODEL_PROVIDER` | inferred from whichever key is set | `anthropic`, `openai` or `openrouter` |
 | `MODEL_NAME` | `claude-sonnet-5` · `gpt-5` · `openai/gpt-6-luna` | Model for the chosen provider |
@@ -325,7 +325,33 @@ npm run smoke                     # every endpoint and error code against a runn
 
 ## Deployment
 
-FlowPilot is one Node process plus one SQLite file, so it needs a platform with a **persistent volume**. The repository ships a production `Dockerfile` and a ready `fly.toml` for **Fly.io** (region `bom`, Mumbai, close to its Indian users).
+FlowPilot is one Node process plus one SQLite file, so it needs a host with a **persistent disk**. The repository ships a production `Dockerfile` and two ready-made routes:
+
+| Route | Monthly cost | Card | Where the data lives |
+|---|---|---|---|
+| **Oracle Cloud Always Free** ([`deploy/oracle/`](deploy/oracle/README.md)) | **$0** within the free limits | Identity verification only: *"Your credit card will not be charged unless you upgrade your account"* ([Oracle docs](https://docs.oracle.com/en-us/iaas/Content/FreeTier/freetier.htm)) | The VM's disk, with daily backups |
+| **Fly.io** (`fly.toml`) | About $2–5 once the trial (2 hours of machine time or 7 days) ends ([pricing](https://docs.fly.io/about/pricing/), [trial](https://docs.fly.io/about/free-trial/)) | Required and billed | A Fly volume |
+| Any Docker host | Varies | — | A volume mounted at `/data` |
+
+Hosts without a persistent disk (Render's free plan, Vercel, Netlify) lose the database on every restart, so they only suit a throwaway demo.
+
+### Oracle Cloud, free
+
+An Arm VM (up to 2 OCPUs and 12 GB of memory, 200 GB of disk and 10 TB of traffic a month, all in the Always Free tier) runs FlowPilot behind Caddy, which obtains and renews the HTTPS certificate by itself. The console walkthrough is in [`deploy/oracle/README.md`](deploy/oracle/README.md); the short version:
+
+```bash
+# 1. Create the free account and an Ubuntu 24.04 VM (shape VM.Standard.A1.Flex, marked "Always Free-eligible")
+# 2. Allow TCP 80 and 443 in the VCN's default security list
+# 3. From this folder, on your computer:
+deploy/oracle/push.sh ubuntu@<public-ip>                    # copies the project, installs Docker, builds, starts, schedules backups
+npm run smoke -- --base https://<ip-with-dashes>.sslip.io   # 71 checks against the live server
+```
+
+Updating is the same `push.sh` command again. The kit is `docker-compose.yml` (app + Caddy), `Caddyfile`, `setup.sh` (server setup that is safe to rerun), `backup.sh` (daily online SQLite backup, integrity-checked, 14 kept) and `push.sh`. It was verified end to end on a laptop: the stack builds, Caddy serves it over HTTP/2 with HSTS, the smoke test passes 71/71 through the proxy, forged `X-Forwarded-For` headers can't dodge the sign-in throttle, and backups restore.
+
+Oracle may stop (not delete) an Always Free VM that stays idle for seven days; starting it again from the console brings the app back with its data. Never upgrade the account to *Pay As You Go*: that is the only way it can ever charge the card.
+
+### Fly.io, paid
 
 ```bash
 # once: install flyctl (brew install flyctl) and sign in
@@ -334,18 +360,12 @@ fly launch --no-deploy --copy-config --name <your-app>    # then set APP_URL in 
 fly volumes create flowpilot_data --region bom --size 1
 fly secrets set OPENROUTER_API_KEY=<key>                  # optional: AI drafting (runs work without it)
 fly deploy
-npm run smoke -- --base https://<your-app>.fly.dev        # 71 checks against the live app
+npm run smoke -- --base https://<your-app>.fly.dev
 ```
 
-What the configuration does:
+`fly.toml` puts one machine in Mumbai (`bom`) with the volume at `/data`, `force_https`, a `/api/health` check every 30 seconds, and auto-stop when idle (the volume keeps the data).
 
-- **HTTPS only** (`force_https`); session cookies become `Secure`, and responses carry `Strict-Transport-Security`.
-- **SQLite on the volume** at `/data/flowpilot.db`, with migrations on start. One machine, because SQLite has a single writer. Fly snapshots volumes daily.
-- **Idle machines stop** and wake on the next request, and `/api/health` is checked every 30 seconds.
-- **`TRUST_PROXY=true`**, so rate limits count each visitor's own address (`Fly-Client-IP`).
-- **Public showcase settings:** `DEMO_MODE=true` (one-click demo accounts, locked against changes, seeded into the empty database) and `REGISTRATION=open`. For a single company, set `DEMO_MODE=false` and `REGISTRATION=invite-only`.
-
-Any other Docker host works the same way:
+### Any Docker host
 
 ```bash
 docker build -t flowpilot .
@@ -353,6 +373,13 @@ docker run -p 3000:3000 -v flowpilot-data:/data -e DEMO_MODE=true flowpilot
 ```
 
 The container runs as the unprivileged `node` user. Without Docker, `npm run build && npm start` serves `.output/`. Point your platform's health check at `/api/health`, keep `DATABASE_PATH` on a persistent disk, and serve it over HTTPS.
+
+What both kits configure:
+
+- **HTTPS only:** session cookies become `Secure`, and responses carry `Strict-Transport-Security`.
+- **SQLite on the disk** at `/data/flowpilot.db`, migrations on start, one machine (SQLite has a single writer).
+- **`TRUST_PROXY`:** `true` behind Caddy or nginx (the address the proxy appended to `X-Forwarded-For`), `fly` on Fly.io (`Fly-Client-IP`). Each value believes exactly one header that the proxy writes itself; a visitor's own forwarded headers are never believed.
+- **Public showcase settings:** `DEMO_MODE=true` (one-click demo accounts, locked against changes, seeded into the empty database) and `REGISTRATION=open`. For a single company, set `DEMO_MODE=false` and `REGISTRATION=invite-only`.
 
 ## Troubleshooting
 
@@ -368,7 +395,7 @@ The container runs as the unprivileged `node` user. Without Docker, `npm run bui
 | “Missing required column: status (the file has "Status")” | Column names must match exactly, including capitals: rename the header in the file |
 | E2E tests can't find a browser | `npx playwright install chromium` |
 | A password-reset or invite email never arrives | Without `RESEND_API_KEY` and `MAIL_FROM` the email is written to the server log instead: copy the link from there |
-| "Too many accounts were created from here recently" | Sign-ups are limited to 20 an hour per address; behind a proxy set `TRUST_PROXY=true` so each visitor counts separately |
+| "Too many accounts were created from here recently" | Sign-ups are limited to 20 an hour per address; behind a proxy set `TRUST_PROXY` (`true` for Caddy/nginx, `fly` on Fly.io) so each visitor counts separately |
 | You want a clean slate | `npm run seed:reset` |
 
 ## Project structure
@@ -404,6 +431,6 @@ This is a working prototype, not a production platform:
   - CSV line numbers count records, the way a spreadsheet numbers rows; in a text editor, a quoted field containing a newline shifts the numbers after it.
   - Lists show one page at a time: 60 recipes in the library (with *Show more*) and your latest 500 runs (the counts are always exact).
   - The model can't see values, so rely on the editor's sample check for text casing.
-- **Local only.** Everything has been run locally; nothing is deployed.
+- **Not yet deployed by us.** The production image and the Oracle kit (app + Caddy, backups) were verified on a laptop; the console steps that need an Oracle account are documented in `deploy/oracle/README.md`, not executed.
 
 Decisions, deviations from the original brief and known issues are logged in [`context.md`](context.md).

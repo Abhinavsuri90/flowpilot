@@ -1,0 +1,45 @@
+# FlowPilot on one small server: the app, with SQLite on the server's own disk,
+# behind Caddy, which obtains and renews the HTTPS certificate by itself.
+# setup.sh runs this; by hand: docker compose -f deploy/oracle/docker-compose.yml up -d --build
+name: flowpilot
+
+services:
+  app:
+    build:
+      context: ../..
+    image: flowpilot:latest
+    restart: unless-stopped
+    # Settings and secrets written by setup.sh on the first run (never committed).
+    env_file: .env
+    environment:
+      NODE_ENV: production
+      HOST: 0.0.0.0
+      PORT: "3000"
+      DATABASE_PATH: /data/flowpilot.db
+      # Caddy appends each visitor's address to X-Forwarded-For; rate limits read that entry.
+      TRUST_PROXY: "true"
+    volumes:
+      # A plain folder on the server, so backups are easy to find and copy.
+      - ${DATA_DIR:-/srv/flowpilot/data}:/data
+    expose:
+      - "3000"
+
+  caddy:
+    image: caddy:2
+    restart: unless-stopped
+    depends_on:
+      - app
+    ports:
+      - "${HTTP_PORT:-80}:80"
+      - "${HTTPS_PORT:-443}:443"
+    environment:
+      DOMAIN: ${DOMAIN:?set DOMAIN in deploy/oracle/.env}
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      # Certificates and ACME account: kept so restarts don't ask for new ones.
+      - caddy-data:/data
+      - caddy-config:/config
+
+volumes:
+  caddy-data:
+  caddy-config:

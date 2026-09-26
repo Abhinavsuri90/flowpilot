@@ -1,0 +1,16 @@
+# HTTPS in front of FlowPilot. Caddy gets a Let's Encrypt certificate for
+# DOMAIN on first start (ports 80 and 443 must be reachable) and renews it.
+{
+	servers {
+		# UDP 443 isn't opened, so don't advertise HTTP/3.
+		protocols h1 h2
+	}
+}
+
+{$DOMAIN} {
+	encode zstd gzip
+	header -Server
+	# Sets X-Forwarded-For/-Proto/-Host from the real connection; a client's own
+	# X-Forwarded-* headers are not believed (Caddy trusts no proxies by default).
+	reverse_proxy app:3000
+}
