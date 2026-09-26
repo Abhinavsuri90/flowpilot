@@ -1,5 +1,5 @@
 # FlowPilot: context
-_Last updated: 2026-09-26 12:35 · Phase 6/8 · Access, My runs and OpenRouter done; starting dashboard + system design_
+_Last updated: 2026-09-26 12:55 · Phase 7/8 · Dashboard + system design done; starting hardening, e2e, README_
 
 ## What this is
 FlowPilot turns a one-sentence description of a repetitive CSV report into a saved, versioned recipe that a workspace can run on their own files, share and fork.
@@ -7,7 +7,7 @@ Stack: TanStack Start 1.168 (React 19.3, Vite 8, Nitro 3 beta), TanStack Router/
 Run: `npm install && npm run dev` → http://localhost:3000
 
 ## Current status
-- Phase: 6 access, runs, OpenRouter. Status: done
+- Phase: 7 dashboard + system design. Status: done
 - Tests: 77/77 (`npm test`, 2026-09-26: engine 13, csv 12, validator 13, access 19, demo-loop 12, ai 8). Typecheck: pass. Build: pass (phase 1)
 - App runs with: `npm install && npm run dev` → http://localhost:3000
 
@@ -50,13 +50,18 @@ Run: `npm install && npm run dev` → http://localhost:3000
 - [x] OpenRouter provider (owner supplied a key, stored only in git-ignored `.env`): OpenAI-compatible call, strict json_schema, `provider.require_parameters: true`, `X-Title`. Evidence: `tests/ai.test.ts` "uses strict json_schema for OpenAI and for OpenRouter"; live `npm run check:model` → valid 3-step demo recipe from `anthropic/claude-sonnet-5` (first try, no repair)
 - [x] Live model comparison via OpenRouter (1 run each, 2026-09-26): claude-sonnet-5 demo 5.7 s / Gmail 2.4 s / ambiguous 3.7 s; gpt-6-luna 3.1 / 2.1 / 2.2 s; gemini-3.8-flash 14.7 / 4.6 / 4.3 s. All nine answers correct (workflow / unsupported / clarification), no repairs
 
+- [x] Dashboard: welcome hero + reuse-loop checklist, 4 stat tiles, 14-day stacked run chart (colours validated with the dataviz checker in both themes; hover/focus tooltip; table view; honest empty state), recent runs, permission-filtered activity, System design teaser. Evidence: light/dark/390px screenshots
+- [x] `/system-design`: architecture diagram with Both/Authoring/Execution highlight, 11-step request lifecycle, AI authoring loop, versioning diagram, live schema/triggers/indexes/migrations/endpoints from `/api/system`, limits, failure modes, scaling path, trade-offs, stack. Evidence: screenshots
+- [x] No horizontal page overflow at 390px on /, /library, /runs, /access, /system-design. Evidence: Playwright scrollWidth check
+
 ## In progress
-- Phase 7: dashboard, system design page, polish
+- Phase 8: hardening, Playwright e2e, README, final report
 
 ## Next steps (ordered)
-1. Dashboard: greeting hero, reuse-loop checklist, 4 stat tiles, 14-day stacked run chart (load dataviz skill first), recent runs, permission-filtered activity, System Design teaser
-2. `/system-design`: interactive architecture diagram (both / authoring / execution), request lifecycle, versioning diagram, live schema + triggers from /api/system, limits, failure modes, scaling path, trade-offs
-3. Nav + palette entries; visual pass in light/dark/mobile
+1. Playwright e2e: the full demo (Asha creates via AI draft against the mock model, runs A, shares; Vikram reruns B, changes threshold, resets, copies, regroups by sales_rep, runs B; Asha's original unchanged; Meera can't copy; Olivia gets 404)
+2. Production build + start smoke test
+3. README (launch, demo script, design decisions, limitations, OpenRouter models), docs/screenshots
+4. Final context.md pass and final report
 
 ## Decisions log
 | Date | Decision | Why | Alternatives rejected |
@@ -89,6 +94,8 @@ Run: `npm install && npm run dev` → http://localhost:3000
 | 2026-09-26 | OpenAI default model `gpt-5` | Needs a default; override with MODEL_NAME | — |
 | 2026-09-26 | OpenRouter default model `anthropic/claude-sonnet-5` | Matches the brief's intended model; correct on all live checks | `openai/gpt-6-luna` (faster/cheaper, offered as the budget option) |
 | 2026-09-26 | Tests never load `.env` (skipped under VITEST) | A developer's real key must never reach the test process | Relying on per-test env stubs only |
+| 2026-09-26 | Run chart uses dedicated tokens `--chart-ok`/`--chart-bad` (failed = #e5484d in both themes) | The dark UI red #ff6369 failed the dataviz lightness band on the dark surface; #e5484d passes both | Reusing status tokens |
+| 2026-09-26 | Diagrams: violet = authoring (AI), teal = execution, gray = shared | Same colour meaning as the rest of the app | The PDF's blue/orange |
 
 ## Deviations from the brief
 - Added optional `ANTHROPIC_BASE_URL` / `OPENAI_BASE_URL` / `OPENROUTER_BASE_URL` (defaults: the public APIs) · the browser e2e test needs a local mock model because the model call is server-side · no change when unset
@@ -131,6 +138,8 @@ DATABASE_PATH, SEED_PASSWORD, MODEL_PROVIDER, MODEL_NAME, ANTHROPIC_API_KEY, OPE
 - `src/routes/_app/`: `library.tsx`, `workflows.new.tsx`, `w.$workflowId.index.tsx`, `w.$workflowId.edit.tsx`, `access.tsx`, `runs.tsx`
 - `src/server/ai/generate.ts`: prompt, output schema, provider adapters, repair loop · `src/server/api/generate.ts`: endpoint · `scripts/check-model.ts`
 - `tests/e2e/mock-model.ts`: stand-in Anthropic endpoint for browser tests only
+- `src/components/charts.tsx`: 14-day run chart · `src/components/diagrams/`: `architecture.tsx`, `versioning.tsx`
+- `src/routes/_app/`: `index.tsx` (dashboard), `system-design.tsx`
 - `scripts/screenshots.ts`: Playwright screenshot helper
 
 ## Demo checklist

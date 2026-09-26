@@ -15,6 +15,7 @@ import { Route as AppIndexRouteImport } from './routes/_app/index'
 import { Route as AppAccessRouteImport } from './routes/_app/access'
 import { Route as AppLibraryRouteImport } from './routes/_app/library'
 import { Route as AppRunsRouteImport } from './routes/_app/runs'
+import { Route as AppSystemDesignRouteImport } from './routes/_app/system-design'
 import { Route as ApiSplatRouteImport } from './routes/api/$'
 import { Route as AppWorkflowsNewRouteImport } from './routes/_app/workflows.new'
 import { Route as AppWWorkflowIdIndexRouteImport } from './routes/_app/w.$workflowId.index'
@@ -49,6 +50,11 @@ const AppRunsRoute = AppRunsRouteImport.update({
   path: '/runs',
   getParentRoute: () => AppRoute,
 } as any)
+const AppSystemDesignRoute = AppSystemDesignRouteImport.update({
+  id: '/system-design',
+  path: '/system-design',
+  getParentRoute: () => AppRoute,
+} as any)
 const ApiSplatRoute = ApiSplatRouteImport.update({
   id: '/api/$',
   path: '/api/$',
@@ -76,6 +82,7 @@ export interface FileRoutesByFullPath {
   '/access': typeof AppAccessRoute
   '/library': typeof AppLibraryRoute
   '/runs': typeof AppRunsRoute
+  '/system-design': typeof AppSystemDesignRoute
   '/api/$': typeof ApiSplatRoute
   '/workflows/new': typeof AppWorkflowsNewRoute
   '/w/$workflowId/edit': typeof AppWWorkflowIdEditRoute
@@ -86,6 +93,7 @@ export interface FileRoutesByTo {
   '/access': typeof AppAccessRoute
   '/library': typeof AppLibraryRoute
   '/runs': typeof AppRunsRoute
+  '/system-design': typeof AppSystemDesignRoute
   '/api/$': typeof ApiSplatRoute
   '/': typeof AppIndexRoute
   '/workflows/new': typeof AppWorkflowsNewRoute
@@ -99,6 +107,7 @@ export interface FileRoutesById {
   '/_app/access': typeof AppAccessRoute
   '/_app/library': typeof AppLibraryRoute
   '/_app/runs': typeof AppRunsRoute
+  '/_app/system-design': typeof AppSystemDesignRoute
   '/api/$': typeof ApiSplatRoute
   '/_app/': typeof AppIndexRoute
   '/_app/workflows/new': typeof AppWorkflowsNewRoute
@@ -113,6 +122,7 @@ export interface FileRouteTypes {
     | '/access'
     | '/library'
     | '/runs'
+    | '/system-design'
     | '/api/$'
     | '/workflows/new'
     | '/w/$workflowId/edit'
@@ -123,6 +133,7 @@ export interface FileRouteTypes {
     | '/access'
     | '/library'
     | '/runs'
+    | '/system-design'
     | '/api/$'
     | '/'
     | '/workflows/new'
@@ -135,6 +146,7 @@ export interface FileRouteTypes {
     | '/_app/access'
     | '/_app/library'
     | '/_app/runs'
+    | '/_app/system-design'
     | '/api/$'
     | '/_app/'
     | '/_app/workflows/new'
@@ -192,6 +204,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof AppRunsRouteImport
       parentRoute: typeof AppRoute
     }
+    '/_app/system-design': {
+      id: '/_app/system-design'
+      path: '/system-design'
+      fullPath: '/system-design'
+      preLoaderRoute: typeof AppSystemDesignRouteImport
+      parentRoute: typeof AppRoute
+    }
     '/api/$': {
       id: '/api/$'
       path: '/api/$'
@@ -227,6 +246,7 @@ interface AppRouteChildren {
   AppAccessRoute: typeof AppAccessRoute
   AppLibraryRoute: typeof AppLibraryRoute
   AppRunsRoute: typeof AppRunsRoute
+  AppSystemDesignRoute: typeof AppSystemDesignRoute
   AppIndexRoute: typeof AppIndexRoute
   AppWorkflowsNewRoute: typeof AppWorkflowsNewRoute
   AppWWorkflowIdEditRoute: typeof AppWWorkflowIdEditRoute
@@ -237,6 +257,7 @@ const AppRouteChildren: AppRouteChildren = {
   AppAccessRoute: AppAccessRoute,
   AppLibraryRoute: AppLibraryRoute,
   AppRunsRoute: AppRunsRoute,
+  AppSystemDesignRoute: AppSystemDesignRoute,
   AppIndexRoute: AppIndexRoute,
   AppWorkflowsNewRoute: AppWorkflowsNewRoute,
   AppWWorkflowIdEditRoute: AppWWorkflowIdEditRoute,

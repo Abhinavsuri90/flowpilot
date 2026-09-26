@@ -50,6 +50,10 @@
   --sidebar-ink: #e7e9f3;
   --sidebar-muted: #8f97b2;
 
+  /* Run chart series, validated with the dataviz palette checks (light surface #fff). */
+  --chart-ok: #4353ff;
+  --chart-bad: #e5484d;
+
   --dot: rgb(14 20 36 / 0.09);
   --glow-brand: rgb(67 83 255 / 0.22);
   --glow-flow: rgb(14 165 160 / 0.18);
@@ -100,6 +104,10 @@
   --sidebar-line: rgb(255 255 255 / 0.07);
   --sidebar-ink: #e7e9f3;
   --sidebar-muted: #8189a6;
+
+  /* Validated separately against the dark chart surface #11152a. */
+  --chart-ok: #6e7bff;
+  --chart-bad: #e5484d;
 
   --dot: rgb(255 255 255 / 0.07);
   --glow-brand: rgb(110 123 255 / 0.25);
