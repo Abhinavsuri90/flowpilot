@@ -7,6 +7,7 @@ import {
   Archive,
   ArchiveRestore,
   ArrowLeft,
+  CalendarDays,
   CheckCircle2,
   FileSpreadsheet,
   ChevronRight,
@@ -26,7 +27,8 @@ import {
 } from 'lucide-react'
 import { api, ApiError, qk, qs } from '~/lib/api'
 import { CsvError, literalMismatch, missingColumnsMessage, parseForContract, parseTable } from '~/lib/csv'
-import { formatParameterValue, parameterUnits } from '~/lib/workflow/describe'
+import { formatParameterValue, parameterUnits, type ParameterUnit } from '~/lib/workflow/describe'
+import { formatDate, isIsoDate, todayIso, usesRelativeDates } from '~/lib/dates'
 import { compatibleSamples, fetchSample } from '~/lib/samples'
 import { exportFileName, resultWorkbook, saveBlob } from '~/lib/spreadsheet'
 import { formatBytes, formatCount, formatDuration, timeAgo } from '~/lib/format'
@@ -416,9 +418,10 @@ function defaultsFor(def: WorkflowDefinition): Record<string, string> {
   return Object.fromEntries(Object.entries(def.parameters).map(([name, p]) => [name, String(p.default)]))
 }
 
-function paramProblem(p: WorkflowDefinition['parameters'][string], raw: string, unit: 'inr' | 'number' | undefined): string | null {
+function paramProblem(p: WorkflowDefinition['parameters'][string], raw: string, unit: ParameterUnit | undefined): string | null {
   if (p.type === 'string') return raw.length > LIMITS.textMax ? `At most ${LIMITS.textMax} characters` : null
   if (raw.trim() === '') return null // empty → default
+  if (p.type === 'date') return isIsoDate(raw.trim()) ? null : 'A date like 2026-04-03'
   if (!/^\d+$/.test(raw.trim())) return unit === 'number' ? 'Whole numbers only (digits, no commas)' : 'Whole rupees only (digits, no commas)'
   const n = Number(raw)
   const ip = p as IntegerParameter
@@ -434,6 +437,9 @@ function RunPanel({ detail, busy, onRan }: { detail: WorkflowDetail; busy: boole
   const [latestCheck, setCheck] = React.useState<PreCheck | null>(null)
   const [values, setValues] = React.useState<Record<string, string>>(() => defaultsFor(def))
   const [valuesFor, setValuesFor] = React.useState(versionId)
+  // The day "last month" or "30 days ago" count from: today here, unless the runner picks another day.
+  const relativeDates = usesRelativeDates(def)
+  const [asOf, setAsOf] = React.useState(() => todayIso())
   const queryClient = useQueryClient()
 
   // Switching versions keeps the chosen file but resets parameters to that
@@ -469,6 +475,7 @@ function RunPanel({ detail, busy, onRan }: { detail: WorkflowDetail; busy: boole
       form.set('versionId', vars.versionId)
       form.set('file', file!)
       form.set('parameters', JSON.stringify(values))
+      if (relativeDates) form.set('asOf', asOf)
       return api.upload<RunDetail>('/api/runs', form)
     },
     onSuccess: async (result) => {
@@ -491,7 +498,8 @@ function RunPanel({ detail, busy, onRan }: { detail: WorkflowDetail; busy: boole
   const problems = Object.fromEntries(
     Object.entries(def.parameters).map(([name, p]) => [name, paramProblem(p, values[name] ?? '', units[name])]),
   )
-  const paramsOk = Object.values(problems).every((p) => !p)
+  const asOfOk = !relativeDates || isIsoDate(asOf)
+  const paramsOk = Object.values(problems).every((p) => !p) && asOfOk
   const fileOk = !!file && check?.kind === 'ok' && check.missing.length === 0 && check.issues.length === 0
   const samples = compatibleSamples(required)
 
@@ -620,6 +628,24 @@ function RunPanel({ detail, busy, onRan }: { detail: WorkflowDetail; busy: boole
           </div>
         ))}
 
+        {relativeDates && (
+          <div>
+            <div className="mb-1 flex items-center justify-between">
+              <label htmlFor="run-as-of" className="flex items-center gap-1.5 text-[13px] font-medium text-ink-2">
+                <CalendarDays className="size-3.5" aria-hidden /> As of
+              </label>
+              {asOf !== todayIso() && (
+                <button type="button" onClick={() => setAsOf(todayIso())} className="inline-flex items-center gap-1 text-[12px] text-brand-ink hover:underline">
+                  <RotateCcw className="size-3" /> Reset to today
+                </button>
+              )}
+            </div>
+            <Input id="run-as-of" type="date" value={asOf} aria-invalid={asOfOk ? undefined : true} onChange={(e) => setAsOf(e.target.value)} />
+            <p className={cn('mt-1 text-[12px]', asOfOk ? 'text-muted' : 'text-bad-ink')}>
+              {asOfOk ? `This recipe counts “last month” and “N days ago” from this day (${formatDate(asOf)}); it is saved with the run.` : 'A date like 2026-04-03'}
+            </p>
+          </div>
+        )}
         {Object.keys(def.parameters).length > 0 && (
           <div className="space-y-3">
             <div className="flex items-center gap-1.5 text-[13px] font-medium text-ink-2">
@@ -648,6 +674,7 @@ function RunPanel({ detail, busy, onRan }: { detail: WorkflowDetail; busy: boole
                   </div>
                   <Input
                     id={`param-${name}`}
+                    type={p.type === 'date' ? 'date' : undefined}
                     inputMode={p.type === 'integer' ? 'numeric' : undefined}
                     value={value}
                     aria-invalid={problem ? true : undefined}
@@ -657,7 +684,9 @@ function RunPanel({ detail, busy, onRan }: { detail: WorkflowDetail; busy: boole
                     {problem ??
                       (p.type === 'integer'
                         ? `${preview ?? 'Default'} · allowed ${formatParameterValue(p.min, units[name])}–${formatParameterValue(p.max, units[name])}`
-                        : `Default “${p.default}”`)}
+                        : p.type === 'date'
+                          ? `Default ${formatDate(p.default)}`
+                          : `Default “${p.default}”`)}
                   </p>
                 </div>
               )

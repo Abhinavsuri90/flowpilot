@@ -13,7 +13,7 @@ const Body = z.object({
     .trim()
     .min(LIMITS.requestMin, { error: `Describe the report in at least ${LIMITS.requestMin} characters` })
     .max(LIMITS.requestMax, { error: `Keep the description under ${LIMITS.requestMax} characters` }),
-  columns: z.record(z.string(), z.enum(COLUMN_TYPES, { error: 'Column types are "string" or "integer_inr"' })),
+  columns: z.record(z.string(), z.enum(COLUMN_TYPES, { error: 'Column types are "string", "integer_inr", "integer" or "date"' })),
 })
 
 /**

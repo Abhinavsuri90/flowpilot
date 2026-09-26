@@ -75,7 +75,7 @@ test('Advanced JSON rejects an invalid recipe and applies a valid one', async ({
   const bad = { ...ORIGINAL, steps: [{ id: 's1', type: 'sql', query: 'DROP TABLE runs' }] }
   await page.getByLabel('Definition JSON').fill(JSON.stringify(bad))
   await page.getByRole('button', { name: 'Apply to editor' }).click()
-  await expect(page.getByText('Unsupported step type "sql". Only filter, group_sum, aggregate, sort, limit and select are allowed.')).toBeVisible()
+  await expect(page.getByText('Unsupported step type "sql". Only filter, group_sum, aggregate, sort, limit, select and date_part are allowed.')).toBeVisible()
   await page.getByLabel('Definition JSON').fill(JSON.stringify(ORIGINAL))
   await page.getByRole('button', { name: 'Apply to editor' }).click()
   await expect(page.getByText('JSON applied')).toBeVisible()
@@ -436,4 +436,35 @@ test('Excel files: the browser converts the chosen sheet, runs it, and downloads
     buffer: Buffer.from('region,status,amount\nNorth,paid,5\n'),
   })
   await expect(page.getByText('This file could not be read as a spreadsheet. Save it as .xlsx or CSV and try again.')).toBeVisible()
+})
+
+test('dates: the monthly example runs as of a chosen day, and the editor drafts a by-month recipe from a dated sample', async ({ page }) => {
+  await signIn(page, 'Vikram')
+  const found = await (await page.request.get('/api/workflows?scope=mine&q=Monthly')).json()
+  const id = found.items[0].id as string
+  await open(page, `/w/${id}`)
+  await runFile(page, F + 'orders_dated.csv')
+  await page.getByLabel('As of').fill('2026-09-27')
+  await expect(page.getByText(/counts “last month” and “N days ago” from this day \(27 Sep 2026\)/)).toBeVisible()
+  await page.getByRole('button', { name: 'Run recipe' }).click()
+  const table = page.getByRole('table', { name: /Result of run/ })
+  await expect(table.locator('tbody tr')).toHaveCount(6)
+  await expect(table.locator('tbody tr').first()).toContainText('2026-04')
+  await expect(table.locator('tbody tr').last()).toContainText('2026-09')
+  await expect(page.getByText(/the start of the month 5 months ago \(1 Apr 2026\)/).first()).toBeVisible()
+
+  // A dated sample suggests the date type; the AI draft (mock) uses a relative date and a period; the cards explain both.
+  await open(page, '/workflows/new')
+  await page.getByRole('button', { name: 'Use orders_dated.csv' }).click()
+  await expect(page.getByLabel('Type of ordered_on')).toHaveValue('date')
+  await page.getByLabel('Describe the report').fill('Paid revenue by month for the last 6 months')
+  await page.getByRole('button', { name: 'Generate steps' }).click()
+  await expect(page.getByText('Add month: the month of ordered_on').first()).toBeVisible()
+  await expect(page.getByText(/the start of the month 5 months ago · run today, that is \d{1,2} \w{3} \d{4}/)).toBeVisible()
+  await expect(page.getByRole('button', { name: 'Relative to run day', pressed: true })).toBeVisible()
+  // Switch that filter to a fixed date by hand and see the date input.
+  await page.getByRole('button', { name: 'Fixed date' }).click()
+  await page.getByPlaceholder('YYYY-MM-DD').fill('2026-04-01')
+  await expect(page.getByText('= 1 Apr 2026')).toBeVisible()
+  await expect(page.getByText('Keep rows where ordered_on is on or after 1 Apr 2026').first()).toBeVisible()
 })

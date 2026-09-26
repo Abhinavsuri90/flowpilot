@@ -15,6 +15,22 @@ type Columns = Record<string, ColumnType>
 const SALES: Columns = { status: 'string', region: 'string', sales_rep: 'string', amount: 'integer_inr' }
 const MARKETING: Columns = { status: 'string', channel: 'string', spend: 'integer_inr' }
 const TWO_REPS: Columns = { status: 'string', sales_rep: 'string', account_rep: 'string', amount: 'integer_inr' }
+const ORDERS: Columns = { ordered_on: 'date', status: 'string', region: 'string', sales_rep: 'string', amount: 'integer_inr' }
+const relative = (d: WorkflowDefinition, column: string, operator: string[], unit: string, offset: number, edge?: string) =>
+  d.steps.some(
+    (s) =>
+      s.type === 'filter' &&
+      s.column === column &&
+      operator.includes(s.operator) &&
+      'relative' in s.value &&
+      s.value.relative.unit === unit &&
+      s.value.relative.offset === offset &&
+      (!edge || s.value.relative.edge === edge),
+  )
+const period = (d: WorkflowDefinition, column: string, part: string) => d.steps.some((s) => s.type === 'date_part' && s.column === column && s.part === part)
+const groupedBy = (d: WorkflowDefinition, column: string) =>
+  d.steps.some((s) => (s.type === 'group_sum' && s.groupBy === column) || (s.type === 'aggregate' && s.groupBy.includes(column)))
+const dateParam = (d: WorkflowDefinition) => Object.values(d.parameters).some((p) => p.type === 'date')
 
 const filter = (d: WorkflowDefinition, column: string, operator: string[], value?: (v: unknown) => boolean) =>
   d.steps.some(
@@ -23,7 +39,13 @@ const filter = (d: WorkflowDefinition, column: string, operator: string[], value
       s.column === column &&
       operator.includes(s.operator) &&
       (!value ||
-        ('literal' in s.value ? value(s.value.literal) : 'parameter' in s.value ? value(d.parameters[s.value.parameter]?.default) : value(s.value.list))),
+        ('literal' in s.value
+          ? value(s.value.literal)
+          : 'parameter' in s.value
+            ? value(d.parameters[s.value.parameter]?.default)
+            : 'list' in s.value
+              ? value(s.value.list)
+              : value(s.value.relative))),
   )
 const groupSum = (d: WorkflowDefinition, groupBy: string, valueColumn: string) =>
   d.steps.some((s) => s.type === 'group_sum' && s.groupBy === groupBy && s.valueColumn === valueColumn)
@@ -168,6 +190,58 @@ const CASES: Case[] = [
     columns: SALES,
     kind: 'workflow',
     check: (d) => groupSum(d, 'region', 'amount') && aliasFilter(d, ['lt', 'lte']) && param(d, 60000),
+  },
+  {
+    name: 'dates: last 30 days',
+    request: 'Paid orders from the last 30 days.',
+    columns: ORDERS,
+    kind: 'workflow',
+    check: (d) => filter(d, 'status', ['eq'], (v) => v === 'paid') && relative(d, 'ordered_on', ['gte', 'gt'], 'day', -30),
+  },
+  {
+    name: 'dates: by month',
+    request: 'Total paid amount per month.',
+    columns: ORDERS,
+    kind: 'workflow',
+    check: (d) => filter(d, 'status', ['eq'], (v) => v === 'paid') && period(d, 'ordered_on', 'month') && totalPer(d, 'month', 'amount') || (period(d, 'ordered_on', 'month') && groupedBy(d, d.steps.find((s) => s.type === 'date_part')!.type === 'date_part' ? (d.steps.find((s) => s.type === 'date_part') as { as: string }).as : 'month')),
+  },
+  {
+    name: 'dates: last month by region',
+    request: 'Revenue by region for last month, paid orders only.',
+    columns: ORDERS,
+    kind: 'workflow',
+    check: (d) =>
+      filter(d, 'status', ['eq'], (v) => v === 'paid') &&
+      relative(d, 'ordered_on', ['gte'], 'month', -1, 'start') &&
+      relative(d, 'ordered_on', ['lte', 'lt'], 'month', -1) &&
+      totalPer(d, 'region', 'amount'),
+  },
+  {
+    name: 'dates: since a fixed day',
+    request: 'Orders placed on or after 1 April 2026 with amount above 50000.',
+    columns: ORDERS,
+    kind: 'workflow',
+    check: (d) => filter(d, 'ordered_on', ['gte'], (v) => v === '2026-04-01') && filter(d, 'amount', ['gt'], (v) => v === 50000),
+  },
+  {
+    name: 'dates: this quarter per rep',
+    request: 'This quarter so far: paid revenue per sales rep, highest first.',
+    columns: ORDERS,
+    kind: 'workflow',
+    check: (d) => filter(d, 'status', ['eq'], (v) => v === 'paid') && relative(d, 'ordered_on', ['gte'], 'quarter', 0, 'start') && totalPer(d, 'sales_rep', 'amount') && sortedDesc(d),
+  },
+  {
+    name: 'dates: configurable start',
+    request: 'Count of orders per week starting from a configurable date, default 2026-01-01.',
+    columns: ORDERS,
+    kind: 'workflow',
+    check: (d) => dateParam(d) && filter(d, 'ordered_on', ['gte']) && period(d, 'ordered_on', 'week') && aggregate(d, ['week'], 'count'),
+  },
+  {
+    name: 'dates: not a date column',
+    request: 'Orders from the last 7 days.',
+    columns: SALES,
+    kind: 'unsupported',
   },
 ]
 

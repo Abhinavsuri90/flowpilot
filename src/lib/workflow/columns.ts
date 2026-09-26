@@ -32,6 +32,9 @@ export function columnsAfter(step: Step, before: Column[]): Column[] {
       ]
     case 'select':
       return step.columns.map((c) => ({ name: c.as ?? c.column, type: typeOf(before, c.column) }))
+    case 'date_part':
+      // The period is added beside the existing columns.
+      return [...before.filter((c) => c.name !== step.as), { name: step.as, type: 'string' }]
   }
 }
 

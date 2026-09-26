@@ -18,7 +18,8 @@ import { recordEvent } from '../events'
 import { canReadRun, decide } from '../../lib/policy'
 import { CsvError, parseForContract, toCsv } from '../../lib/csv'
 import { execute, ExecutionError } from '../../lib/workflow/execute'
-import { summarize } from '../../lib/workflow/describe'
+import { AS_OF_KEY, summarize } from '../../lib/workflow/describe'
+import { isIsoDate, todayIso, usesRelativeDates } from '../../lib/dates'
 import { resolveParameters, validateDefinition } from '../../lib/workflow/validate'
 import { LIMITS } from '../../lib/workflow/schema'
 import type { RunDetail, RunList, RunStatus } from '../../lib/types'
@@ -78,6 +79,16 @@ export async function create({ db, user, request }: AuthedContext): Promise<Resp
     }
   }
 
+  // 6b. The day relative dates ("last month", "30 days ago") count from; today unless the runner says otherwise
+  const rawAsOf = form.get('asOf')
+  let asOf = todayIso(new Date(), true)
+  if (typeof rawAsOf === 'string' && rawAsOf.trim()) {
+    if (!isIsoDate(rawAsOf.trim())) {
+      throw invalid('asOf must be a date like 2026-04-03.', [{ path: 'asOf', message: 'asOf must be a date like 2026-04-03' }], 'PARAMETERS_INVALID')
+    }
+    asOf = rawAsOf.trim()
+  }
+
   // 7. Re-validate the stored definition
   const validation = validateDefinition(JSON.parse(version.definition))
   if (!validation.ok) {
@@ -98,12 +109,12 @@ export async function create({ db, user, request }: AuthedContext): Promise<Resp
     throw err
   }
 
-  // 10. Record a running row that pins version, runner and parameters
+  // 10. Record a running row that pins version, runner and parameters (plus the as-of day when it matters)
   const runId = insertRun(db, {
     versionId: version.id,
     workflowId: wf.id,
     runnerId: user.id,
-    parameters: params.values,
+    parameters: usesRelativeDates(def) ? { ...params.values, [AS_OF_KEY]: asOf } : params.values,
     inputName: cleanFileName(file.name),
     inputRows: parsed.rows.length,
   })
@@ -112,8 +123,8 @@ export async function create({ db, user, request }: AuthedContext): Promise<Resp
   const started = performance.now()
   const elapsed = () => Math.round((performance.now() - started) * 100) / 100
   try {
-    const result = execute(def, parsed.rows, params.values)
-    const summary = summarize(def, params.values, result.rows.length)
+    const result = execute(def, parsed.rows, params.values, { asOf })
+    const summary = summarize(def, params.values, result.rows.length, asOf)
     finishRunSucceeded(db, runId, {
       result: { columns: result.columns, rows: result.rows, ignoredColumns: parsed.ignoredColumns },
       stepLog: result.stepLog,

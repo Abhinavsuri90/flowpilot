@@ -1,5 +1,5 @@
 # FlowPilot: context
-_Last updated: 2026-09-27 · Phase 16 (Excel files) done; phase 17 (dates) starting · Free hosting kit for Oracle Cloud verified on a laptop; the owner runs the console steps_
+_Last updated: 2026-09-27 · Phase 17 (dates) done; phase 18 (templates, charts, landing page) starting · Free hosting kit for Oracle Cloud verified on a laptop; the owner runs the console steps_
 
 ## What this is
 FlowPilot turns a one-sentence description of a repetitive CSV report into a saved, versioned recipe that a workspace can run on their own files, share and fork. AI drafts; a deterministic server executes; one access policy guards every request.
@@ -7,11 +7,21 @@ Stack: TanStack Start 1.168 (React 19.3, Vite 8, Nitro 3 beta), TanStack Router/
 Run: `npm install && npm run dev` → http://localhost:3000 (demo password `flowpilot-demo`)
 
 ## Current status
-- Phase: 16 done (owner: "make it the best ever"); phase 17 dates next
-- Tests: 144/144 (`npm test`: engine 13, csv 18, validator 13, access 20, demo-loop 12, ai 10, hardening 15, accounts 17, language 14, governance 4, spreadsheet 8) · Browser 27/27 (`npm run test:e2e`: demo 4, features 16, accounts 5, a11y 2) · Smoke 71/71 checks over all 42 endpoints (`npm run smoke`, local dev) · Model eval 21/21 · Typecheck: pass (strict unused) · Build: pass
+- Phase: 17 done (owner: "make it the best ever"); phase 18 templates gallery + result charts + landing page next
+- Tests: 157/157 (`npm test`: engine 13, csv 18, validator 13, access 20, demo-loop 12, ai 12, hardening 15, accounts 17, language 14, governance 4, spreadsheet 8, dates 11) · Browser 28/28 (`npm run test:e2e`: demo 4, features 17, accounts 5, a11y 2) · Smoke 71/71 checks over all 42 endpoints (`npm run smoke`, local dev) · Model eval 28/28 (median 3.6 s) · Typecheck: pass (strict unused) · Build: pass
 - App runs with: `npm install && npm run dev` → http://localhost:3000
 
 ## Done (with evidence)
+Phase 17: dates in the recipe language (evidence: `tests/dates.test.ts` 11, `tests/ai.test.ts` +2, browser test "dates: the monthly example runs as of a chosen day…", `npm run eval:model` 28/28 incl. 7 date cases on the first run, smoke 71/71)
+- [x] Column type `date`: cells read strictly by `src/lib/dates.ts` `checkDate` (ISO with optional time, `3 Apr 2026`, `03-Apr-2026`, `April 3, 2026`, `2026/04/03`, and day/month/year digits only when exactly one reading is a real date; `03/04/2026` is reported with both readings; two-digit years refused); stored as `YYYY-MM-DD` text so text order is calendar order; inferred from samples
+- [x] Calendar maths on day numbers (Hinnant's civil algorithms), never on Date objects: `relativeDate` (day / week from Monday / month / quarter / year, start or end, offset), `datePart` (`2026`, `2026-Q3`, `2026-09`, ISO `2026-W39`), leap years and month ends tested
+- [x] Filters on dates: fixed literal (`YYYY-MM-DD`), `date` parameters (chosen per run), or `{ relative: { unit, offset, edge } }` counted from the run day; operators read "is before / on or after…"; `contains`/`in` refused; earliest/latest (`min`/`max`) of a date column in summaries; sum/avg refused with a hint
+- [x] New step `date_part` (editor label "Period from a date"): adds a text period column beside the others; validator hints ("Add a period from it first, then group by that") when grouping by a raw date
+- [x] "As of" day: the run panel sends `asOf` (browser's local day by default, editable); the server validates it, passes it to the engine and the summary (`ordered_on ≥ 30 days ago (28 Aug 2026)`), and stores it as `as_of` beside the run's parameters only when the recipe uses relative dates (`parametersText` → "as of 27 Sep 2026")
+- [x] Editor: date column type, date inputs, "Relative to run day" value mode with `[start of] [this|last|next|N ago|N from now] [unit]` and a live "run today, that is 1 Apr 2026" preview, date parameters with date defaults, the period step card
+- [x] AI: schema and prompt for date literals, relative dates, date parameters and `date_part`; "dates" removed from the unsupported list, but date requests on a file without a date column are refused ("say the column must be declared as a date"); lenient parse + repair path tested
+- [x] Sample `orders_dated.csv` (22 orders Jan–Sep 2026) and seed example "Monthly paid revenue, last six months" (Vikram, Sales); tests that counted seed recipes updated (team count 4, audit CSV 1+6, Sales titles)
+
 Phase 16: Excel in, Excel out (evidence: `tests/spreadsheet.test.ts` 8 on xlsx/xls/xlsb/ods files written by SheetJS; browser test "Excel files: the browser converts the chosen sheet…" incl. the download read back with SheetJS; `npm run build` → `xlsx-*.js` 480 KB is its own chunk, 0 references in the main bundle)
 - [x] `src/lib/spreadsheet.ts`: workbooks (`.xlsx .xlsm .xlsb .xls .ods`) become CSV **in the browser** (SheetJS 0.20.3 from the SheetJS CDN tarball, since npm's 0.18.5 has known CVEs; imported lazily): raw numbers (15 significant digits, no separators), ISO dates from the Date's UTC fields (a probe showed SheetJS puts the sheet's own date/time there), TRUE/FALSE, blank rows and empty trailing columns dropped; 4 MB cap; only zip/CFB magic bytes accepted (a CSV renamed .xlsx is refused, SheetJS would otherwise read it as text); reading stops at 10,002 rows; sheet-named errors (empty, over 5,000 rows, over 1 MiB as CSV, password-protected)
 - [x] `FileDrop` opens workbooks itself: "Reading the workbook…", sheet picker when there are several (re-converts and re-checks), "converted in your browser; never uploaded" note, inline errors; callers still only ever get a CSV `File` (named after the workbook, so run history shows `sales.xlsx`); server untouched
@@ -125,12 +135,12 @@ Phase 8 hardening
 - [x] README: quick start, AI setup, OpenRouter model comparison, demo script, architecture, security, tests, limitations
 
 ## In progress
-- Phase 17: dates (a `date` column type with strict parsing, date filters incl. relative "last N days", a `date_part` step for month/quarter/year grouping, AI + eval). Then phase 18 templates gallery + result charts + public landing page, phase 19 personal API tokens for automation
+- Phase 18: a templates gallery on New recipe (start from a hand-written recipe with a matching sample), a chart view of results (bars per group, validated palette, table view kept), and a public landing page for signed-out visitors. Then phase 19 personal API tokens for automation
 
 ## Next steps (ordered)
 1. Owner: Oracle Cloud account (card for verification only) → Ubuntu 24.04 A1.Flex VM → security list TCP 80/443 → `deploy/oracle/push.sh ubuntu@<ip>` → `npm run smoke -- --base https://<ip-dashes>.sslip.io` (steps in `deploy/oracle/README.md`)
 2. Owner: rotate the OpenRouter key that was shared in chat (enter the new one when `push.sh` asks, or later in the server's `deploy/oracle/.env`)
-3. Phases 17–19 (see In progress), each with tests, smoke, docs and a phase commit
+3. Phases 18–19 (see In progress), each with tests, smoke, docs and a phase commit
 4. Optional, for the resume: a public GitHub repo (`brew install gh`, `gh auth login`, then `gh repo create flowpilot --public --source . --push`)
 
 ## Decisions log
@@ -201,6 +211,10 @@ Phase 8 hardening
 | 2026-09-27 | Workbooks converted to CSV in the browser; the server stays CSV-only | One input contract, no archive parsing on the server, the workbook never leaves the browser | Server-side xlsx parsing; a hand-written xlsx reader (no .xls, more risk) |
 | 2026-09-27 | SheetJS 0.20.3 from cdn.sheetjs.com (URL dependency), loaded lazily | npm's `xlsx` is 0.18.5 with CVE-2023-30533 / CVE-2024-22363; the chunk (480 KB) only loads when a workbook is picked | `xlsx@0.18.5`, exceljs (Node-oriented, heavier) |
 | 2026-09-27 | Excel export keeps numbers as numbers and writes text cells only | So Excel can total the results; text is never evaluated as a formula, so no `'` prefix needed | Formatted strings; CSV-only |
+| 2026-09-27 | Dates are `YYYY-MM-DD` text in rows; maths on day numbers | Text order = calendar order for sort/min/max; no time zones anywhere; results and CSV/Excel exports stay readable | Day-number integers (needs formatting everywhere); Date objects (time zone drift, as the SheetJS probe showed) |
+| 2026-09-27 | Numeric day/month/year cells read only when exactly one reading is a real date; ambiguous cells reported with both readings | "Nothing is guessed": a US file must not be silently read as Indian dates or vice versa; the Excel upload path carries exact dates anyway | Assuming day-first (Indian convention); a per-column format setting |
+| 2026-09-27 | Relative dates = `{unit, offset, edge}` resolved from an "as of" day the runner can set; stored as `as_of` in the run's parameters | Reproducible reruns ("as of 27 Sep 2026" is visible), and "this month" / "last 30 days" / "year to date" all reduce to one shape | Named presets only; server-only "today" (not reproducible, wrong day near midnight in IST) |
+| 2026-09-27 | `date_part` appends the period column (keeps every column) | Group by month while still summarizing amounts or taking the last order date; matches how analysts add a helper column | Replacing the date column in place |
 
 ## Deviations from the brief
 - Added optional `ANTHROPIC_BASE_URL` / `OPENAI_BASE_URL` / `OPENROUTER_BASE_URL` · the browser test needs a local mock model (the model call is server-side) · no change when unset
@@ -234,15 +248,15 @@ Phase 8 hardening
 DATABASE_PATH, SEED_PASSWORD, DEMO_MODE, REGISTRATION, APP_URL, TRUST_PROXY (`true` behind Caddy/nginx, `fly` on Fly.io), RESEND_API_KEY, MAIL_FROM, MODEL_PROVIDER, MODEL_NAME, ANTHROPIC_API_KEY, OPENAI_API_KEY, OPENROUTER_API_KEY (+ optional ANTHROPIC_BASE_URL, OPENAI_BASE_URL, OPENROUTER_BASE_URL). The local git-ignored `.env` sets MODEL_PROVIDER=openrouter and OPENROUTER_API_KEY.
 
 ## File map
-- `src/lib/workflow/`: `schema.ts` (contract, LIMITS, 6 step types) · `columns.ts` (shape rule) · `validate.ts` (validateDefinition, analyze, resolveParameters) · `execute.ts` (engine) · `describe.ts` (INR, steps, summary, parameter units) · `draft.ts` (editor model) · `examples.ts`
-- `src/lib/`: `csv.ts` · `spreadsheet.ts` (workbook → CSV in the browser, results → .xlsx) · `policy.ts` (pure access policy + matrix) · `account.ts` (name/email/password rules) · `api.ts` (client + query keys) · `types.ts` · `format.ts` · `session.ts` (server fns) · `demo.ts` · `redirect.ts` (safe post-login paths)
+- `src/lib/workflow/`: `schema.ts` (contract, LIMITS, 7 step types, 4 column types) · `columns.ts` (shape rule) · `validate.ts` (validateDefinition, analyze, resolveParameters) · `execute.ts` (engine) · `describe.ts` (INR, steps, summary, parameter units) · `draft.ts` (editor model) · `examples.ts`
+- `src/lib/`: `csv.ts` · `dates.ts` (strict date reading, day-number calendar maths, relative dates, periods) · `spreadsheet.ts` (workbook → CSV in the browser, results → .xlsx) · `policy.ts` (pure access policy + matrix) · `account.ts` (name/email/password rules) · `api.ts` (client + query keys) · `types.ts` · `format.ts` · `session.ts` (server fns) · `demo.ts` · `redirect.ts` (safe post-login paths)
 - `src/server/`: `migrations.ts` (schema + triggers, 3 migrations) · `db.ts` · `auth.ts` (sessions, throttle) · `accounts.ts` (users, workspaces, invites, resets) · `repo.ts` (access-aware queries, stale reaper) · `events.ts` (audit + feed) · `config.ts` (env settings, client address) · `mail.ts` · `boot.ts` (first-request setup) · `seed.ts` · `http.ts` · `env.ts` · `ids.ts`
 - `src/server/api/`: `router.ts` (dispatcher, 40 routes) · `auth.ts` · `account.ts` (register, resets, me, workspaces) · `invites.ts` · `workflows.ts` · `runs.ts` · `generate.ts` · `workspace.ts` · `dashboard.ts` · `system.ts`
 - `src/server/ai/`: `config.ts` (providers, env) · `generate.ts` (prompt, schema, adapters, repair loop)
 - `src/routes/`: `__root.tsx` · `login.tsx` · `signup.tsx` · `invite.$token.tsx` · `forgot-password.tsx` · `reset-password.$token.tsx` · `_app.tsx` (guard + shell) · `_app/{index,library,runs,access,account,system-design,workflows.new,w.$workflowId.index,w.$workflowId.edit}.tsx` · `_app/$.tsx` (in-app 404) · `api/$.ts`
 - `src/components/`: `ui.tsx` (incl. `Menu`) · `shell.tsx` (workspace switcher, create-workspace dialog) · `auth-layout.tsx` (sign-in pages layout, password input) · `command.tsx` · `editor.tsx` · `results.tsx` · `charts.tsx` · `workflow-bits.tsx` · `file-drop.tsx` · `share-dialog.tsx` · `fork-dialog.tsx` · `access-panel.tsx` · `states.tsx` · `toast.tsx` · `logo.tsx` · `theme.ts` · `diagrams/{architecture,versioning}.tsx`
 - `src/start.ts`: global request middleware (security headers, server-fn CSRF)
-- `tests/`: 11 Vitest suites (incl. `hardening`, `accounts`, `language`, `governance`, `spreadsheet`) + `helpers/` · `tests/e2e/`: `demo.spec.ts`, `features.spec.ts`, `accounts.spec.ts`, `a11y.spec.ts`, `mock-model.ts` · `playwright.config.ts`
+- `tests/`: 12 Vitest suites (incl. `hardening`, `accounts`, `language`, `governance`, `spreadsheet`, `dates`) + `helpers/` · `tests/e2e/`: `demo.spec.ts`, `features.spec.ts`, `accounts.spec.ts`, `a11y.spec.ts`, `mock-model.ts` · `playwright.config.ts`
 - `scripts/`: `seed.ts`, `check-model.ts`, `eval-model.ts`, `smoke.ts`, `screenshots.ts`, `backup-db.mjs` (also in the image), `make-fixtures.mjs` (xlsx fixtures) · `fixtures/`, `public/samples/`, `docs/system-design.md`, `docs/screenshots/`
 - `deploy/oracle/`: `README.md` (console walkthrough) · `docker-compose.yml` · `Caddyfile` · `setup.sh` · `backup.sh` · `push.sh` · `Dockerfile`, `docker-entrypoint.sh`, `.dockerignore`, `fly.toml` at the root
 - `src/lib/samples.ts` (sample catalogue) · `src/server/ratelimit.ts` (drafting limits)

@@ -89,6 +89,30 @@ export const TOP_REPS_BY_REVENUE: WorkflowDefinition = {
   output: { format: 'table' },
 }
 
+/** Seed example in Sales (owner Vikram): dates. Paid orders of the last six months, totalled per month. */
+export const MONTHLY_PAID_REVENUE: WorkflowDefinition = {
+  schemaVersion: 1,
+  input: { format: 'csv', columns: { ordered_on: 'date', status: 'string', amount: 'integer_inr' } },
+  parameters: {},
+  steps: [
+    { id: 's1', type: 'filter', column: 'status', operator: 'eq', value: { literal: 'paid' } },
+    { id: 's2', type: 'filter', column: 'ordered_on', operator: 'gte', value: { relative: { unit: 'month', offset: -5, edge: 'start' } } },
+    { id: 's3', type: 'date_part', column: 'ordered_on', part: 'month', as: 'month' },
+    {
+      id: 's4',
+      type: 'aggregate',
+      groupBy: ['month'],
+      measures: [
+        { op: 'sum', column: 'amount', as: 'revenue' },
+        { op: 'count', as: 'orders' },
+        { op: 'max', column: 'ordered_on', as: 'last_order' },
+      ],
+    },
+    { id: 's5', type: 'sort', by: [{ column: 'month', direction: 'asc' }] },
+  ],
+  output: { format: 'table' },
+}
+
 export const SEED_EXAMPLES = [
   {
     key: 'paid_by_rep',
@@ -105,6 +129,14 @@ export const SEED_EXAMPLES = [
     title: 'Top sales reps by paid revenue',
     description: 'Ranks reps by paid revenue, with their order count and average deal size. Choose how many to show on each run.',
     definition: TOP_REPS_BY_REVENUE,
+  },
+  {
+    key: 'monthly_revenue',
+    owner: 'vikram',
+    workspace: 'Sales',
+    title: 'Monthly paid revenue, last six months',
+    description: 'Paid orders since the start of the month five months ago, totalled per month with the order count and the last order date. Counts from the day you run it.',
+    definition: MONTHLY_PAID_REVENUE,
   },
   {
     key: 'live_spend',

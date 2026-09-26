@@ -5,6 +5,7 @@ import {
   ArrowRight,
   BookOpen,
   Calculator,
+  CalendarRange,
   CheckCircle2,
   CircleDashed,
   Columns3,
@@ -94,6 +95,7 @@ const STEP_ICONS: Record<string, typeof Filter> = {
   sort: ArrowDownWideNarrow,
   limit: ListStart,
   select: Columns3,
+  date_part: CalendarRange,
 }
 
 export function StepIcon({ type, className }: { type: string; className?: string }) {

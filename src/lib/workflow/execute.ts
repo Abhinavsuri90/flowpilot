@@ -1,9 +1,11 @@
 import { inputColumns } from './validate'
 import { columnsAfter } from './columns'
+import { datePart, relativeDate, todayIso } from '../dates'
 import {
   LIMITS,
   type AggregateStep,
   type Column,
+  type DatePartStep,
   type FilterStep,
   type GroupSumStep,
   type LimitStep,
@@ -39,6 +41,8 @@ export type ExecuteOptions = {
   deadlineMs?: number
   /** Clock in milliseconds; injectable for tests. */
   now?: () => number
+  /** The day relative dates count from (YYYY-MM-DD); defaults to today. */
+  asOf?: string
 }
 
 const CHECK_EVERY = 1024
@@ -64,14 +68,35 @@ function compareCells(a: string | number | undefined, b: string | number | undef
   return compareCodePoints(String(a ?? ''), String(b ?? ''))
 }
 
-function resolveScalar(value: StepValue, params: ParameterValues, stepId: string): string | number {
+function resolveScalar(value: StepValue, params: ParameterValues, stepId: string, asOf: string): string | number {
   if ('literal' in value) return value.literal
   if ('parameter' in value) {
     const resolved = params[value.parameter]
     if (resolved === undefined) throw new ExecutionError('EXECUTION_ERROR', `Step ${stepId}: parameter "${value.parameter}" has no value`)
     return resolved
   }
+  if ('relative' in value) return relativeDate(asOf, value.relative)
   throw new ExecutionError('EXECUTION_ERROR', `Step ${stepId}: a list is only allowed with "is one of"`)
+}
+
+/** Dates are ISO text, so text order is calendar order. */
+function dateComparator(operator: Exclude<Operator, 'in'>, target: string): (cell: string | number | undefined) => boolean {
+  switch (operator) {
+    case 'eq':
+      return (cell) => cell === target
+    case 'neq':
+      return (cell) => cell !== target
+    case 'lt':
+      return (cell) => typeof cell === 'string' && cell < target
+    case 'lte':
+      return (cell) => typeof cell === 'string' && cell <= target
+    case 'gt':
+      return (cell) => typeof cell === 'string' && cell > target
+    case 'gte':
+      return (cell) => typeof cell === 'string' && cell >= target
+    case 'contains':
+      return () => false
+  }
 }
 
 function comparator(operator: Exclude<Operator, 'in'>, target: string | number): (cell: string | number | undefined) => boolean {
@@ -96,7 +121,7 @@ function comparator(operator: Exclude<Operator, 'in'>, target: string | number):
   }
 }
 
-function runFilter(step: FilterStep, rows: Row[], columns: Column[], params: ParameterValues, check: () => void): Row[] {
+function runFilter(step: FilterStep, rows: Row[], columns: Column[], params: ParameterValues, asOf: string, check: () => void): Row[] {
   const column = columns.find((c) => c.name === step.column)
   if (!column) throw new ExecutionError('EXECUTION_ERROR', `Step ${step.id}: column "${step.column}" is not available`)
 
@@ -105,8 +130,13 @@ function runFilter(step: FilterStep, rows: Row[], columns: Column[], params: Par
     if (!('list' in step.value)) throw new ExecutionError('EXECUTION_ERROR', `Step ${step.id}: "is one of" needs a list of values`)
     const allowed = new Set(step.value.list)
     test = (cell) => typeof cell === 'string' && allowed.has(cell)
+  } else if (column.type === 'date') {
+    const target = resolveScalar(step.value, params, step.id, asOf)
+    if (typeof target !== 'string') throw new ExecutionError('EXECUTION_ERROR', `Step ${step.id}: "${step.column}" is a date column but the value is a number`)
+    test = dateComparator(step.operator, target)
   } else {
-    const target = resolveScalar(step.value, params, step.id)
+    const target = resolveScalar(step.value, params, step.id, asOf)
+    if ('relative' in step.value) throw new ExecutionError('EXECUTION_ERROR', `Step ${step.id}: a relative date only works on a date column`)
     const numeric = column.type !== 'string'
     if (numeric && typeof target !== 'number')
       throw new ExecutionError('EXECUTION_ERROR', `Step ${step.id}: "${step.column}" is a number column but the value is text`)
@@ -147,7 +177,8 @@ export function roundedAverage(sum: number, count: number): number {
   return Number((2n * BigInt(sum) + BigInt(count)) / (2n * BigInt(count)))
 }
 
-type Accumulator = { key: Array<string | number>; count: number; figures: Array<{ sum: number; min: number; max: number; n: number }> }
+type Figure = { sum: number; min: number | string | undefined; max: number | string | undefined; n: number }
+type Accumulator = { key: Array<string | number>; count: number; figures: Figure[] }
 
 function runAggregate(step: AggregateStep, rows: Row[], check: () => void): Row[] {
   const groups = new Map<string, Accumulator>()
@@ -158,20 +189,26 @@ function runAggregate(step: AggregateStep, rows: Row[], check: () => void): Row[
     const id = JSON.stringify(key)
     let acc = groups.get(id)
     if (!acc) {
-      acc = { key, count: 0, figures: step.measures.map(() => ({ sum: 0, min: Infinity, max: -Infinity, n: 0 })) }
+      acc = { key, count: 0, figures: step.measures.map(() => ({ sum: 0, min: undefined, max: undefined, n: 0 })) }
       groups.set(id, acc)
     }
     acc.count++
     step.measures.forEach((measure, m) => {
       if (measure.op === 'count') return
       const value = row[measure.column]
-      if (typeof value !== 'number' || !Number.isInteger(value))
-        throw new ExecutionError('EXECUTION_ERROR', `Step ${step.id}: "${measure.column}" is not a whole number`)
       const figure = acc!.figures[m]!
-      figure.sum += value
-      if (!Number.isSafeInteger(figure.sum)) throw new ExecutionError('EXECUTION_ERROR', `Step ${step.id}: the total is too large to add up exactly`)
-      figure.min = Math.min(figure.min, value)
-      figure.max = Math.max(figure.max, value)
+      if (typeof value === 'string') {
+        // Dates: only the earliest and latest make sense.
+        if (measure.op !== 'min' && measure.op !== 'max')
+          throw new ExecutionError('EXECUTION_ERROR', `Step ${step.id}: "${measure.column}" is not a number`)
+      } else {
+        if (typeof value !== 'number' || !Number.isInteger(value))
+          throw new ExecutionError('EXECUTION_ERROR', `Step ${step.id}: "${measure.column}" is not a whole number`)
+        figure.sum += value
+        if (!Number.isSafeInteger(figure.sum)) throw new ExecutionError('EXECUTION_ERROR', `Step ${step.id}: the total is too large to add up exactly`)
+      }
+      if (figure.min === undefined || compareCells(value, figure.min) < 0) figure.min = value
+      if (figure.max === undefined || compareCells(value, figure.max) > 0) figure.max = value
       figure.n++
     })
   }
@@ -198,8 +235,8 @@ function runAggregate(step: AggregateStep, rows: Row[], check: () => void): Row[
             : measure.op === 'avg'
               ? roundedAverage(figure.sum, figure.n)
               : measure.op === 'min'
-                ? figure.min
-                : figure.max
+                ? (figure.min ?? 0)
+                : (figure.max ?? 0)
     })
     return out
   })
@@ -221,6 +258,18 @@ function runLimit(step: LimitStep, rows: Row[], params: ParameterValues): Row[] 
   if (typeof n !== 'number' || !Number.isInteger(n) || n < 0)
     throw new ExecutionError('EXECUTION_ERROR', `Step ${step.id}: the number of rows to keep must be a whole number`)
   return rows.slice(0, n)
+}
+
+function runDatePart(step: DatePartStep, rows: Row[], check: () => void): Row[] {
+  const out: Row[] = []
+  for (let i = 0; i < rows.length; i++) {
+    if (i % CHECK_EVERY === CHECK_EVERY - 1) check()
+    const row = rows[i]!
+    const value = row[step.column]
+    if (typeof value !== 'string') throw new ExecutionError('EXECUTION_ERROR', `Step ${step.id}: "${step.column}" is not a date`)
+    out.push({ ...row, [step.as]: datePart(value, step.part) })
+  }
+  return out
 }
 
 function runSelect(step: SelectStep, rows: Row[], check: () => void): Row[] {
@@ -245,6 +294,7 @@ export function execute(
   options: ExecuteOptions = {},
 ): ExecutionResult {
   const now = options.now ?? (() => performance.now())
+  const asOf = options.asOf ?? todayIso()
   const budget = options.deadlineMs ?? LIMITS.deadlineMs
   const deadline = now() + budget
   const check = () => {
@@ -263,7 +313,7 @@ export function execute(
     const rowsIn = rows.length
     switch (step.type) {
       case 'filter':
-        rows = runFilter(step, rows, columns, params, check)
+        rows = runFilter(step, rows, columns, params, asOf, check)
         break
       case 'group_sum':
         rows = runGroupSum(step, rows, check)
@@ -279,6 +329,9 @@ export function execute(
         break
       case 'select':
         rows = runSelect(step, rows, check)
+        break
+      case 'date_part':
+        rows = runDatePart(step, rows, check)
         break
       default:
         throw new ExecutionError('EXECUTION_ERROR', `Unsupported step type "${(step as { type: string }).type}"`)

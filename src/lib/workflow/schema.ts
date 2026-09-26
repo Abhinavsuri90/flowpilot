@@ -1,4 +1,5 @@
 import { z } from 'zod'
+import { isIsoDate } from '../dates'
 
 // ---------------------------------------------------------------------------
 // The recipe contract: a declared input, typed parameters and a linear list of
@@ -38,6 +39,8 @@ export const LIMITS = {
   listValues: 50,
   /** Largest "keep the first N rows". */
   limitRowsMax: 100_000,
+  /** How far a relative date may reach, in units (days, weeks, months, quarters or years). */
+  dateOffsetMax: 3660,
 } as const
 
 /** Step ids, aliases and parameter names. */
@@ -45,30 +48,43 @@ export const NAME_PATTERN = /^[a-z_][a-z0-9_]{0,63}$/
 /** Names that would collide with JavaScript object internals. */
 export const RESERVED_NAMES = new Set(['__proto__', 'constructor', 'prototype'])
 
-/** Text, an amount in whole rupees, or a whole number (a count or quantity). */
-export const COLUMN_TYPES = ['string', 'integer_inr', 'integer'] as const
+/** Text, an amount in whole rupees, a whole number (a count or quantity), or a calendar date. */
+export const COLUMN_TYPES = ['string', 'integer_inr', 'integer', 'date'] as const
 export type ColumnType = (typeof COLUMN_TYPES)[number]
 export const isNumericType = (type: ColumnType | undefined): boolean => type === 'integer_inr' || type === 'integer'
+export const isDateType = (type: ColumnType | undefined): boolean => type === 'date'
 
 export const OPERATORS = ['eq', 'neq', 'lt', 'lte', 'gt', 'gte', 'contains', 'in'] as const
 export type Operator = (typeof OPERATORS)[number]
-/** Ordering comparisons only make sense for numbers (amounts and whole numbers). */
+/** Ordering comparisons only make sense for numbers (amounts and whole numbers) and dates. */
 export const NUMERIC_ONLY_OPERATORS: ReadonlySet<Operator> = new Set(['lt', 'lte', 'gt', 'gte'])
 /** @deprecated kept for older imports; the same set as NUMERIC_ONLY_OPERATORS. */
 export const AMOUNT_ONLY_OPERATORS = NUMERIC_ONLY_OPERATORS
 /** "contains" (ignoring capitals) and "is one of" work on text. */
 export const TEXT_ONLY_OPERATORS: ReadonlySet<Operator> = new Set(['contains', 'in'])
 
-export const STEP_TYPES = ['filter', 'group_sum', 'aggregate', 'sort', 'limit', 'select'] as const
+export const STEP_TYPES = ['filter', 'group_sum', 'aggregate', 'sort', 'limit', 'select', 'date_part'] as const
 export type StepType = (typeof STEP_TYPES)[number]
+
+export const DATE_UNITS = ['day', 'week', 'month', 'quarter', 'year'] as const
+export type DateUnit = (typeof DATE_UNITS)[number]
+/**
+ * A date fixed by the day the recipe runs: { unit: 'month', offset: -1, edge:
+ * 'start' } is the first day of last month; { unit: 'day', offset: -30, edge:
+ * 'start' } is 30 days ago. Weeks start on Monday.
+ */
+export type RelativeDate = { unit: DateUnit; offset: number; edge: 'start' | 'end' }
+
+export const DATE_PARTS = ['year', 'quarter', 'month', 'week'] as const
+export type DatePart = (typeof DATE_PARTS)[number]
 
 export const AGGREGATE_OPS = ['count', 'sum', 'avg', 'min', 'max'] as const
 export type AggregateOp = (typeof AGGREGATE_OPS)[number]
 
 // ----- TypeScript shapes (validated by the Zod schema below) ---------------
 
-/** A fixed value, a declared parameter, or (for "is one of") a list of text values. */
-export type StepValue = { literal: string | number } | { parameter: string } | { list: string[] }
+/** A fixed value, a declared parameter, (for "is one of") a list of text values, or (for dates) a date relative to the run day. */
+export type StepValue = { literal: string | number } | { parameter: string } | { list: string[] } | { relative: RelativeDate }
 
 export type FilterStep = {
   id: string
@@ -110,11 +126,16 @@ export type LimitStep = { id: string; type: 'limit'; rows: { literal: number } |
 /** Keep only these columns, in this order, optionally renamed for the output. */
 export type SelectStep = { id: string; type: 'select'; columns: Array<{ column: string; as?: string }> }
 
-export type Step = FilterStep | GroupSumStep | AggregateStep | SortStep | LimitStep | SelectStep
+/** Adds a text column with the period a date falls in ("2026", "2026-Q3", "2026-09", "2026-W39"), to group by. */
+export type DatePartStep = { id: string; type: 'date_part'; column: string; part: DatePart; as: string }
+
+export type Step = FilterStep | GroupSumStep | AggregateStep | SortStep | LimitStep | SelectStep | DatePartStep
 
 export type IntegerParameter = { type: 'integer'; default: number; min: number; max: number }
 export type StringParameter = { type: 'string'; default: string }
-export type Parameter = IntegerParameter | StringParameter
+/** A calendar date (YYYY-MM-DD) chosen per run, e.g. the first day of the reporting period. */
+export type DateParameter = { type: 'date'; default: string }
+export type Parameter = IntegerParameter | StringParameter | DateParameter
 
 export type WorkflowDefinition = {
   schemaVersion: 1
@@ -159,10 +180,25 @@ const listValues = z
   .min(1, { error: 'Add at least one value to the list' })
   .max(LIMITS.listValues, { error: `A list can have at most ${LIMITS.listValues} values` })
 
+const RelativeSchema = z.strictObject({
+  unit: z.enum(DATE_UNITS, { error: 'A relative date counts in day, week, month, quarter or year' }),
+  offset: z
+    .number({ error: 'The offset must be a whole number (0 = this, -1 = last, 1 = next)' })
+    .int({ error: 'The offset must be a whole number (0 = this, -1 = last, 1 = next)' })
+    .min(-LIMITS.dateOffsetMax, { error: `A relative date can reach at most ${LIMITS.dateOffsetMax} units back` })
+    .max(LIMITS.dateOffsetMax, { error: `A relative date can reach at most ${LIMITS.dateOffsetMax} units ahead` }),
+  edge: z.enum(['start', 'end'], { error: 'edge is "start" or "end" (of the day, week, month, quarter or year)' }),
+})
+
 const ValueSchema = z
-  .strictObject({ literal: literal.optional(), parameter: nameField('Parameter name').optional(), list: listValues.optional() })
-  .refine((v) => [v.literal, v.parameter, v.list].filter((x) => x !== undefined).length === 1, {
-    error: 'A value is exactly one of {"literal": …}, {"parameter": "<name>"} or {"list": […]}',
+  .strictObject({
+    literal: literal.optional(),
+    parameter: nameField('Parameter name').optional(),
+    list: listValues.optional(),
+    relative: RelativeSchema.optional(),
+  })
+  .refine((v) => [v.literal, v.parameter, v.list, v.relative].filter((x) => x !== undefined).length === 1, {
+    error: 'A value is exactly one of {"literal": …}, {"parameter": "<name>"}, {"list": […]} or {"relative": {…}}',
   })
 
 const FilterSchema = z.strictObject({
@@ -235,7 +271,15 @@ const SelectSchema = z.strictObject({
     .max(LIMITS.columns, { error: `Keep at most ${LIMITS.columns} columns` }),
 })
 
-export const StepSchema = z.discriminatedUnion('type', [FilterSchema, GroupSumSchema, AggregateSchema, SortSchema, LimitSchema, SelectSchema])
+const DatePartSchema = z.strictObject({
+  id: nameField('Step id'),
+  type: z.literal('date_part'),
+  column: columnRef('the date'),
+  part: z.enum(DATE_PARTS, { error: 'A period is one of year, quarter, month or week' }),
+  as: nameField('The new column name'),
+})
+
+export const StepSchema = z.discriminatedUnion('type', [FilterSchema, GroupSumSchema, AggregateSchema, SortSchema, LimitSchema, SelectSchema, DatePartSchema])
 
 const IntegerParameterSchema = z.strictObject({
   type: z.literal('integer'),
@@ -251,15 +295,20 @@ const StringParameterSchema = z.strictObject({
     .max(LIMITS.textMax, { error: `Text defaults can be at most ${LIMITS.textMax} characters` }),
 })
 
-export const ParameterSchema = z.discriminatedUnion('type', [IntegerParameterSchema, StringParameterSchema], {
-  error: 'A parameter type must be "integer" or "string"',
+const DateParameterSchema = z.strictObject({
+  type: z.literal('date'),
+  default: z.string({ error: 'The default must be a date like 2026-04-03' }).refine(isIsoDate, { error: 'The default must be a date like 2026-04-03' }),
+})
+
+export const ParameterSchema = z.discriminatedUnion('type', [IntegerParameterSchema, StringParameterSchema, DateParameterSchema], {
+  error: 'A parameter type must be "integer", "string" or "date"',
 })
 
 export const WorkflowDefinitionSchema = z.strictObject({
   schemaVersion: z.literal(1, { error: 'schemaVersion must be 1' }),
   input: z.strictObject({
     format: z.literal('csv', { error: 'input.format must be "csv"' }),
-    columns: z.record(z.string(), z.enum(COLUMN_TYPES, { error: 'Column types are "string", "integer_inr" or "integer"' })),
+    columns: z.record(z.string(), z.enum(COLUMN_TYPES, { error: 'Column types are "string", "integer_inr", "integer" or "date"' })),
   }),
   parameters: z.record(z.string(), ParameterSchema),
   steps: z
@@ -274,4 +323,5 @@ export const COLUMN_TYPE_LABEL: Record<ColumnType, string> = {
   string: 'text',
   integer_inr: 'amount (whole INR)',
   integer: 'whole number (count or quantity)',
+  date: 'date (YYYY-MM-DD)',
 }

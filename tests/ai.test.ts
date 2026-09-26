@@ -131,7 +131,7 @@ describe('AI authoring', () => {
     const variants = (OUTPUT_JSON_SCHEMA.properties.steps.items.anyOf as ReadonlyArray<{ properties: { type: { enum: readonly string[] } } }>).map(
       (v) => v.properties.type.enum[0],
     )
-    expect(variants).toEqual(['filter', 'group_sum', 'aggregate', 'sort', 'limit', 'select'])
+    expect(variants).toEqual(['filter', 'group_sum', 'aggregate', 'sort', 'limit', 'date_part', 'select'])
   })
 
   it('repairs exactly once, then returns 422 DRAFT_INVALID with the draft for the editor', async () => {
@@ -271,5 +271,62 @@ describe('AI authoring', () => {
     for (const file of ['src/server/api/runs.ts', 'src/lib/workflow/execute.ts', 'src/lib/csv.ts', 'src/lib/workflow/validate.ts', 'src/server/repo.ts']) {
       expect(readFileSync(file, 'utf8'), file).not.toMatch(/from ['"][^'"]*\/ai\//)
     }
+  })
+})
+
+describe('AI authoring with dates', () => {
+  const ORDERS = { ordered_on: 'date', status: 'string', region: 'string', amount: 'integer_inr' } as const
+
+  it('builds relative dates, fixed dates, date parameters and periods from the flat reply', async () => {
+    vi.stubEnv('OPENROUTER_API_KEY', 'test-key')
+    stubFetch(
+      openai({
+        kind: 'workflow',
+        reason: null,
+        question: null,
+        parameters: [{ name: 'from_date', type: 'date', integer_default: null, string_default: null, date_default: '2026-04-01', min: null, max: null }],
+        steps: [
+          { id: 's1', type: 'filter', column: 'status', operator: 'eq', value_kind: 'literal', literal_string: 'paid', literal_integer: null, parameter: null, list: null, relative_unit: null, relative_offset: null, relative_edge: null },
+          { id: 's2', type: 'filter', column: 'ordered_on', operator: 'gte', value_kind: 'relative', literal_string: null, literal_integer: null, parameter: null, list: null, relative_unit: 'month', relative_offset: -1, relative_edge: 'start' },
+          { id: 's3', type: 'filter', column: 'ordered_on', operator: 'lte', value_kind: 'relative', literal_string: null, literal_integer: null, parameter: null, list: null, relative_unit: 'month', relative_offset: -1, relative_edge: 'end' },
+          { id: 's4', type: 'filter', column: 'ordered_on', operator: 'gte', value_kind: 'parameter', literal_string: null, literal_integer: null, parameter: 'from_date', list: null, relative_unit: null, relative_offset: null, relative_edge: null },
+          { id: 's5', type: 'filter', column: 'ordered_on', operator: 'neq', value_kind: 'literal', literal_string: '2026-08-15', literal_integer: null, parameter: null, list: null, relative_unit: null, relative_offset: null, relative_edge: null },
+          { id: 's6', type: 'date_part', column: 'ordered_on', part: 'week', as: 'week' },
+          { id: 's7', type: 'aggregate', group_by: ['week'], measures: [{ op: 'sum', column: 'amount', as: 'revenue' }] },
+          { id: 's8', type: 'sort', by: [{ column: 'week', direction: 'asc' }] },
+        ],
+      }),
+    )
+    const res = await asha.post('/api/generate', { request: 'Paid revenue per week last month, from a configurable start date', columns: ORDERS })
+    expect(res.status).toBe(200)
+    expect(res.body.kind).toBe('workflow')
+    const def = res.body.definition
+    expect(def.parameters).toEqual({ from_date: { type: 'date', default: '2026-04-01' } })
+    expect(def.steps[1]).toEqual({ id: 's2', type: 'filter', column: 'ordered_on', operator: 'gte', value: { relative: { unit: 'month', offset: -1, edge: 'start' } } })
+    expect(def.steps[2].value).toEqual({ relative: { unit: 'month', offset: -1, edge: 'end' } })
+    expect(def.steps[3].value).toEqual({ parameter: 'from_date' })
+    expect(def.steps[4].value).toEqual({ literal: '2026-08-15' })
+    expect(def.steps[5]).toEqual({ id: 's6', type: 'date_part', column: 'ordered_on', part: 'week', as: 'week' })
+    // The prompt names the date column's type, so the model knows which columns take dates.
+    expect(calls[0]!.body.messages[1].content).toContain('- ordered_on: date (YYYY-MM-DD)')
+    expect(calls[0]!.body.messages[0].content).toContain('value_kind "relative"')
+  })
+
+  it('sends a relative date on a text column back for repair, then accepts the fix', async () => {
+    vi.stubEnv('OPENROUTER_API_KEY', 'test-key')
+    const wrong = {
+      kind: 'workflow',
+      reason: null,
+      question: null,
+      parameters: [],
+      steps: [{ id: 's1', type: 'filter', column: 'region', operator: 'gte', value_kind: 'relative', literal_string: null, literal_integer: null, parameter: null, list: null, relative_unit: 'day', relative_offset: -30, relative_edge: 'start' }],
+    }
+    const fixed = { ...wrong, steps: [{ ...wrong.steps[0], column: 'ordered_on' }] }
+    stubFetch(openai(wrong), openai(fixed))
+    const res = await asha.post('/api/generate', { request: 'Orders in the last 30 days', columns: ORDERS })
+    expect(res.status).toBe(200)
+    expect(res.body.repaired).toBe(true)
+    expect(calls).toHaveLength(2)
+    expect(calls[1]!.body.messages.at(-1).content).toContain('A date relative to the run day only works on a date column')
   })
 })

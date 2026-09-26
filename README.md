@@ -27,10 +27,10 @@ The full loop works end to end, and a real browser test proves it: **describe �
 ## Features
 
 **Authoring**
-- Read a sample CSV or Excel file in the browser (it is never uploaded) to declare the input columns and their types: text, or amount in whole rupees.
+- Read a sample CSV or Excel file in the browser (it is never uploaded) to declare the input columns and their types: text, amount in whole rupees, whole number, or date.
 - Describe the report in plain language, in English or Hinglish, and get editable step cards. AI drafts carry a badge until you save them.
-- Edit steps by hand, from six kinds: **filter** rows (equals, comparisons, *contains*, *is one of*); **group & sum**; **summarize** by up to three columns with up to five figures (count, total, average, smallest, largest), or over all rows; **sort** by up to three columns; **keep the first N** rows (a "top 10", adjustable per run); and **choose columns**, in order, with friendly headers. Each dropdown offers only the columns available at that step, and a sidebar shows the columns flowing through the pipeline.
-- Three column types: text, amounts in whole rupees, and whole numbers (counts and quantities), suggested from the sample file.
+- Edit steps by hand, from seven kinds: **filter** rows (equals, comparisons, *contains*, *is one of*; date columns compare with a fixed date, a date parameter chosen per run, or a date **relative to the run day** such as “the start of last month” or “30 days ago”); **group & sum**; **summarize** by up to three columns with up to five figures (count, total, average, smallest, largest), or over all rows; **sort** by up to three columns; **keep the first N** rows (a "top 10", adjustable per run); **choose columns**, in order, with friendly headers; and **period from a date** (the month, quarter, year or ISO week a date falls in, added as a column to group by). Each dropdown offers only the columns available at that step, and a sidebar shows the columns flowing through the pipeline.
+- Four column types: text, amounts in whole rupees, whole numbers (counts and quantities) and dates, suggested from the sample file. Dates are read strictly (`2026-04-03`, `3 Apr 2026`, `April 3, 2026`, and day/month/year digits only when they can mean one date) and never guessed: `03/04/2026` is reported with both readings.
 - Checks run as you type: every rule is validated live and problems are pinned to the step card they belong to.
 - The editor warns when a text value never occurs in your sample (for example "Paid" when the data says "paid") and fixes it in one click.
 - *Make adjustable* turns a fixed value into a run parameter, such as a threshold with a default and bounds.
@@ -41,6 +41,7 @@ The full loop works end to end, and a real browser test proves it: **describe �
 - **Excel and ODS files work too** (`.xlsx`, `.xlsm`, `.xlsb`, `.xls`, `.ods`): the chosen sheet is converted to CSV in your browser (pick the sheet when there are several; dates become ISO dates, numbers stay raw), so the workbook itself is never uploaded and the server only ever parses CSV.
 - The file is checked in the browser before anything is sent, so bad amounts, missing columns and ragged rows show with line numbers. Near-miss headers are named (“the file has "Status"”), and files that aren't UTF-8 or that use semicolons or tabs get a plain fix instead of a wall of errors. Switching versions re-checks the chosen file.
 - Per-run parameters with *Reset*, and a hint when a filter can never match the chosen file.
+- **As of** a chosen day: a recipe with relative dates counts from today unless you pick another day; the day is saved with the run and the summary shows what each relative date meant (“ordered_on ≥ 30 days ago (28 Aug 2026)”).
 - Results show a summary line, a sortable table (large results render 100 rows at a time), the rows remaining after each step, and two downloads: a formula-safe CSV, or an **Excel workbook** with real numbers in Indian grouping, an autofilter, and an *About this run* sheet recording the recipe, version, file, parameters and a link back.
 - Private run history with exact counts per status, filtered on the server, and *Delete my results*.
 
@@ -103,7 +104,7 @@ Then check it:
 
 ```bash
 npm run check:model     # is the model reachable, and what does it draft for the demo sentence?
-npm run eval:model      # the 21-case eval set below, against the configured model
+npm run eval:model      # the 28-case eval set below, against the configured model
 ```
 
 Anthropic (`ANTHROPIC_API_KEY`, which uses a forced tool call) and OpenAI (`OPENAI_API_KEY`, which uses strict `json_schema`) work the same way. With OpenRouter, FlowPilot asks to be routed only to providers that honour a strict `response_format`.
@@ -112,7 +113,7 @@ Anthropic (`ANTHROPIC_API_KEY`, which uses a forced tool call) and OpenAI (`OPEN
 
 ### Why `openai/gpt-6-luna`
 
-`npm run eval:model` sends 21 fixed requests and checks the drafts structurally. It covers drafts, adjustable thresholds, exclusions, a different file layout and a Hinglish request; averages, counts, a top 3, the largest order per group, an overall summary, *is one of* and *contains*; things a recipe can't do (monthly periods, percentage shares, Gmail on a schedule, joins, charts); and an ambiguous column that should get a clarifying question. `openai/gpt-6-luna` passes **21 / 21** (median 3.0 s). The model comparison below was measured on the earlier 14-case set, through OpenRouter on 26 Sep 2026:
+`npm run eval:model` sends 28 fixed requests and checks the drafts structurally. It covers drafts, adjustable thresholds, exclusions, a different file layout and a Hinglish request; averages, counts, a top 3, the largest order per group, an overall summary, *is one of* and *contains*; dates (the last 30 days, totals by month, last month by region, a fixed start day, this quarter per rep, a configurable start date with weekly counts, and a date request on a file without a date column, which must be refused); things a recipe can't do (percentage shares, Gmail on a schedule, joins, charts); and an ambiguous column that should get a clarifying question. `openai/gpt-6-luna` passes **28 / 28** (median 3.6 s, run on 27 Sep 2026). The model comparison below was measured on the earlier 14-case set, through OpenRouter on 26 Sep 2026:
 
 | Model | Eval result | Median | Slowest | Price in / out per M tokens |
 |---|---|---|---|---|
@@ -179,7 +180,7 @@ flowchart LR
 ```
 
 - **Two paths, one policy.** Authoring (editor → AI author → model → validator → new version) and execution (run panel → policy → validator → CSV parser → engine → private run record) share only the dispatcher, the access policy and the validator. The model is never on the execution path, so saved recipes run even when AI is down.
-- **A small recipe language.** A strict JSON document with a declared input, typed parameters and up to 10 linear steps from an allowlist of six (`filter`, `group_sum`, `aggregate`, `sort`, `limit`, `select`). Values are literals, lists or declared parameters, and nothing is ever evaluated. One shared rule (`lib/workflow/columns.ts`) says which columns exist after each step, and the validator uses it to explain problems precisely, e.g. *“Column "status" is no longer available: step s2 summarized the rows, which keeps only "region", "orders"”* or *“…step s5 renamed it to "Region"”*.
+- **A small recipe language.** A strict JSON document with a declared input, typed parameters and up to 10 linear steps from an allowlist of seven (`filter`, `group_sum`, `aggregate`, `sort`, `limit`, `select`, `date_part`). Values are literals, lists or declared parameters, and nothing is ever evaluated. One shared rule (`lib/workflow/columns.ts`) says which columns exist after each step, and the validator uses it to explain problems precisely, e.g. *“Column "status" is no longer available: step s2 summarized the rows, which keeps only "region", "orders"”* or *“…step s5 renamed it to "Region"”*.
 - **A deterministic engine.** Sums are exact integers, averages are rounded half up with exact integer maths, groups and sorts order text by code point (never by locale) and ties keep their file order, a 30-second deadline is checked between steps and every 1,024 rows, and a step log records rows in and out.
 - **Versions, runs and copies.** Saving appends an immutable version, and title or description edits don't create one. Each run pins the exact version it executed. A copy is a new private recipe whose version 1 points back at one source version.
 - **The database enforces invariants itself.** Triggers reject editing or deleting a version; changing a recipe's owner, workspace or copy source; pointing a recipe at another recipe's version; updating a finished run; and editing the audit log.
@@ -256,7 +257,7 @@ One server route (`/api/$`) fronts 42 REST endpoints through a single dispatcher
 | GET | `/api/workflows/:id/access` | can view | Workspace members and what each can do |
 | POST | `/api/workflows/:id/transfer` | owner | `{userId}` → hand the recipe to an admin or member of its workspace |
 | POST | `/api/generate` | signed in | `{request, columns}` → a draft, “unsupported” or a question; never writes |
-| POST | `/api/runs` | can view | Multipart `{versionId, file, parameters}` → result, summary and step log |
+| POST | `/api/runs` | can view | Multipart `{versionId, file, parameters, asOf?}` → result, summary and step log; `asOf` (YYYY-MM-DD) is the day relative dates count from, saved with the run as `as_of` |
 | GET | `/api/runs?workflowId=&status=&limit=` | signed in | Your own runs only, newest first (at most 500), with exact `counts` per status |
 | DELETE | `/api/runs?workflowId=` | signed in | Delete your finished runs |
 | GET | `/api/runs/:id` | the runner | The full result and step log |
@@ -289,17 +290,17 @@ Status codes: 401 not signed in · 403 visible but not yours, a cross-site write
 ## Testing
 
 ```bash
-npm test                          # 144 unit and API tests
+npm test                          # 157 unit and API tests
 npx playwright install chromium   # once
-npm run test:e2e                  # 27 browser tests
+npm run test:e2e                  # 28 browser tests
 npm run typecheck
 npm run smoke                     # every endpoint and error code against a running server (--base <url>)
 ```
 
-- **Unit and API tests (Vitest), 144 in total:** engine 13, CSV 18, validator 13, access 20, demo loop 12, AI 10, hardening 15 (HTTP methods, HSTS, redirects, sessions, no-op edits, the activity feed on a busy team, list paging and run counts, the client address behind a proxy), accounts 17 (sign-up modes and rules, invitations, password resets, account settings, workspaces, removal and hand-over), language 14 (summaries and exact rounding, sort, top N, column choices, *contains* and *is one of*, whole numbers, validation messages, the seeded examples, a top-N run and CSV export through the API), governance 4 (archive and restore, the audit log's privacy rules, filters, paging and CSV), spreadsheet 8 (workbook → CSV on xlsx/xls/xlsb/ods files written by SheetJS: raw numbers, ISO dates, sheet choice and limits, refusing renamed text files; results → Excel with real numbers and an about sheet). They call the same `handleApi(Request)` the server uses, with real session cookies, against an in-memory SQLite database, so access rules are tested end to end rather than mocked. The model is always stubbed, and the tests never read `.env`.
-- **Browser tests (Playwright), 27 in total:**
+- **Unit and API tests (Vitest), 157 in total:** engine 13, CSV 18, validator 13, access 20, demo loop 12, AI 12 (incl. relative dates, date parameters and periods from the flat reply, and a repair), hardening 15 (HTTP methods, HSTS, redirects, sessions, no-op edits, the activity feed on a busy team, list paging and run counts, the client address behind a proxy), accounts 17 (sign-up modes and rules, invitations, password resets, account settings, workspaces, removal and hand-over), language 14 (summaries and exact rounding, sort, top N, column choices, *contains* and *is one of*, whole numbers, validation messages, the seeded examples, a top-N run and CSV export through the API), governance 4 (archive and restore, the audit log's privacy rules, filters, paging and CSV), spreadsheet 8 (workbook → CSV on xlsx/xls/xlsb/ods files written by SheetJS: raw numbers, ISO dates, sheet choice and limits, refusing renamed text files; results → Excel with real numbers and an about sheet), dates 11 (strict date reading, calendar maths incl. ISO weeks and leap years, relative dates, periods, earliest and latest per group, every validator message, the as-of day through the API). They call the same `handleApi(Request)` the server uses, with real session cookies, against an in-memory SQLite database, so access rules are tested end to end rather than mocked. The model is always stubbed, and the tests never read `.env`.
+- **Browser tests (Playwright), 28 in total:**
   - `demo.spec.ts` (4) is the demo above.
-  - `features.spec.ts` (16) covers the rest: the editor's value warning, an invalid AI draft and a clarifying question, Advanced JSON, in-browser file checks, samples and parameters, details-only saves and versions, runs from another recipe, large results, CSV escaping, the command palette, theme, roles, *Delete my results*, the mobile drawer, re-checking a file when the version changes, refusing a non-UTF-8 file, the in-app 404, wide tables at phone width, library paging, an AI-drafted top-N summary edited with the new step cards and run, archiving plus the audit log, and Excel input (a two-sheet workbook, the sheet picker, a renamed text file refused) with the Excel download read back.
+  - `features.spec.ts` (17) covers the rest: the editor's value warning, an invalid AI draft and a clarifying question, Advanced JSON, in-browser file checks, samples and parameters, details-only saves and versions, runs from another recipe, large results, CSV escaping, the command palette, theme, roles, *Delete my results*, the mobile drawer, re-checking a file when the version changes, refusing a non-UTF-8 file, the in-app 404, wide tables at phone width, library paging, an AI-drafted top-N summary edited with the new step cards and run, archiving plus the audit log, Excel input (a two-sheet workbook, the sheet picker, a renamed text file refused) with the Excel download read back, and dates (the monthly example run as of a chosen day, a dated sample suggesting the date type, an AI-drafted by-month recipe with the relative-date and fixed-date controls).
   - `accounts.spec.ts` (5): a new team signs up, invites a teammate who joins through the link and runs a shared recipe; the workspace switcher (mouse and keyboard); account settings and a password change that signs out another device; forgot-password and dead links; the sign-in pages at phone width.
   - `a11y.spec.ts` (2) runs an axe-core WCAG 2.1 AA scan of every page, including sign-up, invitations and account settings, in light and dark mode.
 - The browser tests use their own database and a stand-in model (`tests/e2e/mock-model.ts`), so they never spend real credits. Screenshots of each demo stage are saved to `docs/screenshots/`.
@@ -423,7 +424,7 @@ This is a working prototype, not a production platform:
 
 - **Single node.** SQLite suits one server process. The next step is Postgres with row-level security mirroring `lib/policy.ts`.
 - **Small, synchronous runs.** Up to 1 MiB, 5,000 rows and 50 columns per file, run inside the request with a 30-second deadline. There is no queue, scheduling or retry.
-- **Six step types.** Filter, group & sum, summarize, sort, keep first N and choose columns: no joins, dates or periods, percentages or charts yet. The AI says so instead of pretending.
+- **Seven step types.** Filter, group & sum, summarize, sort, keep first N, choose columns and period from a date: no joins, percentages, charts, or comparisons between periods in the same row yet. The AI says so instead of pretending.
 - **Accounts.** Email and password only: no SSO, two-factor sign-in or email verification yet, and accounts can't be deleted from the UI.
 - **In-memory limits.** Sign-in, sign-up, reset and drafting limits live in the server's memory, so they reset on restart and aren't shared between servers (Redis would fix both).
 - **No deleting recipes.** Versions are immutable by design.

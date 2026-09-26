@@ -171,7 +171,7 @@ function ArchitectureSection() {
         rows={[
           [code('lib/workflow/schema.ts'), 'Recipe types, limits, strict Zod schema'],
           [code('lib/workflow/validate.ts'), 'Structural + semantic validation, column tracking step by step, parameter resolution'],
-          [code('lib/workflow/execute.ts'), 'Six allowlisted steps (filter, group_sum, aggregate, sort, limit, select), exact integer maths, 30 s deadline, step log'],
+          [code('lib/workflow/execute.ts'), 'Seven allowlisted steps (filter, group_sum, aggregate, sort, limit, select, date_part), exact integer and calendar maths, 30 s deadline, step log'],
           [code('lib/workflow/describe.ts'), 'Plain-language steps and the deterministic summary line'],
           [code('lib/csv.ts'), 'Parsing, limits, whole-rupee amounts, type inference, formula-safe export'],
           [code('lib/policy.ts'), 'Pure access policy shared by the server and the Access page'],
@@ -196,7 +196,7 @@ const LIFECYCLE: Array<[string, string, string]> = [
   ['Parameters', 'Values checked against type and min/max; defaults fill gaps; unknown names rejected', '422 PARAMETERS_INVALID'],
   ['Parse file', 'BOM, headers, duplicates, field counts, limits, required columns, whole-rupee amounts; extras dropped', '413 / 422 INVALID_FILE (≤20 line-numbered issues)'],
   ['Record', 'Insert a running row that pins version, runner and parameters', '—'],
-  ['Execute', 'Each step is a plain function (filter, group_sum, aggregate, sort, limit, select); deadline checked between steps and every 1,024 rows', '500 TIMEOUT · EXECUTION_ERROR (row finalised as failed)'],
+  ['Execute', 'Each step is a plain function (filter, group_sum, aggregate, sort, limit, select, date_part); deadline checked between steps and every 1,024 rows', '500 TIMEOUT · EXECUTION_ERROR (row finalised as failed)'],
   ['Finalize', 'Store result, step log, summary, row count and duration; append a run.succeeded event', '—'],
   ['Respond', '201 with columns, rows, summary, step log and ignored columns; private, no-store', '—'],
 ]
@@ -256,7 +256,7 @@ function AiSection({ system }: { system?: SystemInfo }) {
           <ul className="mt-2 space-y-1.5 text-[13px] text-muted">
             <li>• The user’s sentence (3 to 2,000 characters)</li>
             <li>• Declared column names and types: text or amount (whole INR). Never data rows</li>
-            <li>• The six step types, their operators and figures, and which columns survive each step (grouping and column choices reshape the rows)</li>
+            <li>• The seven step types, their operators and figures, and which columns survive each step (grouping and column choices reshape the rows)</li>
             <li>• When to answer “unsupported” (email, Gmail, Slack, APIs, scheduling, joins, charts, averages, code, SQL) or ask one clarification question</li>
           </ul>
         </div>
@@ -483,16 +483,18 @@ function LanguageSection() {
       <Table
         head={['Step', 'What it does', 'Columns afterwards']}
         rows={[
-          [code('filter'), <>Keep rows where a column equals / doesn’t equal / compares (numbers) / {code('contains')} (text, ignoring capitals) / {code('in')} a list</>, 'Unchanged'],
+          [code('filter'), <>Keep rows where a column equals / doesn’t equal / compares (numbers and dates) / {code('contains')} (text, ignoring capitals) / {code('in')} a list. Dates compare with a fixed day, a date parameter, or a day relative to the run day ({code('relative')}: unit, offset, start or end)</>, 'Unchanged'],
           [code('group_sum'), 'Group by one text column and total one amount column', 'The group column and the total'],
           [code('aggregate'), 'Group by 0–3 text or whole-number columns; up to 5 figures: count, sum, avg, min, max', 'The group columns and the figures (counts are whole numbers)'],
           [code('sort'), 'Up to 3 keys, ascending or descending; stable, text by code point', 'Unchanged'],
           [code('limit'), 'Keep the first N rows (a fixed number or a run parameter): with a sort, a top N', 'Unchanged'],
           [code('select'), 'Keep listed columns in order, with optional display headers', 'Exactly the listed columns'],
+          [code('date_part'), 'Add the year, quarter, month or ISO week a date falls in (2026-Q3, 2026-09, 2026-W39) as a text column', 'Everything before, plus the period'],
         ]}
       />
       <ul className="mt-3 space-y-1 text-[13px] text-muted">
-        <li>• Column types: text, amounts in whole rupees and whole numbers. Amounts are never rounded or guessed; averages are rounded half up with exact integer maths, and the step says so.</li>
+        <li>• Column types: text, amounts in whole rupees, whole numbers and dates (YYYY-MM-DD text; the maths uses day numbers, never a time zone). Amounts are never rounded or guessed; dates are never guessed either (an ambiguous 03/04/2026 is reported with both readings); averages are rounded half up with exact integer maths, and the step says so.</li>
+        <li>• Relative dates count from the day the recipe runs; the runner can pick another day, which is stored with the run and shown in its summary.</li>
         <li>• One shape rule ({code('lib/workflow/columns.ts')}) decides which columns exist after each step, for the engine, the validator, the editor, the descriptions and the AI adapter alike.</li>
         <li>• Saved versions are immutable, so the language only grows: every recipe saved before a new step type existed still runs exactly as it did.</li>
       </ul>
@@ -674,7 +676,7 @@ function TradeoffsSection() {
         head={['Decision', 'Gain', 'Cost']}
         rows={[
           ['Linear steps, not a graph', 'Simple to validate, render as cards and explain', 'No branches, joins or loops'],
-          ['Deterministic engine, not an LLM runtime', 'Reproducible, auditable, cheap; runs with the model offline', 'Only what the six step types can express (no joins, dates or percentages yet)'],
+          ['Deterministic engine, not an LLM runtime', 'Reproducible, auditable, cheap; runs with the model offline', 'Only what the seven step types can express (no joins or percentages yet)'],
           ['Schema-only prompts', 'No customer rows leave the server; small prompts', 'The model can’t see value casing (“Paid” vs “paid”)'],
           ['Immutable versions', 'Runs and pinned links stay reproducible', 'More rows; every edit is a new version'],
           ['Copy, not reference', 'A copy never breaks when the source changes or goes private', 'Copies don’t receive upstream fixes'],

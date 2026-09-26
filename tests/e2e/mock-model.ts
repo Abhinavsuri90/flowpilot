@@ -48,8 +48,24 @@ const TOP_REPS = {
   ],
 }
 
+// "Paid revenue by month for the last 6 months": a relative date, a period column, a summary and a sort.
+const BY_MONTH = {
+  kind: 'workflow',
+  reason: null,
+  question: null,
+  parameters: [],
+  steps: [
+    { id: 's1', type: 'filter', column: 'status', operator: 'eq', value_kind: 'literal', literal_string: 'paid', literal_integer: null, parameter: null, list: null, relative_unit: null, relative_offset: null, relative_edge: null },
+    { id: 's2', type: 'filter', column: 'ordered_on', operator: 'gte', value_kind: 'relative', literal_string: null, literal_integer: null, parameter: null, list: null, relative_unit: 'month', relative_offset: -5, relative_edge: 'start' },
+    { id: 's3', type: 'date_part', column: 'ordered_on', part: 'month', as: 'month' },
+    { id: 's4', type: 'aggregate', group_by: ['month'], measures: [{ op: 'sum', column: 'amount', as: 'revenue' }, { op: 'count', column: null, as: 'orders' }] },
+    { id: 's5', type: 'sort', by: [{ column: 'month', direction: 'asc' }] },
+  ],
+}
+
 function answer(prompt: string) {
   if (/broken draft/i.test(prompt)) return BROKEN
+  if (/\bmonth/i.test(prompt)) return BY_MONTH
   if (/\btop\b/i.test(prompt)) return TOP_REPS
   if (/gmail|e-?mail|slack|schedule|every monday/i.test(prompt)) {
     return {

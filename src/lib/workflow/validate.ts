@@ -1,8 +1,10 @@
 import type { core } from 'zod'
 import type { ApiIssue } from '../types'
 import { formatINR } from './describe'
+import { isIsoDate } from '../dates'
 import {
   AGGREGATE_OPS,
+  COLUMN_TYPES,
   LIMITS,
   NAME_PATTERN,
   NUMERIC_ONLY_OPERATORS,
@@ -10,6 +12,7 @@ import {
   STEP_TYPES,
   TEXT_ONLY_OPERATORS,
   WorkflowDefinitionSchema,
+  isDateType,
   isNumericType,
   type Column,
   type ColumnType,
@@ -88,12 +91,12 @@ export function analyze(raw: unknown): Analysis {
       const problem = columnNameProblem(name)
       if (problem) issues.push({ path: `input.columns.${name}`, message: problem })
       const type = columnsObj[name]
-      if (type === 'string' || type === 'integer_inr' || type === 'integer') input.push({ name, type })
+      if ((COLUMN_TYPES as readonly unknown[]).includes(type)) input.push({ name, type: type as ColumnType })
     }
   }
 
   // ----- parameters -----
-  const paramTypes = new Map<string, 'integer' | 'string'>()
+  const paramTypes = new Map<string, 'integer' | 'string' | 'date'>()
   const paramsObj = isRecord(root.parameters) ? root.parameters : {}
   const paramNames = Object.keys(paramsObj)
   if (paramNames.length > LIMITS.parameters)
@@ -130,6 +133,9 @@ export function analyze(raw: unknown): Analysis {
       }
     } else if (p.type === 'string') {
       paramTypes.set(name, 'string')
+    } else if (p.type === 'date') {
+      paramTypes.set(name, 'date')
+      if (!isIsoDate(p.default)) issues.push({ path: `parameters.${name}.default`, message: `${name}: the default must be a date like 2026-04-03` })
     }
   }
 
@@ -189,10 +195,10 @@ export function analyze(raw: unknown): Analysis {
       else if (taken.has(alias)) push(field, `Two columns would be called "${alias}". Choose another name`)
       taken.add(alias)
     }
-    const paramCheck = (name: string, field: string, want: 'integer' | 'string', what: string) => {
+    const paramCheck = (name: string, field: string, want: 'integer' | 'string' | 'date', what: string) => {
       const pType = paramTypes.get(name)
       if (!pType) push(field, `Parameter "${name}" is not declared. Add it under Parameters, or use a fixed value`)
-      else if (pType !== want) push(field, `Parameter "${name}" is ${pType === 'integer' ? 'a number' : 'text'}, but ${what}`)
+      else if (pType !== want) push(field, `Parameter "${name}" is ${pType === 'integer' ? 'a number' : pType === 'date' ? 'a date' : 'text'}, but ${what}`)
     }
 
     if (step.type === 'filter') {
@@ -200,24 +206,28 @@ export function analyze(raw: unknown): Analysis {
       const columnType = column ? lookup(column, '.column') : undefined
       const operator = typeof step.operator === 'string' ? step.operator : undefined
       const numeric = isNumericType(columnType)
+      const isDate = isDateType(columnType)
       if (column && columnType === 'string' && operator && NUMERIC_ONLY_OPERATORS.has(operator as Operator)) {
         push('.operator', `"${operator}" compares numbers, but "${column}" is a text column. Use equals, does not equal, contains or is one of`)
       }
-      if (column && numeric && operator && TEXT_ONLY_OPERATORS.has(operator as Operator)) {
-        push('.operator', `"${operator === 'in' ? 'is one of' : operator}" works on text, but "${column}" is a number column`)
+      if (column && (numeric || isDate) && operator && TEXT_ONLY_OPERATORS.has(operator as Operator)) {
+        push('.operator', `"${operator === 'in' ? 'is one of' : operator}" works on text, but "${column}" is a ${isDate ? 'date' : 'number'} column`)
       }
       const value = step.value
       if (column && columnType && isRecord(value)) {
         const hasLiteral = 'literal' in value
         const hasParameter = 'parameter' in value
         const hasList = 'list' in value
+        const hasRelative = 'relative' in value
         if (operator === 'in') {
-          if (!hasList || hasLiteral || hasParameter) push('.value', '"is one of" needs a list of values, like North, South')
+          if (!hasList || hasLiteral || hasParameter || hasRelative) push('.value', '"is one of" needs a list of values, like North, South')
         } else if (hasList) {
           push('.value', 'A list of values only works with "is one of"')
+        } else if (hasRelative) {
+          if (!isDate) push('.value', `A date relative to the run day only works on a date column, and "${column}" is ${numeric ? 'a number' : 'a text'} column`)
         } else if (hasParameter && !hasLiteral && typeof value.parameter === 'string') {
-          const kind = columnType === 'integer_inr' ? 'an amount' : numeric ? 'a number' : 'a text'
-          paramCheck(value.parameter, '.value.parameter', numeric ? 'integer' : 'string', `"${column}" is ${kind} column`)
+          const kind = columnType === 'integer_inr' ? 'an amount' : numeric ? 'a number' : isDate ? 'a date' : 'a text'
+          paramCheck(value.parameter, '.value.parameter', numeric ? 'integer' : isDate ? 'date' : 'string', `"${column}" is ${kind} column`)
         } else if (hasLiteral && !hasParameter) {
           const lit = value.literal
           if (numeric) {
@@ -225,6 +235,8 @@ export function analyze(raw: unknown): Analysis {
             if (typeof lit !== 'number') push('.value.literal', `"${column}" is ${what}`)
             else if (!Number.isInteger(lit)) push('.value.literal', `Use whole numbers; ${lit} has decimals`)
             else if (lit < 0) push('.value.literal', 'Values cannot be negative')
+          } else if (isDate) {
+            if (!isIsoDate(lit)) push('.value.literal', `"${column}" is a date column, so the value must be a date like 2026-04-03`)
           } else if (typeof lit !== 'string') {
             push('.value.literal', `"${column}" is a text column, so the value must be text`)
           } else if (operator === 'contains' && lit.trim() === '') {
@@ -238,7 +250,8 @@ export function analyze(raw: unknown): Analysis {
       const alias = str(step.as)
       if (groupBy) {
         const t = lookup(groupBy, '.groupBy')
-        if (t && t !== 'string') push('.groupBy', `"${groupBy}" is a number column. Group by a text column`)
+        if (t === 'date') push('.groupBy', `"${groupBy}" is a date column. Add a period (month, quarter or year) from it first, then group by that`)
+        else if (t && t !== 'string') push('.groupBy', `"${groupBy}" is a number column. Group by a text column`)
       }
       if (valueColumn) {
         const t = lookup(valueColumn, '.valueColumn')
@@ -276,6 +289,8 @@ export function analyze(raw: unknown): Analysis {
           else {
             const t = lookup(column, `.measures[${m}].column`)
             if (t === 'string') push(`.measures[${m}].column`, `"${column}" is a text column. Choose an amount or whole-number column`)
+            else if (t === 'date' && op !== 'min' && op !== 'max')
+              push(`.measures[${m}].column`, `"${column}" is a date column. Totals and averages need an amount or whole-number column; smallest and largest work on dates`)
             else type = t
           }
         }
@@ -284,6 +299,21 @@ export function analyze(raw: unknown): Analysis {
       })
       const kept = next.map((c) => `"${c.name}"`).join(', ') || 'its figures'
       reshape(next, `${label} summarized the rows, which keeps only ${kept}`)
+    } else if (step.type === 'date_part') {
+      const column = str(step.column)
+      const alias = str(step.as)
+      if (column) {
+        const t = lookup(column, '.column')
+        if (t && t !== 'date') push('.column', `"${column}" is ${t === 'string' ? 'a text' : 'a number'} column. A period needs a date column (set the column's type to date if it holds dates)`)
+      }
+      if (alias) {
+        if (RESERVED_NAMES.has(alias)) push('.as', `"${alias}" is a reserved name`)
+        else if (available.some((c) => c.name === alias)) push('.as', `There is already a column called "${alias}". Choose another name for the period`)
+        else {
+          current = [...available, { name: alias, type: 'string' }]
+          gone.delete(alias)
+        }
+      }
     } else if (step.type === 'sort') {
       const keys = Array.isArray(step.by) ? step.by : []
       const seen = new Set<string>()
@@ -393,13 +423,13 @@ export function validateDefinition(raw: unknown): ValidationResult {
       }
       const at = { stepIndex: i, ...(typeof step.id === 'string' && step.id ? { stepId: step.id } : {}) }
       if (step.type === undefined) {
-        structural.push({ ...at, path: `steps[${i}].type`, message: 'Each step needs a type: filter, group_sum, aggregate, sort, limit or select' })
+        structural.push({ ...at, path: `steps[${i}].type`, message: 'Each step needs a type: filter, group_sum, aggregate, sort, limit, select or date_part' })
         skipSteps.add(i)
       } else if (!(STEP_TYPES as readonly unknown[]).includes(step.type)) {
         structural.push({
           ...at,
           path: `steps[${i}].type`,
-          message: `Unsupported step type "${String(step.type)}". Only filter, group_sum, aggregate, sort, limit and select are allowed.`,
+          message: `Unsupported step type "${String(step.type)}". Only filter, group_sum, aggregate, sort, limit, select and date_part are allowed.`,
         })
         skipSteps.add(i)
       }
@@ -479,6 +509,9 @@ export function resolveParameters(def: WorkflowDefinition, provided: unknown): P
       } else {
         values[name] = n
       }
+    } else if (param.type === 'date') {
+      if (isIsoDate(value)) values[name] = value
+      else issues.push({ path: `parameters.${name}`, message: `${name} must be a date like 2026-04-03` })
     } else if (typeof value !== 'string') {
       issues.push({ path: `parameters.${name}`, message: `${name} must be text` })
     } else if (value.length > LIMITS.textMax) {

@@ -29,21 +29,28 @@ import { api, ApiError, qk } from '~/lib/api'
 import { CsvError, inferColumns, literalMismatch } from '~/lib/csv'
 import { SAMPLE_FILES, fetchSample, type SampleName } from '~/lib/samples'
 import { formatCount, formatINR } from '~/lib/format'
-import { describeStep, formatParameterValue, STEP_LABEL } from '~/lib/workflow/describe'
+import { describeStep, formatParameterValue, STEP_LABEL, DATE_OPERATOR_PHRASE, PART_PHRASE, type ParameterUnit } from '~/lib/workflow/describe'
+import { describeRelative, formatDate, isIsoDate, relativeDate, todayIso } from '~/lib/dates'
+import { CalendarRange } from 'lucide-react'
 import { analyze, validateDefinition } from '~/lib/workflow/validate'
 import {
   AGGREGATE_OPS,
   COLUMN_TYPE_LABEL,
+  DATE_PARTS,
+  DATE_UNITS,
   LIMITS,
   NAME_PATTERN,
   NUMERIC_ONLY_OPERATORS,
   OPERATORS,
   STEP_TYPES,
   TEXT_ONLY_OPERATORS,
+  isDateType,
   isNumericType,
   type AggregateOp,
   type Column,
   type ColumnType,
+  type DatePart,
+  type DateUnit,
   type Operator,
   type StepType,
   type WorkflowDefinition,
@@ -354,6 +361,7 @@ export function RecipeEditor(props: Props) {
                   ['sort', 'Add sort', <ArrowDownWideNarrow key="i" className="size-3.5" />],
                   ['limit', 'Add keep first N', <ListStart key="i" className="size-3.5" />],
                   ['select', 'Add column choice', <Columns3 key="i" className="size-3.5" />],
+                  ['date_part', 'Add period from a date', <CalendarRange key="i" className="size-3.5" />],
                 ] as const
               ).map(([type, label, icon]) => (
                 <Button
@@ -663,6 +671,7 @@ function InputSection({ draft, setDraft, issues }: { draft: Draft; setDraft: Rea
                         <option value="string">Text</option>
                         <option value="integer_inr">Amount (₹, whole)</option>
                         <option value="integer">Number (whole)</option>
+                        <option value="date">Date</option>
                       </Select>
                     </td>
                     <td className="hidden max-w-0 truncate px-3 py-2 text-[12.5px] text-muted sm:table-cell">
@@ -833,7 +842,7 @@ function switchType(step: DraftStep, type: StepType): Partial<DraftStep> {
   const fresh = newStep(type, [])
   return {
     type,
-    as: type === 'group_sum' ? step.as || 'total' : step.as,
+    as: type === 'group_sum' ? step.as || 'total' : type === 'date_part' ? step.as || 'month' : step.as,
     groupColumns: step.groupColumns.length ? step.groupColumns : fresh.groupColumns,
     measures: step.measures.length ? step.measures : fresh.measures,
     sortKeys: step.sortKeys.length ? step.sortKeys : fresh.sortKeys,
@@ -863,7 +872,7 @@ function filterMismatch(step: DraftStep, columnType: ColumnType | undefined, sam
   return null
 }
 
-type MakeParameter = (defaultValue: string, type: 'integer' | 'string', options?: { base?: string; min?: string }) => void
+type MakeParameter = (defaultValue: string, type: 'integer' | 'string' | 'date', options?: { base?: string; min?: string }) => void
 
 function StepCard({
   step,
@@ -976,6 +985,7 @@ function StepCard({
           <LimitBody step={step} parameters={parameters} previousType={previousType} onChange={onChange} onMakeParameter={onMakeParameter} />
         )}
         {step.type === 'select' && <SelectBody step={step} available={available} onChange={onChange} />}
+        {step.type === 'date_part' && <DatePartBody step={step} available={available} onChange={onChange} />}
 
         {mismatch && (
           <div className="flex flex-wrap items-center gap-2 rounded-lg border border-warn/25 bg-warn-soft px-3 py-2 text-[12.5px] text-warn-ink" role="status">
@@ -1000,11 +1010,13 @@ function StepCard({
   )
 }
 
-/** "Fixed value" / "Parameter" switch shared by filters and "keep first N". */
-function ValueKindToggle({ value, onChange }: { value: DraftStep['valueKind']; onChange: (kind: DraftStep['valueKind']) => void }) {
+/** "Fixed value" / "Parameter" (/ "Relative to run day" for dates) switch shared by filters and "keep first N". */
+function ValueKindToggle({ value, relative, onChange }: { value: DraftStep['valueKind']; relative?: boolean; onChange: (kind: DraftStep['valueKind']) => void }) {
+  const kinds: Array<[DraftStep['valueKind'], string]> = [['literal', relative ? 'Fixed date' : 'Fixed value'], ['parameter', 'Parameter']]
+  if (relative) kinds.push(['relative', 'Relative to run day'])
   return (
     <div className="inline-flex rounded-lg border border-line bg-sunken p-0.5">
-      {(['literal', 'parameter'] as const).map((kind) => (
+      {kinds.map(([kind, label]) => (
         <button
           key={kind}
           type="button"
@@ -1012,14 +1024,14 @@ function ValueKindToggle({ value, onChange }: { value: DraftStep['valueKind']; o
           aria-pressed={value === kind}
           className={cn('rounded-md px-2 py-0.5 font-medium', value === kind ? 'bg-surface text-ink shadow-soft' : 'text-muted hover:text-ink')}
         >
-          {kind === 'literal' ? 'Fixed value' : 'Parameter'}
+          {label}
         </button>
       ))}
     </div>
   )
 }
 
-function ParameterSelect({ value, parameters, type, onChange }: { value: string; parameters: DraftParam[]; type: 'integer' | 'string' | null; onChange: (name: string) => void }) {
+function ParameterSelect({ value, parameters, type, onChange }: { value: string; parameters: DraftParam[]; type: DraftParam['type'] | null; onChange: (name: string) => void }) {
   const matching = parameters.filter((p) => !type || p.type === type)
   return (
     <Select aria-label="Parameter" value={value} wrapperClassName="min-w-0 flex-1" className="font-mono text-[12.5px]" onChange={(e) => onChange(e.target.value)}>
@@ -1031,6 +1043,67 @@ function ParameterSelect({ value, parameters, type, onChange }: { value: string;
       ))}
       {value && !parameters.some((p) => p.name === value) && <option value={value}>{value} (not declared)</option>}
     </Select>
+  )
+}
+
+/** The relative date a filter draft describes (a half-typed offset counts as 0). */
+function relativeOf(step: DraftStep) {
+  const offset = Number(step.relativeOffset)
+  return { unit: step.relativeUnit, offset: Number.isInteger(offset) ? offset : 0, edge: step.relativeEdge }
+}
+
+/** "[start of] [this | last | next | N ago | N from now] [month]" for a date filter. */
+function RelativeDateFields({ step, onChange }: { step: DraftStep; onChange: (patch: Partial<DraftStep>) => void }) {
+  const raw = step.relativeOffset.trim()
+  const n = Number(raw)
+  const when = raw === '-' ? 'ago' : raw === '' || n === 0 ? 'this' : n === -1 ? 'last' : n === 1 ? 'next' : n < 0 ? 'ago' : 'ahead'
+  const many = when === 'ago' || when === 'ahead'
+  const count = raw.replace('-', '')
+  return (
+    <div className="flex min-w-0 flex-1 flex-wrap items-center gap-1.5">
+      {step.relativeUnit !== 'day' && (
+        <Select aria-label="Start or end" value={step.relativeEdge} className="text-[13px]" wrapperClassName="w-24 shrink-0" onChange={(e) => onChange({ relativeEdge: e.target.value as 'start' | 'end' })}>
+          <option value="start">start of</option>
+          <option value="end">end of</option>
+        </Select>
+      )}
+      <Select
+        aria-label="Which"
+        value={when}
+        className="text-[13px]"
+        wrapperClassName="w-28 shrink-0"
+        onChange={(e) => {
+          const w = e.target.value
+          const size = Math.max(2, Math.abs(n) || 0)
+          onChange({ relativeOffset: w === 'this' ? '0' : w === 'last' ? '-1' : w === 'next' ? '1' : w === 'ago' ? String(-size) : String(size) })
+        }}
+      >
+        <option value="this">this</option>
+        <option value="last">last</option>
+        <option value="next">next</option>
+        <option value="ago">… ago</option>
+        <option value="ahead">… from now</option>
+      </Select>
+      {many && (
+        <div className="w-16 shrink-0">
+          <Input
+            aria-label="How many"
+            inputMode="numeric"
+            value={count}
+            className="text-[13px]"
+            onChange={(e) => onChange({ relativeOffset: (when === 'ago' ? '-' : '') + e.target.value.replace(/\D/g, '') })}
+          />
+        </div>
+      )}
+      <Select aria-label="Unit" value={step.relativeUnit} className="text-[13px]" wrapperClassName="w-28 shrink-0" onChange={(e) => onChange({ relativeUnit: e.target.value as DateUnit })}>
+        {DATE_UNITS.map((unit) => (
+          <option key={unit} value={unit}>
+            {unit}
+            {many ? 's' : ''}
+          </option>
+        ))}
+      </Select>
+    </div>
   )
 }
 
@@ -1050,8 +1123,14 @@ function FilterBody({
   const columnType = available.find((c) => c.name === step.column)?.type
   const isAmount = columnType === 'integer_inr'
   const numeric = isNumericType(columnType)
-  const operators = OPERATORS.filter((op) => (columnType === undefined ? true : numeric ? !TEXT_ONLY_OPERATORS.has(op) : !NUMERIC_ONLY_OPERATORS.has(op)))
+  const isDate = isDateType(columnType)
+  const ordered = numeric || isDate
+  const operators = OPERATORS.filter((op) => (columnType === undefined ? true : ordered ? !TEXT_ONLY_OPERATORS.has(op) : !NUMERIC_ONLY_OPERATORS.has(op)))
+  const phrases = isDate ? DATE_OPERATOR_PHRASE : OPERATOR_PHRASE
   const isList = step.operator === 'in'
+  // "Relative to run day" only exists for dates; a draft that switched column falls back to a fixed value.
+  const kind: DraftStep['valueKind'] = step.valueKind === 'relative' && !isDate ? 'literal' : step.valueKind
+  const relative = kind === 'relative' ? relativeOf(step) : null
   return (
     <div className="grid gap-2.5 sm:grid-cols-[auto_minmax(0,1fr)_minmax(0,1fr)_minmax(0,1.3fr)] sm:items-center">
       <span className="text-[13px] text-muted">Keep rows where</span>
@@ -1061,49 +1140,63 @@ function FilterBody({
         available={available}
         onChange={(column) => {
           const t = available.find((c) => c.name === column)?.type
-          const incompatible = isNumericType(t) ? TEXT_ONLY_OPERATORS.has(step.operator) : NUMERIC_ONLY_OPERATORS.has(step.operator)
-          onChange({ column, operator: incompatible ? 'eq' : step.operator })
+          const incompatible = isNumericType(t) || isDateType(t) ? TEXT_ONLY_OPERATORS.has(step.operator) : NUMERIC_ONLY_OPERATORS.has(step.operator)
+          onChange({ column, operator: incompatible ? 'eq' : step.operator, valueKind: step.valueKind === 'relative' && !isDateType(t) ? 'literal' : step.valueKind })
         }}
       />
       <Select aria-label="Comparison" value={step.operator} className="text-[13px]" onChange={(e) => onChange({ operator: e.target.value as Operator })}>
         {operators.map((op) => (
           <option key={op} value={op}>
-            {OPERATOR_PHRASE[op]}
+            {phrases[op]}
           </option>
         ))}
       </Select>
       <div className="flex min-w-0 items-center gap-1.5">
         {isList ? (
           <Input aria-label="Values" value={step.list} placeholder="e.g. North, South" className="text-[13px]" onChange={(e) => onChange({ list: e.target.value })} />
-        ) : step.valueKind === 'literal' ? (
+        ) : kind === 'relative' ? (
+          <RelativeDateFields step={step} onChange={onChange} />
+        ) : kind === 'literal' ? (
           <div className="relative min-w-0 flex-1">
             {isAmount && <span className="pointer-events-none absolute top-1/2 left-3 -translate-y-1/2 text-[13px] text-faint">₹</span>}
             <Input
               aria-label="Value"
+              type={isDate ? 'date' : undefined}
               value={step.literal}
               inputMode={numeric ? 'numeric' : undefined}
-              placeholder={isAmount ? '100000' : numeric ? '10' : 'e.g. paid'}
+              placeholder={isAmount ? '100000' : numeric ? '10' : isDate ? 'YYYY-MM-DD' : 'e.g. paid'}
               className={cn('text-[13px]', isAmount && 'pl-6')}
               onChange={(e) => onChange({ literal: e.target.value })}
             />
           </div>
         ) : (
-          <ParameterSelect value={step.parameter} parameters={parameters} type={numeric ? 'integer' : columnType === 'string' ? 'string' : null} onChange={(parameter) => onChange({ parameter })} />
+          <ParameterSelect
+            value={step.parameter}
+            parameters={parameters}
+            type={numeric ? 'integer' : isDate ? 'date' : columnType === 'string' ? 'string' : null}
+            onChange={(parameter) => onChange({ parameter })}
+          />
         )}
       </div>
       <div className="flex flex-wrap items-center gap-2 text-[12px] sm:col-span-4 sm:col-start-2">
-        {!isList && <ValueKindToggle value={step.valueKind} onChange={(valueKind) => onChange({ valueKind })} />}
-        {!isList && step.valueKind === 'literal' && columnType && (
+        {!isList && <ValueKindToggle value={kind} relative={isDate} onChange={(valueKind) => onChange({ valueKind })} />}
+        {!isList && kind === 'literal' && columnType && (
           <button
             type="button"
             className="inline-flex items-center gap-1 font-medium text-brand-ink hover:underline"
-            onClick={() => onMakeParameter(numeric ? step.literal.replace(/\D/g, '') : step.literal, numeric ? 'integer' : 'string')}
+            onClick={() => onMakeParameter(numeric ? step.literal.replace(/\D/g, '') : step.literal, numeric ? 'integer' : isDate ? 'date' : 'string')}
           >
             <SlidersHorizontal className="size-3" /> Make adjustable
           </button>
         )}
-        {!isList && step.valueKind === 'literal' && numeric && /^\d+$/.test(step.literal.trim()) && (
+        {!isList && kind === 'literal' && numeric && /^\d+$/.test(step.literal.trim()) && (
           <span className="tabular text-faint">= {isAmount ? formatINR(Number(step.literal)) : formatCount(Number(step.literal))}</span>
+        )}
+        {!isList && kind === 'literal' && isDate && isIsoDate(step.literal.trim()) && <span className="tabular text-faint">= {formatDate(step.literal.trim())}</span>}
+        {relative && (
+          <span className="text-faint">
+            {describeRelative(relative)} · run today, that is {formatDate(relativeDate(todayIso(), relative))}
+          </span>
         )}
         {columnType === 'string' && (
           <span className="text-faint">
@@ -1111,6 +1204,30 @@ function FilterBody({
           </span>
         )}
       </div>
+    </div>
+  )
+}
+
+const PART_EXAMPLE: Record<DatePart, string> = { year: '2026', quarter: '2026-Q3', month: '2026-09', week: '2026-W39' }
+
+function DatePartBody({ step, available, onChange }: { step: DraftStep; available: Column[]; onChange: (patch: Partial<DraftStep>) => void }) {
+  return (
+    <div className="grid gap-2.5 sm:grid-cols-[auto_minmax(0,0.7fr)_auto_minmax(0,1fr)_auto_minmax(0,0.8fr)] sm:items-center">
+      <span className="text-[13px] text-muted">Add the</span>
+      <Select aria-label="Period" value={step.part} className="text-[13px]" onChange={(e) => onChange({ part: e.target.value as DatePart })}>
+        {DATE_PARTS.map((part) => (
+          <option key={part} value={part}>
+            {PART_PHRASE[part]}
+          </option>
+        ))}
+      </Select>
+      <span className="text-[13px] text-muted">of</span>
+      <ColumnSelect label="Date column" value={step.column} available={available} want={['date']} onChange={(column) => onChange({ column })} />
+      <span className="text-[13px] text-muted">as</span>
+      <Input aria-label="New column name" value={step.as} className="font-mono text-[12.5px]" placeholder="month" onChange={(e) => onChange({ as: e.target.value })} />
+      <p className="text-[12px] text-faint sm:col-span-6">
+        Adds a text column like <span className="font-mono">{PART_EXAMPLE[step.part]}</span> beside the others, in calendar order; group by it in a summary step.
+      </p>
     </div>
   )
 }
@@ -1363,7 +1480,7 @@ function ParamRow({
 }: {
   param: DraftParam
   /** How an integer parameter reads (rupees or a plain number), from how steps use it. */
-  unit: 'inr' | 'number' | undefined
+  unit: ParameterUnit | undefined
   issues: ApiIssue[]
   used: boolean
   onChange: (patch: Partial<DraftParam>) => void
@@ -1384,11 +1501,13 @@ function ParamRow({
           >
             <option value="integer">Amount (₹)</option>
             <option value="string">Text</option>
+            <option value="date">Date</option>
           </Select>
         </Field>
         <Field label="Default" htmlFor={`p-default-${param.key}`}>
           <Input
             id={`p-default-${param.key}`}
+            type={param.type === 'date' ? 'date' : undefined}
             value={param.default}
             inputMode={param.type === 'integer' ? 'numeric' : undefined}
             className="text-[13px]"
@@ -1404,6 +1523,8 @@ function ParamRow({
               <Input id={`p-max-${param.key}`} value={param.max} inputMode="numeric" className="text-[13px]" onChange={(e) => onChange({ max: e.target.value })} />
             </Field>
           </>
+        ) : param.type === 'date' ? (
+          <div className="sm:col-span-2 text-[12px] text-muted sm:pb-2.5">A calendar date; each run can choose another</div>
         ) : (
           <div className="sm:col-span-2 text-[12px] text-muted sm:pb-2.5">Up to {LIMITS.textMax} characters</div>
         )}
@@ -1415,6 +1536,7 @@ function ParamRow({
         {param.type === 'integer' && /^\d+$/.test(param.default) && (
           <span className="tabular text-muted">Default {formatParameterValue(Number(param.default), unit)}</span>
         )}
+        {param.type === 'date' && isIsoDate(param.default.trim()) && <span className="tabular text-muted">Default {formatDate(param.default.trim())}</span>}
         {!used && <span className="text-warn-ink">Not used by any step yet</span>}
       </div>
       {issues.length > 0 && (
@@ -1548,7 +1670,7 @@ function JsonDialog({
         </div>
       )}
       <p className="mt-2 flex items-center gap-1.5 text-[12px] text-muted">
-        <TypeIcon className="size-3.5" /> Column types: {COLUMN_TYPE_LABEL.string} (<code>string</code>), {COLUMN_TYPE_LABEL.integer_inr} (<code>integer_inr</code>) and {COLUMN_TYPE_LABEL.integer} (<code>integer</code>).
+        <TypeIcon className="size-3.5" /> Column types: {COLUMN_TYPE_LABEL.string} (<code>string</code>), {COLUMN_TYPE_LABEL.integer_inr} (<code>integer_inr</code>), {COLUMN_TYPE_LABEL.integer} (<code>integer</code>) and {COLUMN_TYPE_LABEL.date} (<code>date</code>).
       </p>
     </Dialog>
   )

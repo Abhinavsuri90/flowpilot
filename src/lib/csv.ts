@@ -1,6 +1,7 @@
 import Papa from 'papaparse'
 import type { ApiIssue } from './types'
 import { formatCount, formatINR } from './workflow/describe'
+import { checkDate } from './dates'
 import { LIMITS, type ColumnType, type Row } from './workflow/schema'
 
 // Browser-safe CSV handling: the editor uses inferColumns() on a sample file
@@ -252,8 +253,8 @@ export function parseForContract(input: CsvInput, contract: Record<string, Colum
     let rowOk = true
     for (const column of required) {
       const raw = cells[index.get(column)!] ?? ''
-      if (contract[column] === 'integer_inr' || contract[column] === 'integer') {
-        const check = contract[column] === 'integer_inr' ? checkAmount(raw) : checkWholeNumber(raw)
+      if (contract[column] === 'integer_inr' || contract[column] === 'integer' || contract[column] === 'date') {
+        const check = contract[column] === 'integer_inr' ? checkAmount(raw) : contract[column] === 'integer' ? checkWholeNumber(raw) : checkDate(raw)
         if (check.ok) row[column] = check.value
         else {
           rowOk = false
@@ -297,7 +298,8 @@ const COUNT_LIKE = /(^|[_\s-])(qty|quantity|units?|count|number|num|no|pieces|pc
  * Suggests a type per column from a sample file (runs in the browser; the file
  * is not uploaded). A column is numeric if every non-blank value passes the
  * whole-number rule: a whole number when its name looks like a count or
- * quantity, otherwise an amount in rupees. The author can change either.
+ * quantity, otherwise an amount in rupees. It is a date if every non-blank
+ * value reads as one. The author can change any of them.
  */
 export function inferColumns(input: CsvInput): { columns: InferredColumn[]; rowCount: number; issues: ApiIssue[] } {
   const table = parseTable(input)
@@ -306,10 +308,11 @@ export function inferColumns(input: CsvInput): { columns: InferredColumn[]; rowC
     const nonBlank = values.filter((v) => v !== '')
     const numeric = nonBlank.length > 0 && nonBlank.every((v) => checkWholeNumber(v).ok)
     const isAmount = numeric && !COUNT_LIKE.test(name) && nonBlank.every((v) => checkAmount(v).ok)
+    const isDate = !numeric && nonBlank.length > 0 && nonBlank.every((v) => checkDate(v).ok)
     const distinct = [...new Set(nonBlank)]
     return {
       name,
-      type: (isAmount ? 'integer_inr' : numeric ? 'integer' : 'string') as ColumnType,
+      type: (isAmount ? 'integer_inr' : numeric ? 'integer' : isDate ? 'date' : 'string') as ColumnType,
       samples: distinct.slice(0, 3),
       blanks: values.length - nonBlank.length,
       values: distinct.slice(0, DISTINCT_CAP),

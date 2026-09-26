@@ -91,14 +91,16 @@ A strict JSON document: a declared input, typed parameters, and up to 10 linear 
 
 | Step | What it does | Columns afterwards |
 |---|---|---|
-| `filter` | Keep rows where a column equals, doesn't equal or compares (numbers); `contains` (text, ignoring capitals); `in` a list | Unchanged |
+| `filter` | Keep rows where a column equals, doesn't equal or compares (numbers and dates); `contains` (text, ignoring capitals); `in` a list. A date compares with a fixed day, a date parameter, or a day relative to the run day (`relative`: unit, offset, start or end) | Unchanged |
 | `group_sum` | Group by one text column and total one amount column | The group column and the total |
 | `aggregate` | Group by 0–3 text or whole-number columns; up to 5 figures: count, sum, avg, min, max | The group columns and the figures |
 | `sort` | Up to 3 keys, ascending or descending; stable; text ordered by code point | Unchanged |
 | `limit` | Keep the first N rows (fixed or a run parameter); after a sort, a top N | Unchanged |
 | `select` | Keep the listed columns in order, with optional display headers | Exactly the listed columns |
+| `date_part` | Add the year, quarter, month or ISO week a date falls in (`2026-Q3`, `2026-09`, `2026-W39`) as a text column | Everything before, plus the period |
 
-- **Types:** text, amounts in whole rupees (`integer_inr`) and whole numbers (`integer`, for counts and quantities). Nothing is silently rounded or treated as zero. Averages are rounded half up with exact `BigInt` maths, and the step's description says so.
+- **Types:** text, amounts in whole rupees (`integer_inr`), whole numbers (`integer`, for counts and quantities) and dates (`date`, kept as `YYYY-MM-DD` text so text order is calendar order; the maths runs on day numbers, never on a time zone). Nothing is silently rounded, treated as zero or guessed: a cell like `03/04/2026` is reported with both readings instead of being read one way.
+- **Relative dates** ("the start of last month", "30 days ago") count from the day the recipe runs. The runner can choose another day; it is stored beside the run's parameters as `as_of` and the summary shows what each relative date meant. Averages are rounded half up with exact `BigInt` maths, and the step's description says so.
 - **One shape rule.** `lib/workflow/columns.ts` decides which columns exist after each step. The engine, the validator, the editor, the plain-language descriptions and the AI adapter all use it, so they can't disagree. The validator explains problems in terms people understand: *"Column "status" is no longer available: step s2 summarized the rows, which keeps only "region", "orders"."*
 - **Immutable versions.** The language only grows. Every version saved before a step type existed still runs exactly as before.
 
@@ -324,7 +326,7 @@ flowchart LR
 | Decision | Gain | Cost |
 |---|---|---|
 | Linear steps, not a graph | Simple to validate, render as cards and explain | No branches, joins or loops |
-| Deterministic engine, not an LLM runtime | Reproducible, auditable, cheap; runs with the model offline | Only what the six step types can express |
+| Deterministic engine, not an LLM runtime | Reproducible, auditable, cheap; runs with the model offline | Only what the seven step types can express |
 | Schema-only prompts | No customer rows leave the server | The model can't see value casing (the browser checks it) |
 | Immutable versions | Runs and pinned links stay reproducible | Every edit is a new version |
 | Copy, not reference | A copy never breaks when its source changes or goes private | Copies don't receive upstream fixes |

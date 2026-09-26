@@ -28,7 +28,7 @@ describe('validator', () => {
       stepIndex: 1,
       stepId: 'j1',
       path: 'steps[1].type',
-      message: 'Unsupported step type "join". Only filter, group_sum, aggregate, sort, limit and select are allowed.',
+      message: 'Unsupported step type "join". Only filter, group_sum, aggregate, sort, limit, select and date_part are allowed.',
     })
   })
 
@@ -103,7 +103,7 @@ describe('validator', () => {
     )
     expect(
       issuesOf(variant((d) => (d.steps[2].value = { literal: 5, parameter: 'threshold' }))).map((i) => i.message),
-    ).toContain('A value is exactly one of {"literal": …}, {"parameter": "<name>"} or {"list": […]}')
+    ).toContain('A value is exactly one of {"literal": …}, {"parameter": "<name>"}, {"list": […]} or {"relative": {…}}')
   })
 
   it('enforces 0 ≤ min ≤ default ≤ max ≤ 1,000,000,000 for integer parameters', () => {

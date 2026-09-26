@@ -104,7 +104,7 @@ describe('audit log', () => {
     expect(lines[0]).toBe('time_utc,actor,category,action,description,recipe_id')
     // Descriptions quote titles, so a formula-like title can't start a cell.
     expect(lines.slice(1).every((line) => !/,=|^=/.test(line))).toBe(true)
-    // Header + "recipes" events only: Vikram's 3 new recipes and the 2 seeded Sales examples (shares are "sharing").
-    expect(lines).toHaveLength(1 + 5)
+    // Header + "recipes" events only: Vikram's 3 new recipes and the 3 seeded Sales examples (shares are "sharing").
+    expect(lines).toHaveLength(1 + 6)
   })
 })

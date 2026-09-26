@@ -2,7 +2,7 @@ import { z } from 'zod'
 import { modelConfig, type ModelConfig } from './config'
 import { ApiError } from '../http'
 import { validateDefinition } from '../../lib/workflow/validate'
-import { AGGREGATE_OPS, COLUMN_TYPE_LABEL, LIMITS, OPERATORS, type Column, type ColumnType, type Step, type WorkflowDefinition } from '../../lib/workflow/schema'
+import { AGGREGATE_OPS, COLUMN_TYPE_LABEL, DATE_PARTS, DATE_UNITS, LIMITS, OPERATORS, type Column, type ColumnType, type Step, type WorkflowDefinition } from '../../lib/workflow/schema'
 import { columnsAfter } from '../../lib/workflow/columns'
 import type { ApiIssue, GenerateResult } from '../../lib/types'
 
@@ -28,12 +28,13 @@ export const OUTPUT_JSON_SCHEMA = {
       items: {
         type: 'object',
         additionalProperties: false,
-        required: ['name', 'type', 'integer_default', 'string_default', 'min', 'max'],
+        required: ['name', 'type', 'integer_default', 'string_default', 'date_default', 'min', 'max'],
         properties: {
           name: { type: 'string' },
-          type: { type: 'string', enum: ['integer', 'string'] },
+          type: { type: 'string', enum: ['integer', 'string', 'date'] },
           integer_default: nullable('integer'),
           string_default: nullable('string'),
+          date_default: { ...nullable('string'), description: 'For type "date": the default day as YYYY-MM-DD.' },
           min: nullable('integer'),
           max: nullable('integer'),
         },
@@ -46,17 +47,20 @@ export const OUTPUT_JSON_SCHEMA = {
           {
             type: 'object',
             additionalProperties: false,
-            required: ['id', 'type', 'column', 'operator', 'value_kind', 'literal_string', 'literal_integer', 'parameter', 'list'],
+            required: ['id', 'type', 'column', 'operator', 'value_kind', 'literal_string', 'literal_integer', 'parameter', 'list', 'relative_unit', 'relative_offset', 'relative_edge'],
             properties: {
               id: { type: 'string' },
               type: { type: 'string', enum: ['filter'] },
               column: { type: 'string' },
               operator: { type: 'string', enum: [...OPERATORS] },
-              value_kind: { type: 'string', enum: ['literal', 'parameter', 'list'] },
-              literal_string: nullable('string'),
+              value_kind: { type: 'string', enum: ['literal', 'parameter', 'list', 'relative'] },
+              literal_string: { ...nullable('string'), description: 'Text values, and fixed dates as YYYY-MM-DD.' },
               literal_integer: nullable('integer'),
               parameter: nullable('string'),
               list: { type: ['array', 'null'], items: { type: 'string' }, description: 'For operator "in" (value_kind "list"): the values to keep.' },
+              relative_unit: { ...nullable('string'), description: `For value_kind "relative" on a date column: one of ${DATE_UNITS.join(', ')}.` },
+              relative_offset: { ...nullable('integer'), description: 'For value_kind "relative": 0 = this, -1 = last, 1 = next, -30 = 30 units ago.' },
+              relative_edge: { ...nullable('string'), description: 'For value_kind "relative": "start" or "end" of that day, week, month, quarter or year.' },
             },
           },
           {
@@ -127,6 +131,18 @@ export const OUTPUT_JSON_SCHEMA = {
           {
             type: 'object',
             additionalProperties: false,
+            required: ['id', 'type', 'column', 'part', 'as'],
+            properties: {
+              id: { type: 'string' },
+              type: { type: 'string', enum: ['date_part'] },
+              column: { type: 'string', description: 'A date column.' },
+              part: { type: 'string', enum: [...DATE_PARTS] },
+              as: { type: 'string', description: 'The new text column, e.g. "month".' },
+            },
+          },
+          {
+            type: 'object',
+            additionalProperties: false,
             required: ['id', 'type', 'columns'],
             properties: {
               id: { type: 'string' },
@@ -158,9 +174,10 @@ const ModelOutput = z.object({
     .array(
       z.object({
         name: z.string(),
-        type: z.enum(['integer', 'string']),
+        type: z.enum(['integer', 'string', 'date']),
         integer_default: z.number().nullish(),
         string_default: z.string().nullish(),
+        date_default: z.string().nullish(),
         min: z.number().nullish(),
         max: z.number().nullish(),
       }),
@@ -174,12 +191,16 @@ const ModelOutput = z.object({
           type: z.literal('filter'),
           column: z.string(),
           operator: z.string(),
-          value_kind: z.enum(['literal', 'parameter', 'list']),
+          value_kind: z.enum(['literal', 'parameter', 'list', 'relative']),
           literal_string: z.string().nullish(),
           literal_integer: z.number().nullish(),
           parameter: z.string().nullish(),
           list: z.array(z.string()).nullish(),
+          relative_unit: z.string().nullish(),
+          relative_offset: z.number().nullish(),
+          relative_edge: z.string().nullish(),
         }),
+        z.object({ id: z.string(), type: z.literal('date_part'), column: z.string(), part: z.string(), as: z.string() }),
         z.object({ id: z.string(), type: z.literal('group_sum'), group_by: z.string(), value_column: z.string(), as: z.string() }),
         z.object({
           id: z.string(),
@@ -204,10 +225,12 @@ type ModelOutput = z.infer<typeof ModelOutput>
 
 export const SYSTEM_PROMPT = `You turn one sentence from a business user into a FlowPilot recipe: a short, linear list of steps over the rows of a CSV file. You only draft. A person reviews the draft, and a fixed engine runs it later without you.
 
-Column types: text, amount (whole Indian rupees) and whole number (a count or quantity). Amounts and whole numbers are both "number columns".
+Column types: text, amount (whole Indian rupees), whole number (a count or quantity) and date (a calendar day). Amounts and whole numbers are both "number columns".
 
 The only operations:
-- filter: keep rows where <column> <operator> <value>. eq and neq work on any column; lt, lte, gt and gte on number columns; contains (ignores capitals, value_kind "literal") and in (is one of a list, value_kind "list", values in "list") on text columns. eq, neq and in match text exactly and case-sensitively.
+- filter: keep rows where <column> <operator> <value>. eq and neq work on any column; lt, lte, gt and gte on number and date columns; contains (ignores capitals, value_kind "literal") and in (is one of a list, value_kind "list", values in "list") on text columns. eq, neq and in match text exactly and case-sensitively.
+  Date values: a fixed day is value_kind "literal" with literal_string "YYYY-MM-DD". A day that depends on when the recipe runs is value_kind "relative" with relative_unit (day, week, month, quarter or year), relative_offset (0 = this, -1 = last, 1 = next, -30 = 30 units ago) and relative_edge ("start" or "end" of that unit). Examples: "last 30 days" = ordered_on gte relative day -30 start. "this month" = gte relative month 0 start AND lte relative month 0 end (two filters). "last month" = gte month -1 start AND lte month -1 end. "year to date" = gte relative year 0 start. "last quarter" = quarter -1 start and end. "since 1 April 2026" = gte literal_string "2026-04-01". Never use contains, in or a text value on a date column.
+- date_part: add a text column named "as" holding the period a date column falls in: part "month" gives 2026-09, "quarter" gives 2026-Q3, "year" gives 2026, "week" gives 2026-W39. Every existing column stays. For "by month", "monthly", "per quarter", "each week" or "year on year": add date_part, then group by the new column (aggregate or group_sum), then sort by it asc.
 - group_sum: group rows by one text column (group_by) and total one amount column (value_column) into a new amount column named by "as". After it ONLY the group_by column and the "as" column exist.
 - aggregate: group rows by zero to three text or whole-number columns (group_by) and compute one to five figures (measures): count (number of rows, column null), sum, avg, min or max of a number column, each named by "as". An empty group_by gives one summary row over all rows. After it ONLY the group_by columns and the figures exist; a count is a whole number, the other figures keep their column's type, and averages are rounded to whole numbers.
 - sort: order rows by one to three columns, direction "desc" (highest first, or Z to A) or "asc".
@@ -222,10 +245,10 @@ Rules:
 - Use group_sum when the only figure asked for is one total per group. Use aggregate for counts, averages, smallest or largest values, several figures, or totals over all rows.
 - "Top N" or "the N largest": group if needed, then sort desc by the figure, then limit N. "Bottom N" or "lowest": sort asc, then limit.
 - Only add a select step when the user asks for particular columns, an order of columns, or names for them.
-- If the user calls a value configurable, adjustable, a threshold or a limit, or gives "default N", make it a parameter: type "integer" for numbers (integer_default N, min 0, max 1000000000; min 1 when it is how many rows to keep) or "string" for text (string_default). Reference it with value_kind "parameter" (or rows_kind "parameter" in a limit).
+- If the user calls a value configurable, adjustable, a threshold or a limit, or gives "default N", make it a parameter: type "integer" for numbers (integer_default N, min 0, max 1000000000; min 1 when it is how many rows to keep), "string" for text (string_default) or "date" for a day chosen per run (date_default "YYYY-MM-DD"). Reference it with value_kind "parameter" (or rows_kind "parameter" in a limit).
 - Step ids are s1, s2, s3 in order. Parameter names and "as" names in group_sum and aggregate use lowercase letters, digits and underscores, starting with a letter.
 - Use as few steps as the request needs, and never more than 10.
-- Answer kind "unsupported", with a one-sentence reason, for anything these operations cannot do: sending email, Gmail, Slack or Sheets; calling APIs or URLs; scheduling or recurring runs; joining files; charts; dates and periods (by month, last 30 days); percentages, ratios or shares of a total; writing code or SQL.
+- Answer kind "unsupported", with a one-sentence reason, for anything these operations cannot do: sending email, Gmail, Slack or Sheets; calling APIs or URLs; scheduling or recurring runs; joining files; charts; percentages, ratios or shares of a total; comparing one period with another in the same row; writing code or SQL. Anything about dates on a column that is not a date type is unsupported too: say the column must be declared as a date.
 - Answer kind "clarification", with one short question, when a column reference is ambiguous (for example when two declared columns could match a word in the request).
 - Otherwise answer kind "workflow". Set fields that don't apply to null, and empty lists to [].`
 
@@ -368,7 +391,9 @@ export function toDefinition(out: ModelOutput, columns: Record<string, ColumnTyp
     parameters[p.name] =
       p.type === 'integer'
         ? { type: 'integer', default: p.integer_default ?? 0, min: p.min ?? 0, max: p.max ?? LIMITS.integerParameterMax }
-        : { type: 'string', default: p.string_default ?? '' }
+        : p.type === 'date'
+          ? { type: 'date', default: p.date_default ?? p.string_default ?? '' }
+          : { type: 'string', default: p.string_default ?? '' }
   }
   // Track the columns step by step (the same rule as the engine) so a number
   // written as text, or vice versa, lands in the right slot.
@@ -400,9 +425,15 @@ function toStep(s: ModelStep, available: Column[]): unknown {
       return { id: s.id, type: 'limit', rows: s.rows_kind === 'parameter' ? { parameter: s.parameter ?? '' } : { literal: s.rows_integer ?? 0 } }
     case 'select':
       return { id: s.id, type: 'select', columns: s.columns.map((c) => (c.as ? { column: c.column, as: c.as } : { column: c.column })) }
+    case 'date_part':
+      return { id: s.id, type: 'date_part', column: s.column, part: s.part, as: s.as }
     case 'filter': {
       if (s.operator === 'in' || s.value_kind === 'list') {
         return { id: s.id, type: 'filter', column: s.column, operator: s.operator, value: { list: s.list ?? [] } }
+      }
+      if (s.value_kind === 'relative') {
+        const relative = { unit: s.relative_unit ?? 'day', offset: s.relative_offset ?? 0, edge: s.relative_edge ?? 'start' }
+        return { id: s.id, type: 'filter', column: s.column, operator: s.operator, value: { relative } }
       }
       const type = available.find((c) => c.name === s.column)?.type
       let literal: string | number = s.literal_string ?? (s.literal_integer ?? '')

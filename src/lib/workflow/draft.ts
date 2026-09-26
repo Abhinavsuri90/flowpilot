@@ -1,4 +1,5 @@
-import { AGGREGATE_OPS, OPERATORS, type AggregateOp, type ColumnType, type Operator, type StepType, type WorkflowDefinition } from './schema'
+import { AGGREGATE_OPS, COLUMN_TYPES, DATE_PARTS, DATE_UNITS, OPERATORS, type AggregateOp, type ColumnType, type DatePart, type DateUnit, type Operator, type StepType, type WorkflowDefinition } from './schema'
+import { todayIso } from '../dates'
 
 // The editor edits a loose, form-friendly draft. It converts to a definition on
 // every change, and the same validator as the server decides whether it's valid.
@@ -12,7 +13,7 @@ export type DraftColumn = {
   /** Distinct values from the sample file (browser only; never part of the recipe or sent to the model). */
   values?: string[]
 }
-export type DraftParam = { key: string; name: string; type: 'integer' | 'string'; default: string; min: string; max: string }
+export type DraftParam = { key: string; name: string; type: 'integer' | 'string' | 'date'; default: string; min: string; max: string }
 export type DraftMeasure = { key: string; op: AggregateOp; column: string; as: string }
 export type DraftSortKey = { key: string; column: string; direction: 'asc' | 'desc' }
 export type DraftPick = { key: string; column: string; as: string }
@@ -22,14 +23,20 @@ export type DraftStep = {
   key: string
   id: string
   type: StepType
-  // filter (and limit: valueKind / literal / parameter hold the number of rows)
+  // filter (and limit: valueKind / literal / parameter hold the number of rows; date_part: column + as)
   column: string
   operator: Operator
-  valueKind: 'literal' | 'parameter'
+  valueKind: 'literal' | 'parameter' | 'relative'
   literal: string
   parameter: string
   /** "is one of" values, comma-separated as typed. */
   list: string
+  /** A date relative to the run day (filters on date columns). */
+  relativeUnit: DateUnit
+  relativeOffset: string
+  relativeEdge: 'start' | 'end'
+  // date_part
+  part: DatePart
   // group_sum
   groupBy: string
   valueColumn: string
@@ -80,9 +87,13 @@ export function newStep(type: StepType, existingIds: string[]): DraftStep {
     literal: type === 'limit' ? '10' : '',
     parameter: '',
     list: '',
+    relativeUnit: 'month',
+    relativeOffset: '-1',
+    relativeEdge: 'start',
+    part: 'month',
     groupBy: '',
     valueColumn: '',
-    as: type === 'group_sum' ? 'total' : '',
+    as: type === 'group_sum' ? 'total' : type === 'date_part' ? 'month' : '',
     groupColumns: type === 'aggregate' ? [''] : [],
     measures: type === 'aggregate' ? [newMeasure()] : [],
     sortKeys: type === 'sort' ? [newSortKey()] : [],
@@ -90,15 +101,16 @@ export function newStep(type: StepType, existingIds: string[]): DraftStep {
   }
 }
 
-export function newParam(existingNames: string[], type: 'integer' | 'string' = 'integer', dflt = '', base?: string, min = '0'): DraftParam {
-  const stem = base ?? (type === 'integer' ? 'threshold' : 'value')
+export function newParam(existingNames: string[], type: 'integer' | 'string' | 'date' = 'integer', dflt = '', base?: string, min = '0'): DraftParam {
+  const stem = base ?? (type === 'integer' ? 'threshold' : type === 'date' ? 'from_date' : 'value')
   let name = stem
   let n = 2
   while (existingNames.includes(name)) name = `${stem}_${n++}`
-  return { key: draftKey(), name, type, default: dflt || (type === 'integer' ? '0' : ''), min, max: '1000000000' }
+  return { key: draftKey(), name, type, default: dflt || (type === 'integer' ? '0' : type === 'date' ? todayIso() : ''), min, max: '1000000000' }
 }
 
 const asInt = (s: string): number | string => (/^\s*\d{1,15}\s*$/.test(s) ? Number(s.trim()) : s)
+const asSignedInt = (s: string): number | string => (/^\s*-?\d{1,9}\s*$/.test(s) ? Number(s.trim()) : s)
 
 /** "North, South ,  West" → ["North", "South", "West"]. */
 export function splitList(text: string): string[] {
@@ -129,6 +141,8 @@ export function typesBefore(draft: Pick<Draft, 'columns' | 'steps'>): Array<Map<
       const next = new Map<string, ColumnType>()
       for (const p of step.picks) if (p.column && before.has(p.column)) next.set(p.as.trim() || p.column, before.get(p.column)!)
       current = next
+    } else if (step.type === 'date_part' && step.as.trim()) {
+      current = new Map(before).set(step.as.trim(), 'string')
     }
     return before
   })
@@ -142,7 +156,9 @@ export function draftToDefinition(draft: Draft): unknown {
     parameters[p.name] =
       p.type === 'integer'
         ? { type: 'integer', default: asInt(p.default), min: asInt(p.min), max: asInt(p.max) }
-        : { type: 'string', default: p.default }
+        : p.type === 'date'
+          ? { type: 'date', default: p.default.trim() }
+          : { type: 'string', default: p.default }
   }
   return {
     schemaVersion: 1,
@@ -172,18 +188,20 @@ export function draftToDefinition(draft: Draft): unknown {
             type: 'select',
             columns: s.picks.map((p) => (p.as.trim() && p.as.trim() !== p.column ? { column: p.column, as: p.as.trim() } : { column: p.column })),
           }
+        case 'date_part':
+          return { id: s.id, type: 'date_part', column: s.column, part: s.part, as: s.as.trim() }
         case 'filter': {
           const columnType = types[i]?.get(s.column)
           if (s.operator === 'in') return { id: s.id, type: 'filter', column: s.column, operator: 'in', value: { list: splitList(s.list) } }
           const numeric = columnType === 'integer_inr' || columnType === 'integer'
           const literal = numeric ? asInt(s.literal) : s.literal.trim()
-          return {
-            id: s.id,
-            type: 'filter',
-            column: s.column,
-            operator: s.operator,
-            value: s.valueKind === 'parameter' ? { parameter: s.parameter } : { literal },
-          }
+          const value =
+            s.valueKind === 'parameter'
+              ? { parameter: s.parameter }
+              : s.valueKind === 'relative'
+                ? { relative: { unit: s.relativeUnit, offset: asSignedInt(s.relativeOffset), edge: s.relativeEdge } }
+                : { literal }
+          return { id: s.id, type: 'filter', column: s.column, operator: s.operator, value }
         }
       }
     }),
@@ -238,18 +256,30 @@ function draftStepFrom(raw: unknown, i: number): DraftStep {
       })
       return { ...newStep('select', []), id, picks }
     }
+    case 'date_part':
+      return {
+        ...newStep('date_part', []),
+        id,
+        column: text(obj.column),
+        part: DATE_PARTS.find((p) => p === obj.part) ?? 'month',
+        as: text(obj.as),
+      }
     default: {
       const value = isObj(obj.value) ? obj.value : {}
+      const relative = isObj(value.relative) ? value.relative : null
       const operator = OPERATORS.find((o) => o === obj.operator) ?? 'eq'
       return {
         ...newStep('filter', []),
         id,
         column: text(obj.column),
         operator,
-        valueKind: 'parameter' in value ? 'parameter' : 'literal',
+        valueKind: 'parameter' in value ? 'parameter' : relative ? 'relative' : 'literal',
         literal: text(value.literal),
         parameter: text(value.parameter),
         list: Array.isArray(value.list) ? value.list.map(text).join(', ') : '',
+        relativeUnit: DATE_UNITS.find((u) => u === relative?.unit) ?? 'month',
+        relativeOffset: relative ? text(relative.offset) || '0' : '-1',
+        relativeEdge: relative?.edge === 'end' ? 'end' : 'start',
       }
     }
   }
@@ -285,14 +315,14 @@ export function draftFromUnknown(raw: unknown): Pick<Draft, 'columns' | 'paramet
   return {
     columns: Object.entries(columns).map(([name, type]) => ({
       name,
-      type: type === 'integer_inr' || type === 'integer' ? type : 'string',
+      type: (COLUMN_TYPES as readonly unknown[]).includes(type) ? (type as ColumnType) : 'string',
       include: true,
       samples: [],
       blanks: 0,
     })),
     parameters: Object.entries(params).map(([name, p]) => {
       const obj = isObj(p) ? p : {}
-      const type = obj.type === 'string' ? 'string' : 'integer'
+      const type = obj.type === 'string' ? 'string' : obj.type === 'date' ? 'date' : 'integer'
       return {
         key: draftKey(),
         name,

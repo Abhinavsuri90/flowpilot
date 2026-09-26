@@ -4,6 +4,7 @@ export const SAMPLE_FILES = [
   { name: 'sales_A.csv', columns: ['order_id', 'region', 'sales_rep', 'status', 'amount'] },
   { name: 'sales_B.csv', columns: ['order_id', 'region', 'sales_rep', 'status', 'amount'] },
   { name: 'marketing_spend.csv', columns: ['campaign', 'channel', 'status', 'spend'] },
+  { name: 'orders_dated.csv', columns: ['order_id', 'ordered_on', 'region', 'sales_rep', 'status', 'amount'] },
 ] as const
 
 export type SampleName = (typeof SAMPLE_FILES)[number]['name']
