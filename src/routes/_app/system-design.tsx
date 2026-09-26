@@ -5,15 +5,19 @@ import {
   AlertTriangle,
   Boxes,
   Braces,
+  Cloud,
   Database,
   GitBranch,
+  KeyRound,
   Layers,
   ListOrdered,
   Network,
   Scale,
   Server,
+  ShieldCheck,
   Sparkles,
   Timer,
+  Workflow,
   Zap,
 } from 'lucide-react'
 import { api, qk } from '~/lib/api'
@@ -22,6 +26,7 @@ import type { SystemInfo } from '~/lib/types'
 import { Badge, Card, CardHeader, PageHeader, Segmented, Skeleton, cn } from '~/components/ui'
 import { ArchitectureDiagram, PathLegend, type PathView } from '~/components/diagrams/architecture'
 import { VersioningDiagram } from '~/components/diagrams/versioning'
+import { FlowDiagram, FlowSwitcher } from '~/components/diagrams/flows'
 
 export const Route = createFileRoute('/_app/system-design')({
   head: () => ({ meta: [{ title: 'System design · FlowPilot' }] }),
@@ -31,11 +36,15 @@ export const Route = createFileRoute('/_app/system-design')({
 const SECTIONS = [
   { id: 'architecture', label: 'Architecture' },
   { id: 'lifecycle', label: 'Pressing Run' },
+  { id: 'language', label: 'Recipe language' },
   { id: 'ai', label: 'AI authoring' },
   { id: 'versions', label: 'Versions & forks' },
+  { id: 'identity', label: 'Identity & teams' },
+  { id: 'security', label: 'Security model' },
   { id: 'schema', label: 'Live schema' },
   { id: 'limits', label: 'Limits' },
   { id: 'failures', label: 'Failure modes' },
+  { id: 'deployment', label: 'Deployment' },
   { id: 'scaling', label: 'Scaling path' },
   { id: 'tradeoffs', label: 'Trade-offs' },
   { id: 'stack', label: 'Tech stack' },
@@ -54,11 +63,15 @@ function SystemDesign() {
         <div className="min-w-0 space-y-6">
           <ArchitectureSection />
           <LifecycleSection />
+          <LanguageSection />
           <AiSection system={system.data} />
           <VersionsSection />
+          <IdentitySection />
+          <SecuritySection />
           <SchemaSection system={system.data} loading={system.isPending} error={system.error} />
           <LimitsSection system={system.data} />
           <FailuresSection />
+          <DeploymentSection />
           <ScalingSection />
           <TradeoffsSection />
           <StackSection system={system.data} />
@@ -445,7 +458,175 @@ function FailuresSection() {
           ['Execution exceeds 30 s', 'Deadline checks in the engine', 'Run stored as failed TIMEOUT'],
           ['Process crash mid-run', 'running row older than 60 s', 'Reported as failed STALE in history'],
           ['Zero matching rows', 'Engine returns an empty table', '“No rows matched” with a hint; never placeholder data'],
+          ['File saved as Windows-1252, UTF-16, or with semicolons', 'Strict UTF-8 decoding; one-column header check', '422 naming the cause and the Save As fix, checked in the browser first'],
+          ['Header differs only by case (“Status”)', 'Near-miss comparison', 'The missing-column message names the header the file has'],
+          ['Recipe archived by its owner', 'archived_at on every run, copy and save', '409 RECIPE_ARCHIVED; the page offers Restore to the owner'],
+          ['Invite or reset link expired, used or revoked', 'Hashed token lookup', '404 INVITE_INVALID / RESET_INVALID with “ask for a new one”'],
+          ['Too many sign-ins, sign-ups, resets or drafts', 'In-memory sliding windows', '429 with Retry-After; sign-in counts per email and address, so nobody can lock out someone else'],
           ['Someone edits a recipe you’re viewing', 'Versions are immutable', 'Your pinned version keeps working; a banner says “Version N (latest is M)”'],
+        ]}
+      />
+    </Section>
+  )
+}
+
+// ----- Recipe language -----------------------------------------------------------------------------
+
+function LanguageSection() {
+  return (
+    <Section
+      id="language"
+      icon={<Workflow />}
+      title="The recipe language"
+      description="A strict JSON document: a declared input, typed parameters and up to 10 linear steps from an allowlist. Nothing a person or a model writes is ever evaluated as code."
+    >
+      <Table
+        head={['Step', 'What it does', 'Columns afterwards']}
+        rows={[
+          [code('filter'), <>Keep rows where a column equals / doesn’t equal / compares (numbers) / {code('contains')} (text, ignoring capitals) / {code('in')} a list</>, 'Unchanged'],
+          [code('group_sum'), 'Group by one text column and total one amount column', 'The group column and the total'],
+          [code('aggregate'), 'Group by 0–3 text or whole-number columns; up to 5 figures: count, sum, avg, min, max', 'The group columns and the figures (counts are whole numbers)'],
+          [code('sort'), 'Up to 3 keys, ascending or descending; stable, text by code point', 'Unchanged'],
+          [code('limit'), 'Keep the first N rows (a fixed number or a run parameter): with a sort, a top N', 'Unchanged'],
+          [code('select'), 'Keep listed columns in order, with optional display headers', 'Exactly the listed columns'],
+        ]}
+      />
+      <ul className="mt-3 space-y-1 text-[13px] text-muted">
+        <li>• Column types: text, amounts in whole rupees and whole numbers. Amounts are never rounded or guessed; averages are rounded half up with exact integer maths, and the step says so.</li>
+        <li>• One shape rule ({code('lib/workflow/columns.ts')}) decides which columns exist after each step, for the engine, the validator, the editor, the descriptions and the AI adapter alike.</li>
+        <li>• Saved versions are immutable, so the language only grows: every recipe saved before a new step type existed still runs exactly as it did.</li>
+      </ul>
+    </Section>
+  )
+}
+
+// ----- Identity and teams ---------------------------------------------------------------------------
+
+function IdentitySection() {
+  return (
+    <Section
+      id="identity"
+      icon={<KeyRound />}
+      title="Identity, teams and workspaces"
+      description="Anyone can start a workspace; teammates join by invitation in a role. Every secret that grants access (sessions, invites, reset links) is stored only as a SHA-256 hash."
+    >
+      <FlowSwitcher
+        label="Account flow"
+        flows={[
+          {
+            value: 'signup',
+            label: 'Sign up',
+            steps: [
+              { title: 'Form', lines: ['Name, email, password, workspace', 'Rules checked as you type'] },
+              { title: 'Gate', lines: ['REGISTRATION: open / invite-only / closed', '20 sign-ups per hour per address'] },
+              { title: 'Validate', lines: ['≥ 10 characters, not common', 'Email free (409 if taken)'] },
+              { title: 'One transaction', lines: ['User + workspace', 'You as admin, audit event'], tag: 'scrypt' },
+              { title: 'Session', lines: ['256-bit token, HttpOnly cookie', 'Workspace in use: the new one'], tag: 'hash only' },
+            ],
+          },
+          {
+            value: 'invite',
+            label: 'Invite',
+            steps: [
+              { title: 'Admin', lines: ['Chooses a role', 'Optionally one email'] },
+              { title: 'Link', lines: ['Random token, hash stored', '7 days · 1 use (email) or 25'], tag: 'hash only' },
+              { title: 'Delivery', lines: ['Copied once, or emailed', '(Resend; else the server log)'] },
+              { title: 'Landing', lines: ['Who invited you, to what, as what', 'Sign up, or sign in'] },
+              { title: 'Join', lines: ['Email lock checked, use counted', 'Membership + audit event'] },
+            ],
+            note: 'Admins can list and revoke pending links; a revoked or expired link answers 404 with “ask for a new one”.',
+          },
+          {
+            value: 'reset',
+            label: 'Reset password',
+            steps: [
+              { title: 'Request', lines: ['Same answer for every email', '3 an hour per email'] },
+              { title: 'Link', lines: ['1 hour, single use', 'Sent without delaying the answer'], tag: 'hash only' },
+              { title: 'Open', lines: ['Shows a masked email', 'Dead links explain themselves'] },
+              { title: 'New password', lines: ['Same rules as sign-up'], tag: 'scrypt' },
+              { title: 'Sign out everywhere', lines: ['Every session deleted', 'This browser signed in'] },
+            ],
+          },
+        ]}
+      />
+      <Table
+        className="mt-5"
+        head={['Concern', 'How it works']}
+        rows={[
+          ['Sessions', '7-day tokens in an HttpOnly, SameSite=Lax cookie (Secure on HTTPS); expired ones purged at sign-in; “sign out everywhere else” on the account page'],
+          ['Workspaces', 'People can belong to several; each browser session works in one (switcher in the sidebar), and lists, the dashboard and the Access page follow it'],
+          ['Roles', 'Admin, member, viewer, read fresh on every request, so a change applies to the next click'],
+          ['People leaving', 'Their recipes move to an admin; a trigger only allows handing a recipe to an admin or member of its workspace'],
+          ['Brute force', 'Sign-in failures counted per email + address (10), per email (50) and per address (100): an attacker can’t lock out someone else'],
+          ['Demo accounts', 'Only in DEMO_MODE, and locked: no password, name or membership changes'],
+        ]}
+      />
+    </Section>
+  )
+}
+
+// ----- Security model ------------------------------------------------------------------------------
+
+function SecuritySection() {
+  return (
+    <Section
+      id="security"
+      icon={<ShieldCheck />}
+      title="Security model"
+      description="Threats considered, what stops each one, and the test that proves it."
+    >
+      <Table
+        head={['Threat', 'Mitigation', 'Evidence']}
+        rows={[
+          ['Seeing another team’s recipes or runs', 'One pure policy on every request; 404 hides existence; runs private to the runner', 'access and hardening suites'],
+          ['Cross-site request forgery', 'Origin check on every write (including sign-up and resets); SameSite=Lax cookie', 'smoke: cross-site write → 403'],
+          ['Stolen database', 'scrypt passwords; sessions, invites and reset links stored only as hashes', 'accounts suite'],
+          ['Password guessing / lockout abuse', 'Three-way sign-in throttle; strong-password rules', 'accounts suite'],
+          ['Account enumeration', 'Uniform sign-in errors, dummy scrypt for unknown emails, uniform forgot-password answer', 'accounts suite'],
+          ['Open redirect after sign-in', 'Only same-site paths; control characters refused', 'hardening suite'],
+          ['Spreadsheet formula injection', 'Formula-like cells escaped in every CSV export', 'csv and governance suites'],
+          ['Code injection via recipes or AI', 'Allowlisted steps; values are literals or declared parameters; nothing evaluated', 'validator and language suites'],
+          ['Prompt injection / data leakage to the model', 'The model sees the sentence and column names only, never rows; its output is validated like any client input', 'ai suite'],
+          ['Oversized or hostile uploads', '1 MiB cap on bytes read, 5,000 rows, 50 columns, strict UTF-8, 30 s deadline', 'csv suite, smoke'],
+          ['Clickjacking / sniffing', 'X-Frame-Options DENY, nosniff, Referrer-Policy, no-store on API responses', 'smoke: security headers'],
+          ['Tampering below the API', 'SQLite triggers: immutable versions, final runs, append-only audit log, owner hand-over rules', 'access suite'],
+        ]}
+      />
+    </Section>
+  )
+}
+
+// ----- Deployment ------------------------------------------------------------------------------------
+
+function DeploymentSection() {
+  return (
+    <Section
+      id="deployment"
+      icon={<Cloud />}
+      title="Deployment"
+      description="One small Node process with SQLite on a persistent volume: cheap, fast to boot, and honest about being single-node."
+    >
+      <FlowDiagram
+        tone="flow"
+        label="Production request path"
+        steps={[
+          { title: 'Browser', lines: ['HTTPS only', 'Secure cookies automatically'] },
+          { title: 'Edge proxy', lines: ['TLS termination', 'Client address forwarded'], tag: 'TRUST_PROXY' },
+          { title: 'App machine', lines: ['node .output/server/index.mjs', 'Migrations on start'], tag: 'Docker' },
+          { title: 'Volume', lines: ['/data/flowpilot.db', 'SQLite WAL, single writer'] },
+          { title: 'Checks', lines: ['GET /api/health for the platform', 'npm run smoke -- --base <url>'] },
+        ]}
+      />
+      <Table
+        className="mt-5"
+        head={['Setting', 'Production value', 'Why']}
+        rows={[
+          [code('DATABASE_PATH'), '/data/flowpilot.db on a volume', 'Survives restarts and redeploys'],
+          [code('REGISTRATION'), 'open (or invite-only for one company)', 'Who may create accounts'],
+          [code('DEMO_MODE'), 'on for a public showcase, else off', 'One-click demo accounts, locked against changes'],
+          [code('TRUST_PROXY'), 'true behind the platform’s proxy', 'Rate limits see each visitor’s own address'],
+          [code('APP_URL'), 'the public https:// address', 'Correct links in invite and reset emails'],
+          [code('OPENROUTER_API_KEY'), 'a secret, never in the image', 'AI drafting; runs work without it'],
         ]}
       />
     </Section>
@@ -467,11 +648,11 @@ function ScalingSection() {
         rows={[
           ['Storage', 'SQLite (WAL) + triggers, one file', 'Postgres with row-level security mirroring lib/policy.ts; RPC functions for multi-row writes', 'Read replicas; partition runs by month; archive old results'],
           ['Execution', 'In-request, ≤ 5,000 rows, 30 s', 'Job queue + workers; inputs in object storage with a short TTL; progress polling', 'Columnar engine (e.g. DuckDB) streaming large files; autoscaled pool'],
-          ['Identity', 'Email + password, session table', 'SSO / OIDC; sessions in Redis; invitations', 'SCIM provisioning; per-workspace policies; audit export'],
+          ['Identity', 'Email + password, invitations by link, reset links, per-session workspace', 'SSO / OIDC, two-factor sign-in, email verification', 'SCIM provisioning; per-workspace policies'],
           ['Sharing', 'Private or workspace-wide', 'Named groups; column mapping when headers differ', 'Cross-workspace publishing with review'],
           ['AI authoring', 'One call + one repair', 'Cache by hash(request, schema); offline eval set', 'Per-tenant model config, budgets, AI-assisted copies with diffs'],
-          ['Rate limits', 'In-memory login throttle', 'Redis token buckets per user and workspace', 'Edge rate limiting and abuse detection'],
-          ['Observability', 'Audit events + console logs', 'Structured logs, OpenTelemetry traces', 'SLOs on run latency (p95) and failure rate, with alerts'],
+          ['Rate limits', 'In-memory sliding windows (sign-in, sign-up, resets, drafts)', 'Redis token buckets shared across servers', 'Edge rate limiting and abuse detection'],
+          ['Observability', 'Append-only audit log (admin page + CSV), health check, smoke test', 'Structured logs, OpenTelemetry traces', 'SLOs on run latency (p95) and failure rate, with alerts'],
           ['Integrations', 'None (CSV upload only)', 'One spreadsheet source, bound per runner, never the author’s account', 'Adapter to an execution backend (e.g. n8n) for a validated subset'],
         ]}
       />
@@ -530,7 +711,7 @@ function StackSection({ system }: { system?: SystemInfo }) {
           ['Database', 'SQLite via better-sqlite3 (WAL)', 'Zero setup; triggers enforce invariants'],
           ['Auth', 'Email + password, scrypt, session table, HttpOnly cookie', 'Real multi-user sessions, no third-party dependency'],
           ['AI', 'Anthropic (forced tool call), OpenAI or OpenRouter (strict json_schema)', 'Structured output; provider picked by environment variables'],
-          ['Tests', 'Vitest + Playwright', 'Engine, CSV, validator, access, demo loop and AI against a real database; a browser walkthrough'],
+          ['Tests', 'Vitest + Playwright + axe-core + a smoke script', 'Unit and API suites against a real database, browser walkthroughs, WCAG scans, a model eval set, and npm run smoke against any URL'],
         ]}
       />
       {system && (

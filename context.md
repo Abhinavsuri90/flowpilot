@@ -1,5 +1,5 @@
 # FlowPilot: context
-_Last updated: 2026-09-26 19:30 · Phase 12 (recipe language v2) · Complete: summaries, sort, top N, column choices, contains / is one of, whole numbers; eval 21/21; 129 unit + 25 browser tests green. Next: phase 13 (archive, audit log, endpoint smoke, system design)_
+_Last updated: 2026-09-26 21:00 · Phase 13 (governance, smoke, system design) · Complete: archive/restore, admin audit log + CSV, `npm run smoke` 71/71 over 42 endpoints, system design page + docs/system-design.md; 133 unit + 26 browser tests green. Next: phase 14 (deploy)_
 
 ## What this is
 FlowPilot turns a one-sentence description of a repetitive CSV report into a saved, versioned recipe that a workspace can run on their own files, share and fork. AI drafts; a deterministic server executes; one access policy guards every request.
@@ -7,8 +7,8 @@ Stack: TanStack Start 1.168 (React 19.3, Vite 8, Nitro 3 beta), TanStack Router/
 Run: `npm install && npm run dev` → http://localhost:3000 (demo password `flowpilot-demo`)
 
 ## Current status
-- Phase: 12 recipe language v2 (owner: "make it one of the fabulous useful tools for companies"). Status: done
-- Tests: 129/129 (`npm test`: engine 13, csv 18, validator 13, access 20, demo-loop 12, ai 10, hardening 12, accounts 17, language 14) · Browser 25/25 (`npm run test:e2e`: demo 4, features 14, accounts 5, a11y 2) · Model eval 21/21 (`npm run eval:model`, gpt-6-luna, median 3.0 s) · Typecheck: pass (also --noUnusedLocals/--noUnusedParameters) · Build: pass
+- Phase: 13 governance + smoke + system design (owner: "check all API errors, all endpoints, smoke; enhance the system design"). Status: done
+- Tests: 133/133 (`npm test`: engine 13, csv 18, validator 13, access 20, demo-loop 12, ai 10, hardening 12, accounts 17, language 14, governance 4) · Browser 26/26 (`npm run test:e2e`: demo 4, features 15, accounts 5, a11y 2) · Smoke 71/71 checks over all 42 endpoints (`npm run smoke`, local dev) · Model eval 21/21 · Typecheck: pass (strict unused) · Build: pass
 - App runs with: `npm install && npm run dev` → http://localhost:3000
 
 ## Done (with evidence)
@@ -38,6 +38,13 @@ UI (evidence screenshots in `docs/screenshots/`)
 - [x] Recipe page: version picker + "latest is M" banner, run panel with header pre-check and parameter reset, results (summary chips, Table v9 sorting, funnel, CSV), my runs + delete, who has access, share + copy dialogs. Evidence: `02`–`05`
 - [x] Library, My runs, Access (matrix from `policy.ts`, roles, one-click sharing, principles), Dashboard (checklist, stats, validated run chart with table view, activity), System design (interactive diagrams, live schema). Evidence: `06`, `08`, `09`, `10-dashboard-dark.png`
 - [x] No horizontal overflow at 390px on the main pages; light and dark themes
+
+Phase 13: governance, smoke test, system design (evidence: `tests/governance.test.ts` 4, features "archives and restores…", a11y scans incl. /audit and archived tab, `npm run smoke` 71/71)
+- [x] Archive/restore (owner; `PATCH archived`): out of lists (Archived tab + count), 409 RECIPE_ARCHIVED on run/fork/save, permissions say why, banner + Restore; migration 4 (`archived_at`, indexes)
+- [x] Admin audit log (`/audit`, `GET /api/workspace/audit`, `.csv`): categories, actor filter, keyset paging; never lists runs; private recipes the admin can't see stay unnamed; copies never named; admin-only nav item
+- [x] `scripts/smoke.ts` (`npm run smoke -- --base <url>`): two throwaway accounts, 71 checks, all 42 endpoints, errors 401/403/404/405/409/413/415/422, security headers; exit code for CI
+- [x] System design: new sections (recipe language, identity & teams with flow switcher, security model with evidence, deployment) + refreshed failures/scaling/stack; `docs/system-design.md` with 5 Mermaid diagrams (validated with Mermaid's parser)
+- [x] Fixed while testing: tab strips widened the page at 390 px once "Archived" was added (Segmented now scrolls within itself)
 
 Phase 12: recipe language v2 (evidence: `tests/language.test.ts` 14, `tests/ai.test.ts` new-shapes test, `tests/e2e/features.spec.ts` "AI drafts a top-N summary", eval 21/21)
 - [x] New steps: `aggregate` (0–3 group columns, 1–5 figures: count/sum/avg/min/max; empty group = one summary row; avg rounded half up with BigInt maths), `sort` (≤3 keys, stable, code-point text), `limit` (literal or parameter, min 1), `select` (order + display-name headers); `group_sum` unchanged (old versions run as before)
@@ -101,9 +108,8 @@ Phase 8 hardening
 - Nothing mid-change. Owner's remaining asks: company-grade features, every endpoint and error smoke-tested, a stronger system design, then deployment.
 
 ## Next steps (ordered)
-1. Phase 13: archive recipes, admin audit log (+ CSV export), `npm run smoke` against any URL (every endpoint and error code); system design page + docs upgrade
-2. Phase 14: deploy (recommended: Fly.io, Mumbai region, SQLite on a volume); needs the owner's account login
-3. Owner: rotate the OpenRouter key that was shared in chat
+1. Phase 14: deploy (recommended: Fly.io, Mumbai region, SQLite on a volume); needs the owner's account login
+2. Owner: rotate the OpenRouter key that was shared in chat
 
 ## Decisions log
 | Date | Decision | Why | Alternatives rejected |
@@ -160,6 +166,9 @@ Phase 8 hardening
 | 2026-09-26 | Empty summary input gives zero rows (not a row of zeros) | No blanks exist for avg/min/max; "No rows matched" is honest | SQL-style NULL row |
 | 2026-09-26 | `select` headers may use spaces and capitals (display names) | Output is for people and spreadsheets | snake_case only |
 | 2026-09-26 | Integer parameter unit inferred from use (amount filter → ₹, limit/whole-number filter → plain) | No schema change; old recipes read as before | A unit field on parameters |
+| 2026-09-26 | Archive instead of delete; archived = visible but not runnable/copyable/editable; owner-only | Versions and runs must stay reproducible; a mistaken archive is one click to undo | Hard delete; admin archive |
+| 2026-09-26 | Audit log excludes runs and hides private titles from admins | Keeps "runs are private" and "private means owner only" true for admins too | Full event dump |
+| 2026-09-26 | Smoke test signs up its own throwaway accounts | Works on any deployment without demo data or secrets | Relying on demo accounts |
 
 ## Deviations from the brief
 - Added optional `ANTHROPIC_BASE_URL` / `OPENAI_BASE_URL` / `OPENROUTER_BASE_URL` · the browser test needs a local mock model (the model call is server-side) · no change when unset
@@ -201,8 +210,8 @@ DATABASE_PATH, SEED_PASSWORD, DEMO_MODE, REGISTRATION, APP_URL, TRUST_PROXY, RES
 - `src/routes/`: `__root.tsx` · `login.tsx` · `signup.tsx` · `invite.$token.tsx` · `forgot-password.tsx` · `reset-password.$token.tsx` · `_app.tsx` (guard + shell) · `_app/{index,library,runs,access,account,system-design,workflows.new,w.$workflowId.index,w.$workflowId.edit}.tsx` · `_app/$.tsx` (in-app 404) · `api/$.ts`
 - `src/components/`: `ui.tsx` (incl. `Menu`) · `shell.tsx` (workspace switcher, create-workspace dialog) · `auth-layout.tsx` (sign-in pages layout, password input) · `command.tsx` · `editor.tsx` · `results.tsx` · `charts.tsx` · `workflow-bits.tsx` · `file-drop.tsx` · `share-dialog.tsx` · `fork-dialog.tsx` · `access-panel.tsx` · `states.tsx` · `toast.tsx` · `logo.tsx` · `theme.ts` · `diagrams/{architecture,versioning}.tsx`
 - `src/start.ts`: global request middleware (security headers, server-fn CSRF)
-- `tests/`: 9 Vitest suites (incl. `hardening`, `accounts`, `language`) + `helpers/` · `tests/e2e/`: `demo.spec.ts`, `features.spec.ts`, `accounts.spec.ts`, `a11y.spec.ts`, `mock-model.ts` · `playwright.config.ts`
-- `scripts/`: `seed.ts`, `check-model.ts`, `eval-model.ts`, `screenshots.ts` · `fixtures/`, `public/samples/`, `docs/screenshots/`
+- `tests/`: 10 Vitest suites (incl. `hardening`, `accounts`, `language`, `governance`) + `helpers/` · `tests/e2e/`: `demo.spec.ts`, `features.spec.ts`, `accounts.spec.ts`, `a11y.spec.ts`, `mock-model.ts` · `playwright.config.ts`
+- `scripts/`: `seed.ts`, `check-model.ts`, `eval-model.ts`, `smoke.ts`, `screenshots.ts` · `fixtures/`, `public/samples/`, `docs/system-design.md`, `docs/screenshots/`
 - `src/lib/samples.ts` (sample catalogue) · `src/server/ratelimit.ts` (drafting limits)
 
 ## Demo checklist

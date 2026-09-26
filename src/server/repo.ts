@@ -31,6 +31,8 @@ export type WorkflowRow = {
   forked_from_version_id: string | null
   created_at: string
   updated_at: string
+  /** Set when the owner retired the recipe (out of the library, not runnable until restored). */
+  archived_at: string | null
 }
 
 export type VersionRow = {
@@ -198,6 +200,12 @@ export function updateWorkflowMeta(
   db.prepare(`UPDATE workflows SET ${sets.join(', ')}, updated_at = @at WHERE id = @id`).run(values)
 }
 
+/** Archives (or restores) a recipe; its versions, runs and copies are untouched. */
+export function setArchived(db: DB, id: string, archived: boolean): void {
+  const at = nowIso()
+  db.prepare('UPDATE workflows SET archived_at = ?, updated_at = ? WHERE id = ?').run(archived ? at : null, at, id)
+}
+
 export function forkCountFor(db: DB, workflowId: string): number {
   return db
     .prepare(
@@ -245,21 +253,26 @@ export function toSummary(db: DB, caller: Caller, wf: WorkflowRow, current?: Ver
     stepCount: def.steps?.length ?? 0,
     parameterNames: Object.keys(def.parameters ?? {}),
     forkedFrom: attributionFor(db, caller, wf.forked_from_version_id),
-    canFork: decide('fork', rel, wf.visibility).allowed,
+    canFork: decide('fork', rel, wf.visibility).allowed && !wf.archived_at,
     createdAt: wf.created_at,
     updatedAt: wf.updated_at,
+    archivedAt: wf.archived_at,
   }
 }
 
 export type Scope = 'mine' | 'team' | 'all'
 
-/** Which recipes a list shows. `workspaceId` narrows it to one workspace (the one the caller is working in). */
-export type ListFilter = { scope: Scope; q?: string; workspaceId?: string | null }
+/**
+ * Which recipes a list shows. `workspaceId` narrows it to one workspace (the one
+ * the caller is working in); `archived` shows retired recipes instead of active ones.
+ */
+export type ListFilter = { scope: Scope; q?: string; workspaceId?: string | null; archived?: boolean }
 
 function scopeSql(filter: ListFilter): string {
   const team = `(w.visibility = 'team' AND w.workspace_id IN (SELECT workspace_id FROM workspace_members WHERE user_id = @me))`
   const scope = filter.scope === 'mine' ? 'w.owner_id = @me' : filter.scope === 'team' ? team : `(w.owner_id = @me OR ${team})`
-  return filter.workspaceId ? `${scope} AND w.workspace_id = @ws` : scope
+  const archived = filter.archived ? 'w.archived_at IS NOT NULL' : 'w.archived_at IS NULL'
+  return `${scope} AND ${archived}${filter.workspaceId ? ' AND w.workspace_id = @ws' : ''}`
 }
 
 function searchSql(q: string): { sql: string; pattern: string | null } {

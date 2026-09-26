@@ -276,4 +276,15 @@ BEGIN
 END;
 `,
   },
+  {
+    id: 4,
+    name: 'archive_and_audit',
+    sql: /* sql */ `
+-- A retired recipe: out of the library, not runnable until restored; history kept.
+ALTER TABLE workflows ADD COLUMN archived_at TEXT;
+CREATE INDEX workflows_active_idx ON workflows(workspace_id, archived_at, updated_at);
+-- The audit log is read newest first per workspace and type.
+CREATE INDEX events_workspace_type_idx ON events(workspace_id, type, id);
+`,
+  },
 ]

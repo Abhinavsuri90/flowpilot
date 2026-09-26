@@ -1,5 +1,5 @@
 import { z } from 'zod'
-import { forbidden, invalid, json, notFound, readJson } from '../http'
+import { ApiError, forbidden, invalid, json, notFound, readJson } from '../http'
 import { currentMembership } from '../auth'
 import {
   appendVersion,
@@ -13,6 +13,7 @@ import {
   loadViewable,
   relationTo,
   roleIn,
+  setArchived,
   toSummary,
   updateWorkflowMeta,
   userRef,
@@ -41,10 +42,20 @@ const description = z
 const CreateBody = z.object({ title, description: description.optional().default(''), definition: z.unknown() })
 // Update bodies are strict: an unknown key such as owner_id is rejected.
 const PatchBody = z
-  .strictObject({ title: title.optional(), description: description.optional(), visibility: z.enum(['private', 'team']).optional() })
+  .strictObject({
+    title: title.optional(),
+    description: description.optional(),
+    visibility: z.enum(['private', 'team']).optional(),
+    archived: z.boolean({ error: 'archived must be true or false' }).optional(),
+  })
   .refine((b) => Object.keys(b).length > 0, { error: 'Nothing to update' })
 const VersionBody = z.object({ definition: z.unknown() })
 const ForkBody = z.object({ versionId: z.string().min(1).max(64), title })
+
+/** 409: the recipe is archived; `what` says what to do. */
+export function archivedError(what: string): ApiError {
+  return new ApiError(409, 'RECIPE_ARCHIVED', `This recipe is archived. ${what}.`)
+}
 
 function bodyIssues(error: z.ZodError) {
   return error.issues.map((issue) => ({
@@ -75,6 +86,14 @@ function requireValid(raw: unknown, code = 'VALIDATION_FAILED'): WorkflowDefinit
   return result.definition
 }
 
+/** An archived recipe stays visible (and shareable by its owner) but can't be run, copied or edited until restored. */
+function archivedPermissions(info: Record<Action, PermissionInfo>, archived: boolean, isOwner: boolean): Record<Action, PermissionInfo> {
+  if (!archived) return info
+  const reason = isOwner ? 'Archived: restore it to use it again' : 'Archived by its owner'
+  const blocked = (a: PermissionInfo): PermissionInfo => (a.allowed ? { allowed: false, reason, status: 403 } : a)
+  return { ...info, run: blocked(info.run), fork: blocked(info.fork), edit: blocked(info.edit) }
+}
+
 function permissionInfo(decisions: ReturnType<typeof decideAll>): Record<Action, PermissionInfo> {
   const out = {} as Record<Action, PermissionInfo>
   for (const [action, d] of Object.entries(decisions) as Array<[Action, (typeof decisions)[Action]]>) {
@@ -95,14 +114,19 @@ export function list({ db, user, url }: AuthedContext): Response {
   const q = url.searchParams.get('q') ?? ''
   const limit = Math.min(Math.max(intParam(url, 'limit') ?? WORKFLOW_PAGE.default, 1), WORKFLOW_PAGE.max)
   const offset = intParam(url, 'offset') ?? 0
+  const archived = url.searchParams.get('archived') === '1' || url.searchParams.get('archived') === 'true'
   // Lists show the workspace the caller is working in (switch it to see another).
   const workspaceId = currentMembership(user)?.workspaceId
-  if (!workspaceId) return json({ items: [], counts: { mine: 0, team: 0 }, total: 0, nextOffset: null } satisfies WorkflowList)
-  const items = listWorkflows(db, user, { scope, q, workspaceId, limit, offset })
-  const total = countWorkflows(db, user, { scope, q, workspaceId })
+  if (!workspaceId) return json({ items: [], counts: { mine: 0, team: 0, archived: 0 }, total: 0, nextOffset: null } satisfies WorkflowList)
+  const items = listWorkflows(db, user, { scope, q, workspaceId, limit, offset, archived })
+  const total = countWorkflows(db, user, { scope, q, workspaceId, archived })
   const body: WorkflowList = {
     items,
-    counts: { mine: countWorkflows(db, user, { scope: 'mine', q, workspaceId }), team: countWorkflows(db, user, { scope: 'team', q, workspaceId }) },
+    counts: {
+      mine: countWorkflows(db, user, { scope: 'mine', q, workspaceId }),
+      team: countWorkflows(db, user, { scope: 'team', q, workspaceId }),
+      archived: countWorkflows(db, user, { scope: 'all', q, workspaceId, archived: true }),
+    },
     total,
     nextOffset: offset + items.length < total ? offset + items.length : null,
   }
@@ -146,7 +170,7 @@ export function detail({ db, user, params, url }: AuthedContext): Response {
     },
     versions,
     latestVersionNumber: versions[0]?.number ?? version.version_number,
-    permissions: permissionInfo(decideAll(rel, wf.visibility)),
+    permissions: archivedPermissions(permissionInfo(decideAll(rel, wf.visibility)), !!wf.archived_at, rel.isOwner),
     role: rel.role,
     isOwner: rel.isOwner,
     forkCount: rel.isOwner ? forkCountFor(db, wf.id) : null,
@@ -166,6 +190,7 @@ export async function patch({ db, user, params, request }: AuthedContext): Promi
     const d = decide('share', rel, wf.visibility)
     if (!d.allowed) throw forbidden(d.reason)
   }
+  if (body.archived !== undefined && !rel.isOwner) throw forbidden('Only the owner can archive or restore a recipe')
 
   // Only real changes are written, so a repeated or no-op PATCH doesn't move the
   // recipe to the top of the library (ordered by updated_at).
@@ -187,6 +212,10 @@ export async function patch({ db, user, params, request }: AuthedContext): Promi
       workflowId: wf.id,
     })
   }
+  if (body.archived !== undefined && body.archived !== !!wf.archived_at) {
+    setArchived(db, wf.id, body.archived)
+    recordEvent(db, { workspaceId: wf.workspace_id, actorId: user.id, type: body.archived ? 'workflow.archived' : 'workflow.restored', workflowId: wf.id })
+  }
   const updated = loadViewable(db, user, wf.id).wf
   return json({ workflow: toSummary(db, user, updated) })
 }
@@ -195,6 +224,7 @@ export async function saveVersion({ db, user, params, request }: AuthedContext):
   const { wf, rel } = loadViewable(db, user, params.id!)
   const d = decide('edit', rel, wf.visibility)
   if (!d.allowed) throw forbidden(d.reason)
+  if (wf.archived_at) throw archivedError('Restore it before saving a new version')
   const body = parseBody(VersionBody, await readJson(request))
   const definition = requireValid(body.definition)
   const version = appendVersion(db, wf, definition, user.id)
@@ -215,6 +245,7 @@ export async function fork({ db, user, params, request }: AuthedContext): Promis
   if (!source || source.workflow_id !== wf.id) throw notFound('That version')
   const d = decide('fork', rel, wf.visibility)
   if (!d.allowed) throw forbidden(d.reason)
+  if (wf.archived_at) throw archivedError('Archived recipes can’t be copied')
 
   // The copy gets its own version 1 of the exact source definition, re-validated.
   const definition = requireValid(JSON.parse(source.definition), 'DEFINITION_INVALID')

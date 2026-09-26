@@ -15,6 +15,8 @@ export type EventType =
   | 'workflow.unshared'
   | 'workflow.forked'
   | 'workflow.transferred'
+  | 'workflow.archived'
+  | 'workflow.restored'
   | 'run.succeeded'
   | 'run.failed'
   | 'role.changed'
@@ -183,6 +185,10 @@ function describeEvent(db: DB, viewer: { id: string }, row: EventRow): ActivityI
       return { ...base, text: `${who} made ${wf.title} private`, workflowId: wf.id }
     case 'workflow.updated':
       return { ...base, text: `${who} updated the details of ${wf.title}`, workflowId: wf.id }
+    case 'workflow.archived':
+      return { ...base, text: `${who} archived ${wf.title}`, workflowId: wf.id }
+    case 'workflow.restored':
+      return { ...base, text: `${who} restored ${wf.title}`, workflowId: wf.id }
     case 'workflow.transferred': {
       const toId = String(detail.toUserId ?? '')
       const to = toId === viewer.id ? 'you' : userRef(db, toId).name
@@ -197,4 +203,100 @@ function roleOf(db: DB, workspaceId: string, userId: string): string | null {
   return (db.prepare('SELECT role FROM workspace_members WHERE workspace_id = ? AND user_id = ?').pluck().get(workspaceId, userId) as
     | string
     | undefined) ?? null
+}
+
+// ----- The admin audit log ------------------------------------------------------------
+
+export const AUDIT_CATEGORIES = {
+  recipes: ['workflow.created', 'workflow.updated', 'workflow.version_saved', 'workflow.forked', 'workflow.transferred', 'workflow.archived', 'workflow.restored'],
+  sharing: ['workflow.shared', 'workflow.unshared'],
+  people: ['member.joined', 'member.left', 'member.removed', 'role.changed'],
+  invites: ['invite.created', 'invite.revoked'],
+  workspace: ['workspace.created', 'workspace.renamed'],
+} as const satisfies Record<string, readonly EventType[]>
+export type AuditCategory = keyof typeof AUDIT_CATEGORIES
+
+const categoryOf = (type: string): AuditCategory =>
+  (Object.entries(AUDIT_CATEGORIES).find(([, types]) => (types as readonly string[]).includes(type))?.[0] ?? 'recipes') as AuditCategory
+
+export type AuditEntry = {
+  id: number
+  at: string
+  actor: { id: string; name: string; hue: number }
+  category: AuditCategory
+  action: string
+  text: string
+  /** The recipe it concerns, when the admin can see it. */
+  recipe: { id: string; title: string } | null
+}
+
+/**
+ * The workspace's audit log for an admin: every recipe, sharing, people, invite
+ * and workspace event. Runs are never listed (they are private to their runner),
+ * a private recipe the admin can't see is named only as "a private recipe", and a
+ * copy never reveals its own title.
+ */
+export function listAudit(
+  db: DB,
+  admin: { id: string },
+  workspaceId: string,
+  opts: { category?: AuditCategory; actorId?: string; before?: number; limit?: number } = {},
+): { entries: AuditEntry[]; nextBefore: number | null } {
+  const limit = Math.min(Math.max(opts.limit ?? 50, 1), 10_000)
+  const types = opts.category ? [...AUDIT_CATEGORIES[opts.category]] : Object.values(AUDIT_CATEGORIES).flat()
+  const rows = db
+    .prepare(
+      `SELECT * FROM events
+        WHERE workspace_id = @ws AND id < @before AND type IN (${types.map((_, i) => `@t${i}`).join(', ')})
+          ${opts.actorId ? 'AND actor_id = @actor' : ''}
+        ORDER BY id DESC
+        LIMIT @limit`,
+    )
+    .all({
+      ws: workspaceId,
+      before: opts.before ?? Number.MAX_SAFE_INTEGER,
+      actor: opts.actorId ?? null,
+      limit: limit + 1,
+      ...Object.fromEntries(types.map((t, i) => [`t${i}`, t])),
+    }) as EventRow[]
+  const page = rows.slice(0, limit)
+  return { entries: page.map((row) => auditEntry(db, admin, row)), nextBefore: rows.length > limit ? page[page.length - 1]!.id : null }
+}
+
+function auditEntry(db: DB, admin: { id: string }, row: EventRow): AuditEntry {
+  const detail = JSON.parse(row.detail) as Record<string, unknown>
+  const actor = userRef(db, row.actor_id)
+  const wf = row.workflow_id ? getWorkflow(db, row.workflow_id) : undefined
+  const visible = !!wf && canView(relationTo(db, admin, wf), wf.visibility)
+  const recipe = visible ? `“${wf!.title}”` : 'a private recipe'
+  const v = typeof detail.versionNumber === 'number' ? ` (v${detail.versionNumber})` : ''
+  const person = (id: unknown) => (typeof id === 'string' ? userRef(db, id).name : 'someone')
+  const texts: Partial<Record<EventType, string>> = {
+    'workflow.created': `created ${recipe}`,
+    'workflow.updated': `edited the details of ${recipe}`,
+    'workflow.version_saved': `saved a new version of ${recipe}${v}`,
+    'workflow.forked': `made a private copy of ${recipe}${typeof detail.sourceVersionNumber === 'number' ? ` (v${detail.sourceVersionNumber})` : ''}`,
+    'workflow.transferred': `handed ${recipe} over to ${person(detail.toUserId)}`,
+    'workflow.archived': `archived ${recipe}`,
+    'workflow.restored': `restored ${recipe}`,
+    'workflow.shared': `shared ${recipe} with the workspace`,
+    'workflow.unshared': `made ${recipe} private`,
+    'member.joined': `joined as ${String(detail.role ?? 'member')}`,
+    'member.left': `left the workspace${typeof detail.transferred === 'number' && detail.transferred ? ` (${detail.transferred} recipe${detail.transferred === 1 ? '' : 's'} handed to ${person(detail.heirId)})` : ''}`,
+    'member.removed': `removed ${person(detail.targetUserId)}${typeof detail.transferred === 'number' && detail.transferred ? ` (${detail.transferred} recipe${detail.transferred === 1 ? '' : 's'} handed over)` : ''}`,
+    'role.changed': `changed ${person(detail.targetUserId)}'s role from ${String(detail.from)} to ${String(detail.to)}`,
+    'invite.created': `created an invite link for ${detail.email ? String(detail.email) : 'anyone with the link'} (${String(detail.role)})`,
+    'invite.revoked': 'revoked an invite link',
+    'workspace.created': `created the workspace ${String(detail.name ?? '')}`.trim(),
+    'workspace.renamed': `renamed the workspace from ${String(detail.from)} to ${String(detail.to)}`,
+  }
+  return {
+    id: row.id,
+    at: row.created_at,
+    actor,
+    category: categoryOf(row.type),
+    action: row.type,
+    text: `${actor.name} ${texts[row.type] ?? row.type}`,
+    recipe: visible ? { id: wf!.id, title: wf!.title } : null,
+  }
 }

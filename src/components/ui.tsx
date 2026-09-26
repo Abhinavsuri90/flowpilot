@@ -206,7 +206,8 @@ export function Segmented<T extends string>({
   className?: string
 }) {
   return (
-    <div role="tablist" aria-label={label} className={cn('inline-flex rounded-xl border border-line bg-sunken p-1', className)}>
+    // Never wider than its container: on a narrow screen the tabs scroll sideways inside it.
+    <div role="tablist" aria-label={label} className={cn('scrollbar-thin inline-flex max-w-full overflow-x-auto rounded-xl border border-line bg-sunken p-1', className)}>
       {items.map((item) => {
         const active = item.value === value
         return (
@@ -217,7 +218,7 @@ export function Segmented<T extends string>({
             aria-selected={active}
             onClick={() => onChange(item.value)}
             className={cn(
-              'inline-flex items-center gap-2 rounded-lg px-3 py-1.5 text-[13px] font-medium transition-all [&_svg]:size-3.5',
+              'inline-flex shrink-0 items-center gap-2 rounded-lg px-3 py-1.5 text-[13px] font-medium whitespace-nowrap transition-all [&_svg]:size-3.5',
               active ? 'bg-surface text-ink shadow-soft' : 'text-muted hover:text-ink',
             )}
           >

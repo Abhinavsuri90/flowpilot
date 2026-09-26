@@ -60,6 +60,7 @@ export async function create({ db, user, request }: AuthedContext): Promise<Resp
   if (!version || !wf) throw notFound('That recipe')
   const rel = relationTo(db, user, wf)
   if (!decide('run', rel, wf.visibility).allowed) throw notFound('That recipe')
+  if (wf.archived_at) throw new ApiError(409, 'RECIPE_ARCHIVED', 'This recipe is archived. Its owner can restore it to run it again.')
 
   // 5. The file
   const file = form.get('file')

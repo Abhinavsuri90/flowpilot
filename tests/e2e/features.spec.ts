@@ -299,7 +299,7 @@ test('wide tables scroll inside their card: no page scrolls sideways on a phone,
   expect(result!.x + result!.width).toBeLessThanOrEqual(panel!.x)
 
   await page.setViewportSize({ width: 390, height: 844 })
-  for (const path of ['/', '/library', '/runs', '/access', '/account', '/system-design', '/workflows/new', page.url().replace(/^https?:\/\/[^/]+/, ''), `/w/${id}/edit`]) {
+  for (const path of ['/', '/library', '/runs', '/access', '/audit', '/account', '/system-design', '/workflows/new', page.url().replace(/^https?:\/\/[^/]+/, ''), `/w/${id}/edit`]) {
     await open(page, path)
     await page.waitForLoadState('networkidle')
     expect(await page.evaluate(() => document.documentElement.scrollWidth), path).toBeLessThanOrEqual(390)
@@ -356,4 +356,41 @@ test('AI drafts a top-N summary; the new step cards show it, and the run ranks r
   for (const chip of ['2 rows', 'status = "paid"', 'grouped by sales_rep', 'sorted by revenue ↓', 'first 2']) {
     await expect(page.getByText(chip, { exact: true })).toBeVisible()
   }
+})
+
+test('an owner archives and restores a recipe; an admin reads and filters the audit log', async ({ page }) => {
+  await signIn(page, 'Asha')
+  const { id } = await createRecipe(page, 'QA retire me')
+  await open(page, `/w/${id}`)
+  await page.getByRole('button', { name: 'Archive' }).click()
+  await page.getByRole('dialog').getByRole('button', { name: 'Archive recipe' }).click()
+  await expect(page.getByText('Recipe archived')).toBeVisible()
+  await expect(page.getByText(/^Archived /).first()).toBeVisible()
+  await expect(page.getByRole('button', { name: 'Archived: can’t run' })).toBeDisabled()
+
+  await open(page, '/library?tab=archived')
+  await expect(page.getByRole('link', { name: 'QA retire me' })).toBeVisible()
+  await open(page, '/library')
+  await expect(page.getByRole('link', { name: 'QA retire me' })).toHaveCount(0)
+
+  await open(page, `/w/${id}`)
+  await page.getByRole('button', { name: 'Restore' }).click()
+  await expect(page.getByText('Recipe restored')).toBeVisible()
+  await expect(page.getByRole('button', { name: /Choose a file to run|Run recipe/ })).toBeVisible()
+
+  // Admins see the audit log in the sidebar; runs never appear in it.
+  await page.getByRole('navigation', { name: 'Main' }).getByRole('link', { name: 'Audit log' }).click()
+  await expect(page.getByRole('heading', { name: 'Audit log' })).toBeVisible()
+  await expect(page.getByText('Asha Rao restored “QA retire me”')).toBeVisible()
+  await expect(page.getByText('Asha Rao archived “QA retire me”')).toBeVisible()
+  await page.getByRole('tab', { name: 'People' }).click()
+  await expect(page).toHaveURL(/category=people/)
+  await expect(page.getByText('Asha Rao archived “QA retire me”')).toHaveCount(0)
+  await expect(page.getByRole('link', { name: 'Export CSV' })).toHaveAttribute('href', '/api/workspace/audit.csv?category=people')
+
+  // A member doesn't get the page (or the link).
+  await signIn(page, 'Vikram')
+  await expect(page.getByRole('navigation', { name: 'Main' }).getByRole('link', { name: 'Audit log' })).toHaveCount(0)
+  await open(page, '/audit')
+  await expect(page.getByText('Only admins can read the audit log')).toBeVisible()
 })

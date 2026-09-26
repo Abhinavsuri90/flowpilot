@@ -12,6 +12,7 @@ import {
   Moon,
   Network,
   Plus,
+  ScrollText,
   Search,
   ShieldCheck,
   Sparkles,
@@ -29,8 +30,8 @@ import { CommandPalette, type PaletteLink } from './command'
 import { useToast } from './toast'
 import { Avatar, Badge, Button, Callout, Dialog, Field, Input, Kbd, Menu, MenuItem, MenuLabel, MenuSeparator, Tip, buttonClass, cn } from './ui'
 
-type NavTo = '/' | '/library' | '/runs' | '/access' | '/system-design'
-type NavItem = { to: NavTo; label: string; icon: React.ReactNode; exact?: boolean }
+type NavTo = '/' | '/library' | '/runs' | '/access' | '/audit' | '/system-design'
+type NavItem = { to: NavTo; label: string; icon: React.ReactNode; exact?: boolean; adminOnly?: boolean }
 type NavGroup = { label: string; items: NavItem[] }
 
 export const NAV: NavGroup[] = [
@@ -46,6 +47,7 @@ export const NAV: NavGroup[] = [
     label: 'Governance',
     items: [
       { to: '/access', label: 'Access', icon: <ShieldCheck /> },
+      { to: '/audit', label: 'Audit log', icon: <ScrollText />, adminOnly: true },
       { to: '/system-design', label: 'System design', icon: <Network /> },
     ],
   },
@@ -263,7 +265,7 @@ function SidebarContent({ me, onNavigate, onCreateWorkspace }: { me: Me; onNavig
           <div key={group.label}>
             <div className="px-2 pb-1.5 text-[11px] font-medium tracking-wide text-sidebar-muted uppercase">{group.label}</div>
             <ul className="space-y-0.5">
-              {group.items.map((item) => {
+              {group.items.filter((item) => !item.adminOnly || me.workspace?.role === 'admin').map((item) => {
                 const active = isActive(pathname, item)
                 return (
                   <li key={item.to}>
@@ -366,7 +368,7 @@ export function AppShell({ me, children }: { me: Me; children: React.ReactNode }
 
   const pages: PaletteLink[] = React.useMemo(
     () => [
-      ...NAV.flatMap((g) => g.items.map((i) => ({ label: i.label, to: i.to, icon: i.icon }))),
+      ...NAV.flatMap((g) => g.items.filter((i) => !i.adminOnly || me.workspace?.role === 'admin').map((i) => ({ label: i.label, to: i.to, icon: i.icon }))),
       ...(canCreateInWorkspace(me.workspace?.role ?? null)
         ? [{ label: 'New recipe', to: '/workflows/new', icon: <Plus />, hint: 'Describe a report and turn it into steps' }]
         : []),

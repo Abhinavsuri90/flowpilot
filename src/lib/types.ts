@@ -103,11 +103,13 @@ export type WorkflowSummary = {
   canFork: boolean
   createdAt: string
   updatedAt: string
+  /** When the owner archived it (null = active). Archived recipes can't be run, copied or edited until restored. */
+  archivedAt: string | null
 }
 
 export type WorkflowList = {
   items: WorkflowSummary[]
-  counts: { mine: number; team: number }
+  counts: { mine: number; team: number; archived: number }
   /** Recipes matching this scope and search (items holds one page of them). */
   total: number
   /** Offset of the next page, or null when this was the last. */
@@ -202,6 +204,21 @@ export type WorkspaceInfo = {
   canManageMembers: boolean
   adminCount: number
 }
+
+export type AuditCategory = 'recipes' | 'sharing' | 'people' | 'invites' | 'workspace'
+
+/** One line of the admin audit log (runs are never listed; private recipes stay unnamed). */
+export type AuditEntry = {
+  id: number
+  at: string
+  actor: UserRef
+  category: AuditCategory
+  action: string
+  text: string
+  recipe: { id: string; title: string } | null
+}
+
+export type AuditPage = { entries: AuditEntry[]; nextBefore: number | null }
 
 export type ActivityItem = {
   id: number

@@ -17,6 +17,7 @@ import { Route as AppIndexRouteImport } from './routes/_app/index'
 import { Route as AppSplatRouteImport } from './routes/_app/$'
 import { Route as AppAccessRouteImport } from './routes/_app/access'
 import { Route as AppAccountRouteImport } from './routes/_app/account'
+import { Route as AppAuditRouteImport } from './routes/_app/audit'
 import { Route as AppLibraryRouteImport } from './routes/_app/library'
 import { Route as AppRunsRouteImport } from './routes/_app/runs'
 import { Route as AppSystemDesignRouteImport } from './routes/_app/system-design'
@@ -64,6 +65,11 @@ const AppAccessRoute = AppAccessRouteImport.update({
 const AppAccountRoute = AppAccountRouteImport.update({
   id: '/account',
   path: '/account',
+  getParentRoute: () => AppRoute,
+} as any)
+const AppAuditRoute = AppAuditRouteImport.update({
+  id: '/audit',
+  path: '/audit',
   getParentRoute: () => AppRoute,
 } as any)
 const AppLibraryRoute = AppLibraryRouteImport.update({
@@ -120,6 +126,7 @@ export interface FileRoutesByFullPath {
   '/$': typeof AppSplatRoute
   '/access': typeof AppAccessRoute
   '/account': typeof AppAccountRoute
+  '/audit': typeof AppAuditRoute
   '/library': typeof AppLibraryRoute
   '/runs': typeof AppRunsRoute
   '/system-design': typeof AppSystemDesignRoute
@@ -137,6 +144,7 @@ export interface FileRoutesByTo {
   '/$': typeof AppSplatRoute
   '/access': typeof AppAccessRoute
   '/account': typeof AppAccountRoute
+  '/audit': typeof AppAuditRoute
   '/library': typeof AppLibraryRoute
   '/runs': typeof AppRunsRoute
   '/system-design': typeof AppSystemDesignRoute
@@ -157,6 +165,7 @@ export interface FileRoutesById {
   '/_app/$': typeof AppSplatRoute
   '/_app/access': typeof AppAccessRoute
   '/_app/account': typeof AppAccountRoute
+  '/_app/audit': typeof AppAuditRoute
   '/_app/library': typeof AppLibraryRoute
   '/_app/runs': typeof AppRunsRoute
   '/_app/system-design': typeof AppSystemDesignRoute
@@ -178,6 +187,7 @@ export interface FileRouteTypes {
     | '/$'
     | '/access'
     | '/account'
+    | '/audit'
     | '/library'
     | '/runs'
     | '/system-design'
@@ -195,6 +205,7 @@ export interface FileRouteTypes {
     | '/$'
     | '/access'
     | '/account'
+    | '/audit'
     | '/library'
     | '/runs'
     | '/system-design'
@@ -214,6 +225,7 @@ export interface FileRouteTypes {
     | '/_app/$'
     | '/_app/access'
     | '/_app/account'
+    | '/_app/audit'
     | '/_app/library'
     | '/_app/runs'
     | '/_app/system-design'
@@ -294,6 +306,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof AppAccountRouteImport
       parentRoute: typeof AppRoute
     }
+    '/_app/audit': {
+      id: '/_app/audit'
+      path: '/audit'
+      fullPath: '/audit'
+      preLoaderRoute: typeof AppAuditRouteImport
+      parentRoute: typeof AppRoute
+    }
     '/_app/library': {
       id: '/_app/library'
       path: '/library'
@@ -364,6 +383,7 @@ interface AppRouteChildren {
   AppSplatRoute: typeof AppSplatRoute
   AppAccessRoute: typeof AppAccessRoute
   AppAccountRoute: typeof AppAccountRoute
+  AppAuditRoute: typeof AppAuditRoute
   AppLibraryRoute: typeof AppLibraryRoute
   AppRunsRoute: typeof AppRunsRoute
   AppSystemDesignRoute: typeof AppSystemDesignRoute
@@ -377,6 +397,7 @@ const AppRouteChildren: AppRouteChildren = {
   AppSplatRoute: AppSplatRoute,
   AppAccessRoute: AppAccessRoute,
   AppAccountRoute: AppAccountRoute,
+  AppAuditRoute: AppAuditRoute,
   AppLibraryRoute: AppLibraryRoute,
   AppRunsRoute: AppRunsRoute,
   AppSystemDesignRoute: AppSystemDesignRoute,

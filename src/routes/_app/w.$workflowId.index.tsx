@@ -4,6 +4,8 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { z } from 'zod'
 import {
   AlertTriangle,
+  Archive,
+  ArchiveRestore,
   ArrowLeft,
   CheckCircle2,
   FileSpreadsheet,
@@ -47,6 +49,7 @@ import {
   cn,
 } from '~/components/ui'
 import {
+  ArchivedBadge,
   AttributionLine,
   ColumnChip,
   CopyBadge,
@@ -78,7 +81,27 @@ function RecipePage() {
   const navigate = useNavigate({ from: Route.fullPath })
   const [shareOpen, setShareOpen] = React.useState(false)
   const [forkOpen, setForkOpen] = React.useState(false)
+  const [archiveOpen, setArchiveOpen] = React.useState(false)
   const resultRef = React.useRef<HTMLDivElement>(null)
+  const queryClient = useQueryClient()
+  const toast = useToast()
+  const archive = useMutation({
+    mutationFn: (archived: boolean) => api.patch(`/api/workflows/${workflowId}`, { archived }),
+    onSuccess: async (_res, archived) => {
+      setArchiveOpen(false)
+      await Promise.all([
+        queryClient.invalidateQueries({ queryKey: qk.workflowAll(workflowId) }),
+        queryClient.invalidateQueries({ queryKey: qk.workflowsAll }),
+        queryClient.invalidateQueries({ queryKey: qk.dashboard }),
+      ])
+      toast.show(
+        archived
+          ? { tone: 'ok', title: 'Recipe archived', description: 'It left the library and can’t be run until you restore it. Its history and runs are kept.' }
+          : { tone: 'ok', title: 'Recipe restored', description: 'It’s back in the library and runs again.' },
+      )
+    },
+    onError: (err) => toast.show({ tone: 'bad', title: 'Not changed', description: err instanceof Error ? err.message : String(err) }),
+  })
 
   const detail = useQuery({
     queryKey: qk.workflow(workflowId, v),
@@ -126,6 +149,7 @@ function RecipePage() {
             <VisibilityBadge visibility={wf.visibility} workspace={wf.workspace.name} />
             {wf.isExample && <ExampleBadge />}
             {wf.forkedFrom && <CopyBadge />}
+            {wf.archivedAt && <ArchivedBadge />}
           </div>
           <div className="mt-2 flex flex-wrap items-center gap-x-3 gap-y-2 text-[13px] text-muted">
             <span className="inline-flex items-center gap-1.5">
@@ -192,8 +216,33 @@ function RecipePage() {
               </Button>
             </Tip>
           )}
+          {wf.isMine && !wf.archivedAt && (
+            <Button variant="ghost" icon={<Archive className="size-4" />} onClick={() => setArchiveOpen(true)}>
+              Archive
+            </Button>
+          )}
         </div>
       </header>
+
+      {wf.archivedAt && (
+        <Callout
+          tone="warn"
+          className="animate-rise mb-5"
+          icon={<Archive />}
+          title={`Archived ${timeAgo(wf.archivedAt)}`}
+          action={
+            wf.isMine ? (
+              <Button size="sm" loading={archive.isPending} icon={<ArchiveRestore className="size-3.5" />} onClick={() => archive.mutate(false)}>
+                Restore
+              </Button>
+            ) : undefined
+          }
+        >
+          {wf.isMine
+            ? 'It is out of the library and can’t be run, copied or edited. Restore it to use it again; its versions and runs are kept.'
+            : 'Its owner retired it, so it can’t be run or copied. Your earlier results are still under My runs.'}
+        </Callout>
+      )}
 
       {!d.version.isLatest && (
         <Callout
@@ -229,6 +278,24 @@ function RecipePage() {
       </div>
 
       <ShareDialog open={shareOpen} onClose={() => setShareOpen(false)} workflow={wf} versionId={d.version.id} versionNumber={d.version.number} />
+      <Dialog
+        open={archiveOpen}
+        onClose={() => setArchiveOpen(false)}
+        size="sm"
+        icon={<Archive />}
+        title={`Archive “${wf.title}”?`}
+        description="It leaves the library and can't be run or copied until you restore it. Versions, runs and copies people already made are kept."
+        footer={
+          <>
+            <Button variant="ghost" onClick={() => setArchiveOpen(false)}>
+              Cancel
+            </Button>
+            <Button variant="danger" loading={archive.isPending} onClick={() => archive.mutate(true)}>
+              Archive recipe
+            </Button>
+          </>
+        }
+      />
       <ForkDialog
         target={
           forkOpen
@@ -617,10 +684,10 @@ function RunPanel({ detail, busy, onRan }: { detail: WorkflowDetail; busy: boole
           className="w-full"
           icon={<Play className="size-4" />}
           loading={run.isPending}
-          disabled={!fileOk || !paramsOk || busy}
+          disabled={!fileOk || !paramsOk || busy || !detail.permissions.run.allowed}
           onClick={() => run.mutate({ versionId })}
         >
-          {file ? 'Run recipe' : 'Choose a file to run'}
+          {!detail.permissions.run.allowed ? 'Archived: can’t run' : file ? 'Run recipe' : 'Choose a file to run'}
         </Button>
         <p className="text-center text-[11.5px] text-faint">Your file is processed in this request and never stored.</p>
       </div>

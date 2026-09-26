@@ -52,6 +52,8 @@ The full loop works end to end, and a real browser test proves it: **describe �
 - Roles: admin, member and viewer, plus outsiders from other workspaces. One policy module decides every permission.
 - The Access page renders the permission matrix from that same code; admins change roles there.
 - Anything you can't see answers 404, as if it didn't exist. Runs are private even from recipe owners and admins.
+- Owners **archive** recipes they no longer need: out of the library, not runnable or copyable until restored, with versions, runs and copies kept.
+- Admins get an **audit log**: every recipe, sharing, people, invite and workspace change, filterable by kind and person, exportable as CSV. Runs never appear in it, and private recipes an admin can't see are named only as "a private recipe".
 - The library pages 60 recipes at a time, and the ⌘K search asks only for the 7 it shows.
 
 **Accounts and teams**
@@ -145,7 +147,7 @@ Sample files are in `public/samples/`. The editor and the run panel also offer t
 
 ## How it works
 
-The in-app **System design** page (`/system-design`) walks through all of this, including a live view of the running server's schema, triggers, limits and endpoints.
+The full design, with diagrams of the architecture, the run lifecycle, the data model and the account flows, plus the security model, failure modes, deployment and scaling path, is in **[docs/system-design.md](docs/system-design.md)**. The in-app **System design** page (`/system-design`) shows the same, with a live view of the running server's schema, triggers, limits and endpoints.
 
 ```mermaid
 flowchart LR
@@ -225,7 +227,7 @@ A summary with an empty `groupBy` gives one row over all rows. After a summary o
 
 ## API reference
 
-One server route (`/api/$`) fronts 40 REST endpoints through a single dispatcher, `handleApi(Request)`. The dispatcher matches the route, blocks cross-site writes, reads the session, runs the handler and maps errors. Every response is `Cache-Control: private, no-store`. Every error has the shape `{ "error": { "code", "message", "issues"? , "draft"?, "runId"? } }`. Every path also answers `HEAD` (as `GET`, without a body) and `OPTIONS` (204 with `Allow`); any other method gets 405.
+One server route (`/api/$`) fronts 42 REST endpoints through a single dispatcher, `handleApi(Request)`. The dispatcher matches the route, blocks cross-site writes, reads the session, runs the handler and maps errors. Every response is `Cache-Control: private, no-store`. Every error has the shape `{ "error": { "code", "message", "issues"? , "draft"?, "runId"? } }`. Every path also answers `HEAD` (as `GET`, without a body) and `OPTIONS` (204 with `Allow`); any other method gets 405.
 
 | Method | Path | Who | Purpose |
 |---|---|---|---|
@@ -247,7 +249,7 @@ One server route (`/api/$`) fronts 40 REST endpoints through a single dispatcher
 | GET | `/api/workflows?scope=mine\|team\|all&q=&limit=&offset=` | signed in | One page of recipes you can read (60 by default, at most 200), newest first, with `total`, `nextOffset` and the count for each tab |
 | POST | `/api/workflows` | admin, member | `{title, description, definition}` → private v1 |
 | GET | `/api/workflows/:id?v=` | can view | A version, the version list and your permissions |
-| PATCH | `/api/workflows/:id` | owner | `{title?, description?, visibility?}` (unknown keys → 422) |
+| PATCH | `/api/workflows/:id` | owner | `{title?, description?, visibility?, archived?}` (unknown keys → 422) |
 | POST | `/api/workflows/:id/versions` | owner | `{definition}` → the next immutable version |
 | POST | `/api/workflows/:id/fork` | admin, member who can view | `{versionId, title}` → a private copy |
 | GET | `/api/workflows/:id/access` | can view | Workspace members and what each can do |
@@ -263,6 +265,8 @@ One server route (`/api/$`) fronts 40 REST endpoints through a single dispatcher
 | POST | `/api/workspace/leave` | member | Leave; your recipes move to an admin. The last admin can't leave |
 | PATCH | `/api/workspace/members/:userId` | admin | `{role}`; not your own, and never the last admin |
 | DELETE | `/api/workspace/members/:userId` | admin | Remove someone; their recipes move to you |
+| GET | `/api/workspace/audit?category=&actor=&before=&limit=` | admin | The audit log, newest first (no runs; private recipes unnamed) |
+| GET | `/api/workspace/audit.csv` | admin | The same log as a formula-safe CSV |
 | GET | `/api/workspace/invites` | admin | Invite links that can still be used |
 | POST | `/api/workspace/invites` | admin | `{role, email?}` → a link (single use when locked to an email; emailed if mail is set up) |
 | DELETE | `/api/workspace/invites/:id` | admin | Revoke a link |
@@ -284,20 +288,22 @@ Status codes: 401 not signed in · 403 visible but not yours, a cross-site write
 ## Testing
 
 ```bash
-npm test                          # 129 unit and API tests
+npm test                          # 133 unit and API tests
 npx playwright install chromium   # once
-npm run test:e2e                  # 25 browser tests
+npm run test:e2e                  # 26 browser tests
 npm run typecheck
+npm run smoke                     # every endpoint and error code against a running server (--base <url>)
 ```
 
-- **Unit and API tests (Vitest), 129 in total:** engine 13, CSV 18, validator 13, access 20, demo loop 12, AI 10, hardening 12 (HTTP methods, redirects, sessions, no-op edits, the activity feed on a busy team, list paging and run counts), accounts 17 (sign-up modes and rules, invitations, password resets, account settings, workspaces, removal and hand-over), language 14 (summaries and exact rounding, sort, top N, column choices, *contains* and *is one of*, whole numbers, validation messages, the seeded examples, a top-N run and CSV export through the API). They call the same `handleApi(Request)` the server uses, with real session cookies, against an in-memory SQLite database, so access rules are tested end to end rather than mocked. The model is always stubbed, and the tests never read `.env`.
-- **Browser tests (Playwright), 25 in total:**
+- **Unit and API tests (Vitest), 129 in total:** engine 13, CSV 18, validator 13, access 20, demo loop 12, AI 10, hardening 12 (HTTP methods, redirects, sessions, no-op edits, the activity feed on a busy team, list paging and run counts), accounts 17 (sign-up modes and rules, invitations, password resets, account settings, workspaces, removal and hand-over), language 14 (summaries and exact rounding, sort, top N, column choices, *contains* and *is one of*, whole numbers, validation messages, the seeded examples, a top-N run and CSV export through the API), governance 4 (archive and restore, the audit log's privacy rules, filters, paging and CSV). They call the same `handleApi(Request)` the server uses, with real session cookies, against an in-memory SQLite database, so access rules are tested end to end rather than mocked. The model is always stubbed, and the tests never read `.env`.
+- **Browser tests (Playwright), 26 in total:**
   - `demo.spec.ts` (4) is the demo above.
-  - `features.spec.ts` (14) covers the rest: the editor's value warning, an invalid AI draft and a clarifying question, Advanced JSON, in-browser file checks, samples and parameters, details-only saves and versions, runs from another recipe, large results, CSV escaping, the command palette, theme, roles, *Delete my results*, the mobile drawer, re-checking a file when the version changes, refusing a non-UTF-8 file, the in-app 404, wide tables at phone width, library paging, and an AI-drafted top-N summary edited with the new step cards and run.
+  - `features.spec.ts` (15) covers the rest: the editor's value warning, an invalid AI draft and a clarifying question, Advanced JSON, in-browser file checks, samples and parameters, details-only saves and versions, runs from another recipe, large results, CSV escaping, the command palette, theme, roles, *Delete my results*, the mobile drawer, re-checking a file when the version changes, refusing a non-UTF-8 file, the in-app 404, wide tables at phone width, library paging, an AI-drafted top-N summary edited with the new step cards and run, and archiving plus the audit log.
   - `accounts.spec.ts` (5): a new team signs up, invites a teammate who joins through the link and runs a shared recipe; the workspace switcher (mouse and keyboard); account settings and a password change that signs out another device; forgot-password and dead links; the sign-in pages at phone width.
   - `a11y.spec.ts` (2) runs an axe-core WCAG 2.1 AA scan of every page, including sign-up, invitations and account settings, in light and dark mode.
 - The browser tests use their own database and a stand-in model (`tests/e2e/mock-model.ts`), so they never spend real credits. Screenshots of each demo stage are saved to `docs/screenshots/`.
 - **Model quality:** `npm run eval:model`, described above.
+- **Smoke test:** `npm run smoke` signs up two throwaway accounts on any running FlowPilot and makes 71 checks across all 42 endpoints: the happy paths and the important errors (401, 403, 404, 405, 409, 413, 415, 422). It is how a deployment is verified: `npm run smoke -- --base https://your-app`.
 
 ## Configuration
 
@@ -358,7 +364,8 @@ src/routes/           login, signup, invite, forgot/reset password, _app (guard 
 src/components/       UI kit, shell, command palette, editor, results grid, run chart, diagrams, dialogs
 src/start.ts          global middleware: security headers, server-function CSRF
 tests/                Vitest suites · tests/e2e: Playwright specs and the mock model
-scripts/              seed, check-model, eval-model, screenshots
+scripts/              seed, check-model, eval-model, smoke, screenshots
+docs/                 system-design.md (architecture, data model, flows, security) · screenshots/
 fixtures/             demo and invalid CSVs used by the tests · public/samples: downloadable demo files
 context.md            project memory: status, decisions, deviations, known issues
 ```

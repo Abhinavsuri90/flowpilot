@@ -13,6 +13,7 @@ import * as system from './system'
 import * as generate from './generate'
 import * as account from './account'
 import * as invites from './invites'
+import * as audit from './audit'
 
 type Method = 'GET' | 'POST' | 'PATCH' | 'DELETE'
 
@@ -59,6 +60,8 @@ const ROUTES: Route[] = [
   { method: 'POST', pattern: '/api/workspace/leave', auth: true, handler: workspace.leave },
   { method: 'PATCH', pattern: '/api/workspace/members/:userId', auth: true, handler: workspace.setRole },
   { method: 'DELETE', pattern: '/api/workspace/members/:userId', auth: true, handler: workspace.removeMember },
+  { method: 'GET', pattern: '/api/workspace/audit', auth: true, handler: audit.list },
+  { method: 'GET', pattern: '/api/workspace/audit.csv', auth: true, handler: audit.csv },
   { method: 'GET', pattern: '/api/workspace/invites', auth: true, handler: invites.list },
   { method: 'POST', pattern: '/api/workspace/invites', auth: true, handler: invites.create },
   { method: 'DELETE', pattern: '/api/workspace/invites/:id', auth: true, handler: invites.revoke },

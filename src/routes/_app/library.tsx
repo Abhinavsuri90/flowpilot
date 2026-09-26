@@ -2,7 +2,7 @@ import * as React from 'react'
 import { Link, createFileRoute, stripSearchParams, useNavigate } from '@tanstack/react-router'
 import { keepPreviousData, useInfiniteQuery } from '@tanstack/react-query'
 import { z } from 'zod'
-import { FolderOpen, Plus, Search, Users, X } from 'lucide-react'
+import { Archive, FolderOpen, Plus, Search, Users, X } from 'lucide-react'
 import { api, qk, qs } from '~/lib/api'
 import type { WorkflowList, WorkflowSummary } from '~/lib/types'
 import { canCreateInWorkspace } from '~/lib/policy'
@@ -12,7 +12,7 @@ import { ForkDialog } from '~/components/fork-dialog'
 import { ErrorState } from '~/components/states'
 
 const Search_ = z.object({
-  tab: z.enum(['mine', 'team']).default('mine').catch('mine'),
+  tab: z.enum(['mine', 'team', 'archived']).default('mine').catch('mine'),
   q: z.string().max(100).default('').catch(''),
 })
 
@@ -55,7 +55,10 @@ function Library() {
   // One page of recipes at a time ("Show more" loads the next).
   const list = useInfiniteQuery({
     queryKey: qk.library(tab, q),
-    queryFn: ({ pageParam }) => api.get<WorkflowList>(`/api/workflows${qs({ scope: tab, q, offset: pageParam || undefined })}`),
+    queryFn: ({ pageParam }) =>
+      api.get<WorkflowList>(
+        `/api/workflows${qs({ scope: tab === 'archived' ? 'all' : tab, archived: tab === 'archived' ? 1 : undefined, q, offset: pageParam || undefined })}`,
+      ),
     initialPageParam: 0,
     getNextPageParam: (last) => last.nextOffset ?? undefined,
     placeholderData: keepPreviousData,
@@ -82,6 +85,7 @@ function Library() {
           items={[
             { value: 'mine', label: 'My workflows', count: firstPage?.counts.mine, icon: <FolderOpen /> },
             { value: 'team', label: 'Team library', count: firstPage?.counts.team, icon: <Users /> },
+            { value: 'archived', label: 'Archived', count: firstPage?.counts.archived, icon: <Archive /> },
           ]}
         />
         <div className="relative w-full sm:w-72">
@@ -144,6 +148,8 @@ function Library() {
               )
             }
           />
+        ) : tab === 'archived' ? (
+          <EmptyState icon={<Archive />} title="Nothing archived" description="Recipes their owners retire appear here. Their history and runs are kept, and owners can restore them." />
         ) : (
           <EmptyState icon={<Users />} title="Nothing shared yet" description={`When someone in ${workspace} shares a recipe, it appears here.`} />
         )

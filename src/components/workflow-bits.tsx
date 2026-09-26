@@ -1,5 +1,6 @@
 import { Link } from '@tanstack/react-router'
 import {
+  Archive,
   ArrowDownWideNarrow,
   ArrowRight,
   BookOpen,
@@ -39,6 +40,14 @@ export function ExampleBadge() {
   return (
     <Badge tone="outline" icon={<BookOpen />} title="A hand-written example recipe, not model output">
       Example
+    </Badge>
+  )
+}
+
+export function ArchivedBadge() {
+  return (
+    <Badge tone="warn" icon={<Archive />}>
+      Archived
     </Badge>
   )
 }
@@ -200,6 +209,7 @@ export function RecipeCard({ recipe, onFork }: { recipe: WorkflowSummary; onFork
             <VisibilityBadge visibility={recipe.visibility} workspace={recipe.workspace.name} />
             {recipe.isExample && <ExampleBadge />}
             {recipe.forkedFrom && <CopyBadge />}
+            {recipe.archivedAt && <ArchivedBadge />}
             <span className="text-[12px] text-faint">
               v{recipe.currentVersion.number} · {recipe.stepCount} step{recipe.stepCount === 1 ? '' : 's'}
               {recipe.parameterNames.length ? ` · ${recipe.parameterNames.length} parameter${recipe.parameterNames.length === 1 ? '' : 's'}` : ''}
