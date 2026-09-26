@@ -260,7 +260,8 @@ Pure functions in `src/lib/policy.ts` decide every permission. The API enforces 
 | Password guessing and lockout abuse | Three-way sign-in throttle; strong-password rules | `tests/accounts` |
 | Account enumeration | Uniform sign-in errors with a dummy scrypt; uniform forgot-password answer | `tests/accounts` |
 | Open redirect after sign-in | Same-site paths only; control characters refused | `tests/hardening` |
-| Spreadsheet formula injection | Formula-like cells escaped in every CSV export | `tests/csv`, `tests/governance` |
+| Spreadsheet formula injection | Formula-like cells escaped in every CSV export; the Excel export writes text cells, never formulas | `tests/csv`, `tests/governance`, `tests/spreadsheet` |
+| Hostile workbooks (archive bombs, macros) | Excel/ODS files are converted to CSV in the browser by SheetJS (loaded on demand): 4 MB cap, only zip/CFB bytes accepted, reading stops at 10,002 rows; the server only ever parses CSV | `tests/spreadsheet`, browser test "Excel files" |
 | Code injection via recipes or AI | Allowlisted steps; literals and declared parameters only; nothing evaluated | `tests/validator`, `tests/language` |
 | Data leakage to the model; prompt injection | Only the sentence and column names are sent; output validated like any client input | `tests/ai` |
 | Hostile uploads | 1 MiB cap on bytes read, 5,000 rows, 50 columns, strict UTF-8, 30 s deadline | `tests/csv`, `npm run smoke` |
@@ -277,6 +278,8 @@ Every failure has an outcome the user can read, and none can corrupt a stored re
 | Model returns an invalid draft | 422 with the draft loaded in the editor and problems on each step card |
 | Missing column, bad amounts, duplicate or empty headers | 422 with up to 20 line-numbered issues, checked in the browser first |
 | File saved as Windows-1252, UTF-16 or with semicolons | 422 naming the cause and the "Save As → CSV UTF-8" fix |
+| Excel workbook whose first sheet is a cover page | The sheet picker in the drop zone; the chosen sheet is re-converted and re-checked |
+| A CSV renamed `.xlsx`, a password-protected or oversized workbook | Refused in the browser with the reason, before anything is read or sent |
 | Recipe archived by its owner | 409 `RECIPE_ARCHIVED`; the owner can restore it |
 | Invite or reset link expired, used or revoked | 404 with "ask for a new one" |
 | Too many sign-ins, sign-ups, resets or drafts | 429 with `Retry-After` |

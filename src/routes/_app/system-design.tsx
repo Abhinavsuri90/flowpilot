@@ -584,7 +584,8 @@ function SecuritySection() {
           ['Password guessing / lockout abuse', 'Three-way sign-in throttle; strong-password rules', 'accounts suite'],
           ['Account enumeration', 'Uniform sign-in errors, dummy scrypt for unknown emails, uniform forgot-password answer', 'accounts suite'],
           ['Open redirect after sign-in', 'Only same-site paths; control characters refused', 'hardening suite'],
-          ['Spreadsheet formula injection', 'Formula-like cells escaped in every CSV export', 'csv and governance suites'],
+          ['Spreadsheet formula injection', 'Formula-like cells escaped in every CSV export; the Excel export writes text, never formulas', 'csv, governance and spreadsheet suites'],
+          ['Hostile workbooks (archive bombs, macros)', 'Excel/ODS files become CSV in the browser (SheetJS on demand, 4 MB cap, zip/CFB bytes only, bounded rows); the server only ever parses CSV', 'spreadsheet suite, browser test “Excel files”'],
           ['Code injection via recipes or AI', 'Allowlisted steps; values are literals or declared parameters; nothing evaluated', 'validator and language suites'],
           ['Prompt injection / data leakage to the model', 'The model sees the sentence and column names only, never rows; its output is validated like any client input', 'ai suite'],
           ['Oversized or hostile uploads', '1 MiB cap on bytes read, 5,000 rows, 50 columns, strict UTF-8, 30 s deadline', 'csv suite, smoke'],
@@ -653,7 +654,7 @@ function ScalingSection() {
           ['AI authoring', 'One call + one repair', 'Cache by hash(request, schema); offline eval set', 'Per-tenant model config, budgets, AI-assisted copies with diffs'],
           ['Rate limits', 'In-memory sliding windows (sign-in, sign-up, resets, drafts)', 'Redis token buckets shared across servers', 'Edge rate limiting and abuse detection'],
           ['Observability', 'Append-only audit log (admin page + CSV), health check, smoke test', 'Structured logs, OpenTelemetry traces', 'SLOs on run latency (p95) and failure rate, with alerts'],
-          ['Integrations', 'None (CSV upload only)', 'One spreadsheet source, bound per runner, never the author’s account', 'Adapter to an execution backend (e.g. n8n) for a validated subset'],
+          ['Integrations', 'CSV, Excel and ODS upload; CSV and Excel download', 'One spreadsheet source, bound per runner, never the author’s account', 'Adapter to an execution backend (e.g. n8n) for a validated subset'],
         ]}
       />
       <p className="mt-3 text-[13px] text-muted">
@@ -708,6 +709,7 @@ function StackSection({ system }: { system?: SystemInfo }) {
           ['Styling', 'Tailwind CSS v4 with CSS-variable tokens', 'Light and dark themes from one token set'],
           ['Validation', 'Zod 4, strict', 'Unknown keys rejected; one schema for browser, model output and server'],
           ['CSV', 'Papa Parse', 'Our own header handling; escapeFormulae on export'],
+          ['Spreadsheets', 'SheetJS 0.20 (browser only, its own lazy chunk)', 'Excel/ODS → CSV before upload; results → .xlsx with real numbers'],
           ['Database', 'SQLite via better-sqlite3 (WAL)', 'Zero setup; triggers enforce invariants'],
           ['Auth', 'Email + password, scrypt, session table, HttpOnly cookie', 'Real multi-user sessions, no third-party dependency'],
           ['AI', 'Anthropic (forced tool call), OpenAI or OpenRouter (strict json_schema)', 'Structured output; provider picked by environment variables'],

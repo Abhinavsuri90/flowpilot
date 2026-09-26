@@ -579,7 +579,7 @@ function InputSection({ draft, setDraft, issues }: { draft: Draft; setDraft: Rea
           id="sample-file"
           file={file}
           compact
-          label="Drop a sample CSV, or choose one"
+          label="Drop a sample CSV or Excel file, or choose one"
           hint="Read in this browser to suggest columns; it is never uploaded"
           onFile={async (picked) => {
             setFile(picked)

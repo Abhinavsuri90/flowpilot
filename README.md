@@ -27,7 +27,7 @@ The full loop works end to end, and a real browser test proves it: **describe �
 ## Features
 
 **Authoring**
-- Read a sample CSV in the browser (it is never uploaded) to declare the input columns and their types: text, or amount in whole rupees.
+- Read a sample CSV or Excel file in the browser (it is never uploaded) to declare the input columns and their types: text, or amount in whole rupees.
 - Describe the report in plain language, in English or Hinglish, and get editable step cards. AI drafts carry a badge until you save them.
 - Edit steps by hand, from six kinds: **filter** rows (equals, comparisons, *contains*, *is one of*); **group & sum**; **summarize** by up to three columns with up to five figures (count, total, average, smallest, largest), or over all rows; **sort** by up to three columns; **keep the first N** rows (a "top 10", adjustable per run); and **choose columns**, in order, with friendly headers. Each dropdown offers only the columns available at that step, and a sidebar shows the columns flowing through the pipeline.
 - Three column types: text, amounts in whole rupees, and whole numbers (counts and quantities), suggested from the sample file.
@@ -38,9 +38,10 @@ The full loop works end to end, and a real browser test proves it: **describe �
 
 **Running**
 - Run on any file with the declared columns; extra columns are ignored and never stored.
+- **Excel and ODS files work too** (`.xlsx`, `.xlsm`, `.xlsb`, `.xls`, `.ods`): the chosen sheet is converted to CSV in your browser (pick the sheet when there are several; dates become ISO dates, numbers stay raw), so the workbook itself is never uploaded and the server only ever parses CSV.
 - The file is checked in the browser before anything is sent, so bad amounts, missing columns and ragged rows show with line numbers. Near-miss headers are named (“the file has "Status"”), and files that aren't UTF-8 or that use semicolons or tabs get a plain fix instead of a wall of errors. Switching versions re-checks the chosen file.
 - Per-run parameters with *Reset*, and a hint when a filter can never match the chosen file.
-- Results show a summary line, a sortable table (large results render 100 rows at a time), the rows remaining after each step, and a formula-safe CSV download.
+- Results show a summary line, a sortable table (large results render 100 rows at a time), the rows remaining after each step, and two downloads: a formula-safe CSV, or an **Excel workbook** with real numbers in Indian grouping, an autofilter, and an *About this run* sheet recording the recipe, version, file, parameters and a link back.
 - Private run history with exact counts per status, filtered on the server, and *Delete my results*.
 
 **Sharing and copies**
@@ -288,17 +289,17 @@ Status codes: 401 not signed in · 403 visible but not yours, a cross-site write
 ## Testing
 
 ```bash
-npm test                          # 134 unit and API tests
+npm test                          # 144 unit and API tests
 npx playwright install chromium   # once
-npm run test:e2e                  # 26 browser tests
+npm run test:e2e                  # 27 browser tests
 npm run typecheck
 npm run smoke                     # every endpoint and error code against a running server (--base <url>)
 ```
 
-- **Unit and API tests (Vitest), 134 in total:** engine 13, CSV 18, validator 13, access 20, demo loop 12, AI 10, hardening 13 (HTTP methods, HSTS, redirects, sessions, no-op edits, the activity feed on a busy team, list paging and run counts), accounts 17 (sign-up modes and rules, invitations, password resets, account settings, workspaces, removal and hand-over), language 14 (summaries and exact rounding, sort, top N, column choices, *contains* and *is one of*, whole numbers, validation messages, the seeded examples, a top-N run and CSV export through the API), governance 4 (archive and restore, the audit log's privacy rules, filters, paging and CSV). They call the same `handleApi(Request)` the server uses, with real session cookies, against an in-memory SQLite database, so access rules are tested end to end rather than mocked. The model is always stubbed, and the tests never read `.env`.
-- **Browser tests (Playwright), 26 in total:**
+- **Unit and API tests (Vitest), 144 in total:** engine 13, CSV 18, validator 13, access 20, demo loop 12, AI 10, hardening 15 (HTTP methods, HSTS, redirects, sessions, no-op edits, the activity feed on a busy team, list paging and run counts, the client address behind a proxy), accounts 17 (sign-up modes and rules, invitations, password resets, account settings, workspaces, removal and hand-over), language 14 (summaries and exact rounding, sort, top N, column choices, *contains* and *is one of*, whole numbers, validation messages, the seeded examples, a top-N run and CSV export through the API), governance 4 (archive and restore, the audit log's privacy rules, filters, paging and CSV), spreadsheet 8 (workbook → CSV on xlsx/xls/xlsb/ods files written by SheetJS: raw numbers, ISO dates, sheet choice and limits, refusing renamed text files; results → Excel with real numbers and an about sheet). They call the same `handleApi(Request)` the server uses, with real session cookies, against an in-memory SQLite database, so access rules are tested end to end rather than mocked. The model is always stubbed, and the tests never read `.env`.
+- **Browser tests (Playwright), 27 in total:**
   - `demo.spec.ts` (4) is the demo above.
-  - `features.spec.ts` (15) covers the rest: the editor's value warning, an invalid AI draft and a clarifying question, Advanced JSON, in-browser file checks, samples and parameters, details-only saves and versions, runs from another recipe, large results, CSV escaping, the command palette, theme, roles, *Delete my results*, the mobile drawer, re-checking a file when the version changes, refusing a non-UTF-8 file, the in-app 404, wide tables at phone width, library paging, an AI-drafted top-N summary edited with the new step cards and run, and archiving plus the audit log.
+  - `features.spec.ts` (16) covers the rest: the editor's value warning, an invalid AI draft and a clarifying question, Advanced JSON, in-browser file checks, samples and parameters, details-only saves and versions, runs from another recipe, large results, CSV escaping, the command palette, theme, roles, *Delete my results*, the mobile drawer, re-checking a file when the version changes, refusing a non-UTF-8 file, the in-app 404, wide tables at phone width, library paging, an AI-drafted top-N summary edited with the new step cards and run, archiving plus the audit log, and Excel input (a two-sheet workbook, the sheet picker, a renamed text file refused) with the Excel download read back.
   - `accounts.spec.ts` (5): a new team signs up, invites a teammate who joins through the link and runs a shared recipe; the workspace switcher (mouse and keyboard); account settings and a password change that signs out another device; forgot-password and dead links; the sign-in pages at phone width.
   - `a11y.spec.ts` (2) runs an axe-core WCAG 2.1 AA scan of every page, including sign-up, invitations and account settings, in light and dark mode.
 - The browser tests use their own database and a stand-in model (`tests/e2e/mock-model.ts`), so they never spend real credits. Screenshots of each demo stage are saved to `docs/screenshots/`.

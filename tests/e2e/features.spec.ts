@@ -394,3 +394,46 @@ test('an owner archives and restores a recipe; an admin reads and filters the au
   await open(page, '/audit')
   await expect(page.getByText('Only admins can read the audit log')).toBeVisible()
 })
+
+test('Excel files: the browser converts the chosen sheet, runs it, and downloads results as a real workbook', async ({ page }) => {
+  await signIn(page, 'Asha')
+  const { id } = await createRecipe(page, 'QA Excel input')
+  await open(page, `/w/${id}`)
+
+  // The first sheet is a cover page, so nothing can run until the data sheet is chosen.
+  await page.locator('#run-file').setInputFiles(F + 'sales_two_sheets.xlsx')
+  await expect(page.getByText(/workbook · sheet “Read me”/)).toBeVisible()
+  await expect(page.getByRole('button', { name: 'Run recipe' })).toBeDisabled()
+  await page.getByLabel('Sheet', { exact: true }).selectOption('Orders')
+  await expect(page.getByText(/sheet “Orders” · \d+ rows as CSV/)).toBeVisible()
+  await expect(page.getByText('Header check')).toBeVisible()
+  await expect(page.getByText('Converted to CSV in your browser; the workbook itself is never uploaded.')).toBeVisible()
+  await page.getByRole('button', { name: 'Run recipe' }).click()
+  const table = page.getByRole('table', { name: /Result of run/ })
+  await expect(table.locator('tbody tr')).toHaveCount(2)
+  await expect(page.getByText(/sales_two_sheets\.xlsx · \d+ rows read/)).toBeVisible()
+
+  // The Excel download keeps numbers as numbers and says where they came from.
+  const [download] = await Promise.all([page.waitForEvent('download'), page.getByRole('button', { name: 'Excel' }).click()])
+  expect(download.suggestedFilename()).toMatch(/^qa-excel-input-v1-\d{4}-\d{2}-\d{2}\.xlsx$/)
+  const XLSX = await import('xlsx')
+  const book = XLSX.read(readFileSync(await download.path()), { type: 'buffer' })
+  expect(book.SheetNames).toEqual(['Results', 'About this run'])
+  const rows = XLSX.utils.sheet_to_json<{ region: string; total: unknown }>(book.Sheets.Results!)
+  expect(rows).toHaveLength(2)
+  expect(typeof rows[0]!.total).toBe('number')
+  expect(XLSX.utils.sheet_to_json<string[]>(book.Sheets['About this run']!, { header: 1 })[0]).toEqual(['Recipe', 'QA Excel input'])
+
+  // A single-sheet workbook needs no choice; a CSV renamed .xlsx is refused before anything is read.
+  await page.getByRole('button', { name: /Remove sales_two_sheets.xlsx/ }).click()
+  await page.locator('#run-file').setInputFiles(F + 'sales_A.xlsx')
+  await expect(page.getByText(/sheet “Orders” · \d+ rows as CSV/)).toBeVisible()
+  await expect(page.getByLabel('Sheet', { exact: true })).toHaveCount(0)
+  await page.getByRole('button', { name: /Remove sales_A.xlsx/ }).click()
+  await page.locator('#run-file').setInputFiles({
+    name: 'fake.xlsx',
+    mimeType: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+    buffer: Buffer.from('region,status,amount\nNorth,paid,5\n'),
+  })
+  await expect(page.getByText('This file could not be read as a spreadsheet. Save it as .xlsx or CSV and try again.')).toBeVisible()
+})

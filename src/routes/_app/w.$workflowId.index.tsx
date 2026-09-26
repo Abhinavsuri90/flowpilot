@@ -28,6 +28,7 @@ import { api, ApiError, qk, qs } from '~/lib/api'
 import { CsvError, literalMismatch, missingColumnsMessage, parseForContract, parseTable } from '~/lib/csv'
 import { formatParameterValue, parameterUnits } from '~/lib/workflow/describe'
 import { compatibleSamples, fetchSample } from '~/lib/samples'
+import { exportFileName, resultWorkbook, saveBlob } from '~/lib/spreadsheet'
 import { formatBytes, formatCount, formatDuration, timeAgo } from '~/lib/format'
 import { LIMITS, type IntegerParameter, type WorkflowDefinition } from '~/lib/workflow/schema'
 import type { ApiIssue, RunDetail, RunList, WorkflowDetail } from '~/lib/types'
@@ -699,6 +700,21 @@ function RunPanel({ detail, busy, onRan }: { detail: WorkflowDetail; busy: boole
 // Result
 // ---------------------------------------------------------------------------
 
+/** Where the numbers came from, for the second sheet of the Excel download. */
+function aboutRun(r: RunDetail, title: string): Array<[string, string]> {
+  return [
+    ['Recipe', title],
+    ['Version', `v${r.versionNumber}`],
+    ['Run at', new Date(r.createdAt).toLocaleString()],
+    ['Input file', `${r.inputName ?? 'file'}${r.inputRows !== null ? ` · ${formatCount(r.inputRows)} rows read` : ''}`],
+    ['Parameters', r.parametersText || 'none'],
+    ['Result', r.summary ?? ''],
+    ['Rows', formatCount(r.rows.length)],
+    ['Link', `${window.location.origin}/w/${r.workflowId}?v=${r.versionId}&run=${r.id}`],
+    ['Made with', 'FlowPilot: a deterministic run of the saved recipe, no AI involved'],
+  ]
+}
+
 function ResultCard({ runId, detail, onClose }: { runId: string; detail: WorkflowDetail; onClose: () => void }) {
   const run = useQuery({ queryKey: qk.run(runId), queryFn: () => api.get<RunDetail>(`/api/runs/${runId}`) })
   const ranOnOther = !!run.data && run.data.versionId !== detail.version.id
@@ -708,6 +724,8 @@ function ResultCard({ runId, detail, onClose }: { runId: string; detail: Workflo
     enabled: ranOnOther,
   })
   const definition = ranOnOther ? ranVersion.data?.version.definition : detail.version.definition
+  const toast = useToast()
+  const [exporting, setExporting] = React.useState(false)
 
   if (run.isPending) {
     return (
@@ -781,9 +799,29 @@ function ResultCard({ runId, detail, onClose }: { runId: string; detail: Workflo
         actions={
           <>
             {r.status === 'succeeded' && (
-              <a href={`/api/runs/${r.id}/csv`} download className={buttonClass('secondary', 'sm')}>
-                <Download className="size-3.5" /> CSV
-              </a>
+              <>
+                <a href={`/api/runs/${r.id}/csv`} download className={buttonClass('secondary', 'sm')}>
+                  <Download className="size-3.5" /> CSV
+                </a>
+                <Button
+                  size="sm"
+                  icon={<FileSpreadsheet className="size-3.5" />}
+                  loading={exporting}
+                  onClick={async () => {
+                    setExporting(true)
+                    try {
+                      const blob = await resultWorkbook({ columns: r.columns, rows: r.rows, about: aboutRun(r, detail.workflow.title) })
+                      saveBlob(blob, exportFileName(detail.workflow.title, r.versionNumber, r.createdAt))
+                    } catch (err) {
+                      toast.show({ tone: 'bad', title: 'Could not build the Excel file', description: err instanceof Error ? err.message : String(err) })
+                    } finally {
+                      setExporting(false)
+                    }
+                  }}
+                >
+                  Excel
+                </Button>
+              </>
             )}
             <button
               type="button"
