@@ -205,7 +205,11 @@ export type InferredColumn = {
   type: ColumnType
   samples: string[]
   blanks: number
+  /** Distinct non-blank values (capped); stays in the browser, never sent anywhere. */
+  values: string[]
 }
+
+const DISTINCT_CAP = 200
 
 /**
  * Suggests a type per column from a sample file (runs in the browser; the file
@@ -218,14 +222,35 @@ export function inferColumns(input: CsvInput): { columns: InferredColumn[]; rowC
     const values = table.records.map((r) => (r.cells[i] ?? '').trim())
     const nonBlank = values.filter((v) => v !== '')
     const isAmount = nonBlank.length > 0 && nonBlank.every((v) => checkAmount(v).ok)
+    const distinct = [...new Set(nonBlank)]
     return {
       name,
       type: (isAmount ? 'integer_inr' : 'string') as ColumnType,
-      samples: [...new Set(nonBlank)].slice(0, 3),
+      samples: distinct.slice(0, 3),
       blanks: values.length - nonBlank.length,
+      values: distinct.slice(0, DISTINCT_CAP),
     }
   })
   return { columns, rowCount: table.records.length, issues: table.issues }
+}
+
+/**
+ * A text filter that can never match, found by comparing it with the values
+ * actually present (e.g. "Paid" when the file only has "paid"). Returns a
+ * plain-language hint and, for a casing mismatch, the value that would match.
+ */
+export function literalMismatch(
+  column: string,
+  literal: string,
+  present: string[],
+): { message: string; suggestion?: string } | null {
+  if (!literal || present.length === 0 || present.includes(literal)) return null
+  const suggestion = present.find((v) => v.toLowerCase() === literal.toLowerCase())
+  if (suggestion) {
+    return { message: `${column} is "${suggestion}" in the data, not "${literal}", and text matching is case-sensitive.`, suggestion }
+  }
+  const shown = present.slice(0, 6).map((v) => `"${v}"`).join(', ')
+  return { message: `No row has ${column} = "${literal}". The data has ${shown}${present.length > 6 ? ', …' : ''}.` }
 }
 
 /** Serializes a result table. Cells that start like a formula are prefixed with ' so spreadsheets don't run them. */

@@ -4,6 +4,7 @@ import { freshApp, signIn, type Client } from './helpers/app'
 import { fixture } from './helpers/fixtures'
 import { REGIONAL_REVENUE_EXCEPTIONS as ORIGINAL, REGIONAL_REVENUE_REQUEST } from '../src/lib/workflow/examples'
 import { OUTPUT_JSON_SCHEMA } from '../src/server/ai/generate'
+import { GENERATE_LIMITS, resetGenerateLimits } from '../src/server/ratelimit'
 
 // The model is always stubbed: these tests prove the loop around it (schema,
 // validation, one repair, outage handling), not the model's judgement.
@@ -58,6 +59,7 @@ function counts() {
 
 beforeEach(async () => {
   calls = []
+  resetGenerateLimits()
   app = await freshApp()
   asha = await signIn('asha')
   // Hermetic: a developer's .env can never leak a real key into these tests.
@@ -164,7 +166,7 @@ describe('AI authoring', () => {
     vi.stubEnv('OPENROUTER_API_KEY', 'test-openrouter-key')
     stubFetch(openai(GOOD))
     const routed = await generate()
-    expect(routed.body).toMatchObject({ kind: 'workflow', provider: 'openrouter', model: 'anthropic/claude-sonnet-5', definition: ORIGINAL })
+    expect(routed.body).toMatchObject({ kind: 'workflow', provider: 'openrouter', model: 'openai/gpt-6-luna', definition: ORIGINAL })
     expect(calls[0]!.url).toBe('https://openrouter.ai/api/v1/chat/completions')
     expect(calls[0]!.headers).toMatchObject({ authorization: 'Bearer test-openrouter-key', 'X-Title': 'FlowPilot' })
     expect(calls[0]!.body.provider).toEqual({ require_parameters: true })
@@ -202,6 +204,19 @@ describe('AI authoring', () => {
     expect(fetchFn).not.toHaveBeenCalled()
     expect(counts()).toEqual(before)
     expect((await asha.get('/api/me')).body.model).toEqual({ available: false, provider: null, model: null })
+  })
+
+  it('limits drafts per person (they cost money) and tells them when to retry', async () => {
+    vi.stubEnv('ANTHROPIC_API_KEY', 'test-key')
+    const fetchFn = stubFetch(anthropic(GOOD))
+    for (let i = 0; i < GENERATE_LIMITS.perMinute; i++) expect((await generate()).status).toBe(200)
+    const limited = await generate()
+    expect(limited.status).toBe(429)
+    expect(limited.body.error.code).toBe('RATE_LIMITED')
+    expect(Number(limited.headers.get('retry-after'))).toBeGreaterThan(0)
+    expect(fetchFn).toHaveBeenCalledTimes(GENERATE_LIMITS.perMinute) // the limited call never reached the model
+    const vikram = await signIn('vikram')
+    expect((await vikram.post('/api/generate', { request: REGIONAL_REVENUE_REQUEST, columns: COLUMNS })).status).toBe(200)
   })
 
   it('runs saved recipes with no model at all, because the run path never imports the model client', async () => {

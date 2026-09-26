@@ -6,7 +6,8 @@ export const DEFAULT_MODELS: Record<Provider, string> = {
   anthropic: 'claude-sonnet-5',
   openai: 'gpt-5',
   // Any OpenRouter model id that supports structured outputs works; see README.
-  openrouter: 'anthropic/claude-sonnet-5',
+  // gpt-6-luna: correct on the whole eval set, fastest and cheapest of those tested.
+  openrouter: 'openai/gpt-6-luna',
 }
 
 const KEY_VARS: Record<Provider, string> = {

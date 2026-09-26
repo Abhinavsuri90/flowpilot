@@ -132,7 +132,7 @@ function SidebarContent({ me, onNavigate }: { me: Me; onNavigate?: () => void })
       <nav className="flex flex-1 flex-col gap-5" aria-label="Main">
         {NAV.map((group) => (
           <div key={group.label}>
-            <div className="px-2 pb-1.5 text-[11px] font-medium tracking-wide text-sidebar-muted/80 uppercase">{group.label}</div>
+            <div className="px-2 pb-1.5 text-[11px] font-medium tracking-wide text-sidebar-muted uppercase">{group.label}</div>
             <ul className="space-y-0.5">
               {group.items.map((item) => {
                 const active = isActive(pathname, item)
@@ -199,7 +199,18 @@ function ThemeToggle() {
   )
 }
 
+/** "⌘" on Apple platforms, "Ctrl" elsewhere (decided after hydration; SSR shows ⌘). */
+function useModifierLabel(): string {
+  const [label, setLabel] = React.useState('⌘')
+  React.useEffect(() => {
+    const platform = (navigator as Navigator & { userAgentData?: { platform?: string } }).userAgentData?.platform ?? navigator.platform ?? ''
+    if (!/mac|iphone|ipad|ipod/i.test(platform || navigator.userAgent)) setLabel('Ctrl ')
+  }, [])
+  return label
+}
+
 export function AppShell({ me, children }: { me: Me; children: React.ReactNode }) {
+  const modifier = useModifierLabel()
   const [drawerOpen, setDrawerOpen] = React.useState(false)
   const [paletteOpen, setPaletteOpen] = React.useState(false)
   const pathname = useRouterState({ select: (s) => s.location.pathname })
@@ -269,7 +280,7 @@ export function AppShell({ me, children }: { me: Me; children: React.ReactNode }
               <Search className="size-4 shrink-0" aria-hidden />
               <span className="min-w-0 flex-1 truncate">Search recipes…</span>
               <span className="hidden sm:inline-flex">
-                <Kbd>⌘K</Kbd>
+                <Kbd>{modifier}K</Kbd>
               </span>
             </button>
             <div className="flex-1" />

@@ -3,7 +3,15 @@ import type { ColumnType, Operator, WorkflowDefinition } from './schema'
 // The editor edits a loose, form-friendly draft. It converts to a definition on
 // every change, and the same validator as the server decides whether it's valid.
 
-export type DraftColumn = { name: string; type: ColumnType; include: boolean; samples: string[]; blanks: number }
+export type DraftColumn = {
+  name: string
+  type: ColumnType
+  include: boolean
+  samples: string[]
+  blanks: number
+  /** Distinct values from the sample file (browser only; never part of the recipe or sent to the model). */
+  values?: string[]
+}
 export type DraftParam = { key: string; name: string; type: 'integer' | 'string'; default: string; min: string; max: string }
 export type DraftStep = {
   key: string
@@ -148,7 +156,10 @@ export function definitionToDraft(def: WorkflowDefinition): Pick<Draft, 'columns
 export function mergeColumns(existing: DraftColumn[], incoming: DraftColumn[]): DraftColumn[] {
   const byName = new Map(existing.map((c) => [c.name, c]))
   const incomingNames = new Set(incoming.map((c) => c.name))
-  const merged = incoming.map((c) => ({ ...c, samples: byName.get(c.name)?.samples ?? c.samples, blanks: byName.get(c.name)?.blanks ?? c.blanks }))
+  const merged: DraftColumn[] = incoming.map((c) => {
+    const known = byName.get(c.name)
+    return { ...c, samples: known?.samples ?? c.samples, blanks: known?.blanks ?? c.blanks, values: known?.values ?? c.values }
+  })
   // Declared-but-unused sample columns stay listed, unchecked.
   for (const c of existing) if (!incomingNames.has(c.name)) merged.push({ ...c, include: false })
   return merged

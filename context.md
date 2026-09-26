@@ -1,5 +1,5 @@
 # FlowPilot: context
-_Last updated: 2026-09-26 13:20 · Phase 8/8 · Complete: all phases done, unit + browser tests green_
+_Last updated: 2026-09-26 14:10 · Phase 9 (evaluation) · Complete: evaluation findings fixed; 79 unit + 14 browser tests green_
 
 ## What this is
 FlowPilot turns a one-sentence description of a repetitive CSV report into a saved, versioned recipe that a workspace can run on their own files, share and fork. AI drafts; a deterministic server executes; one access policy guards every request.
@@ -7,8 +7,8 @@ Stack: TanStack Start 1.168 (React 19.3, Vite 8, Nitro 3 beta), TanStack Router/
 Run: `npm install && npm run dev` → http://localhost:3000 (demo password `flowpilot-demo`)
 
 ## Current status
-- Phase: 8 hardening, e2e, README. Status: done (project complete)
-- Tests: 77/77 (`npm test`, 2026-09-26: engine 13, csv 12, validator 13, access 19, demo-loop 12, ai 8) · E2E 4/4 (`npm run test:e2e`, Chromium) · Typecheck: pass · Build: pass (prod server smoke-tested with a live OpenRouter model)
+- Phase: 9 evaluation + enhancements (owner asked for a strict review after phase 8). Status: done
+- Tests: 79/79 (`npm test`: engine 13, csv 12, validator 13, access 20, demo-loop 12, ai 9) · Browser 14/14 (`npm run test:e2e`: demo 4, features 8, a11y 2) · Model eval 14/14 (`npm run eval:model`, gpt-6-luna, two runs) · Typecheck: pass · Build: pass (prod smoke with live gpt-6-luna)
 - App runs with: `npm install && npm run dev` → http://localhost:3000
 
 ## Done (with evidence)
@@ -39,6 +39,20 @@ UI (evidence screenshots in `docs/screenshots/`)
 - [x] Library, My runs, Access (matrix from `policy.ts`, roles, one-click sharing, principles), Dashboard (checklist, stats, validated run chart with table view, activity), System design (interactive diagrams, live schema). Evidence: `06`, `08`, `09`, `10-dashboard-dark.png`
 - [x] No horizontal overflow at 390px on the main pages; light and dark themes
 
+Phase 9: evaluation findings, all fixed (evidence: `tests/e2e/features.spec.ts`, `tests/e2e/a11y.spec.ts`, `tests/ai.test.ts`)
+- [x] Model switched to `openai/gpt-6-luna` (owner's choice; OpenRouter default in code and `.env`). Evidence: `npm run eval:model` 14/14 twice, median 3.0 s; claude-sonnet-5 and gemini-3.8-flash also 14/14 but slower (5.3 s / 5.0 s median)
+- [x] Eval caught 2 prompt weaknesses (copying a sentence-initial capital "Paid"; filtering raw amounts before grouping) → prompt rules added. Evidence: eval runs before/after
+- [x] Editor warns when a text value never occurs in the sample file, one-click casing fix (values stay in the browser). Evidence: features "editor warns…"
+- [x] Run panel runs the full CSV contract check in the browser (line-numbered issues before upload), hints when a filter can't match the file, offers compatible sample files. Evidence: features "run panel checks the file…"
+- [x] Title/description edits no longer create a version ("Save details"). Evidence: features "a details-only edit…"
+- [x] `?run=` of another recipe shows a notice + link instead of the wrong result. Evidence: features "a run from another recipe…"
+- [x] Large results render 100 rows at a time (sorting covers all rows). Evidence: features "large results page…"
+- [x] AI drafting rate limit per person (10/min, 200/day, 429 + Retry-After). Evidence: ai "limits drafts per person…"
+- [x] WCAG 2.1 AA: faint text tokens, teal/green ink, sidebar labels darkened; ARIA list fix. Evidence: `tests/e2e/a11y.spec.ts` (axe-core, light + dark, every page)
+- [x] Public `GET /api/health` (21 endpoints now). Evidence: access "exposes a public health check…"
+- [x] Viewer-specific dashboard checklist; private-link copy notice; Ctrl K label off Mac; three sample files in the editor
+- [x] README rewritten (features, model choice + eval table, demo, architecture diagram, API reference, security, testing, config, deployment, troubleshooting)
+
 Phase 8 hardening
 - [x] Browser e2e of the whole demo loop (Asha AI-drafts, saves, runs, shares; Vikram reruns, adjusts, resets, copies, regroups, runs; Asha's original unchanged + copy notice; Meera can't copy; Olivia 404). Evidence: `tests/e2e/demo.spec.ts` 4/4
 - [x] Security headers on every page/API response (`X-Frame-Options: DENY`, nosniff, `Referrer-Policy`), CSRF middleware kept for server functions. Evidence: curl headers on / and /api/me
@@ -46,10 +60,10 @@ Phase 8 hardening
 - [x] README: quick start, AI setup, OpenRouter model comparison, demo script, architecture, security, tests, limitations
 
 ## In progress
-- Nothing. The project is complete.
+- Nothing. The project is complete; phase 9 evaluation findings are all fixed.
 
 ## Next steps (ordered)
-1. Owner: pick the OpenRouter model to keep (`MODEL_NAME`), then rotate the key that was shared in chat
+1. Owner: rotate the OpenRouter key that was shared in chat (the model is chosen: `openai/gpt-6-luna`)
 2. If deploying: HTTPS (cookies become Secure automatically), a persistent disk for SQLite, and `SEED_PASSWORD` set to something private
 3. Production path from the design: Postgres + row-level security, a job queue for execution, Redis-backed rate limits
 
@@ -79,6 +93,11 @@ Phase 8 hardening
 | 2026-09-26 | `src/start.ts` adds security headers and re-adds CSRF for server functions | Defining start.ts replaces Start's default CSRF middleware | No start.ts (earlier choice) |
 | 2026-09-26 | Controls needing JS disabled until hydration; `<html data-hydrated>` for tests | Pre-hydration clicks did nothing; a native GET submit would expose credentials | — |
 | 2026-09-26 | `stripSearchParams` for default search values | Avoid a redirect to `?tab=mine&q=` on every load | — |
+| 2026-09-26 | OpenRouter default model → `openai/gpt-6-luna` | Owner's choice; 14/14 on the eval set, fastest and ~20× cheaper | claude-sonnet-5 (also 14/14, slower) |
+| 2026-09-26 | Casing safety net in the browser, not by sending values to the model | Keeps "the model never sees data" true; catches manual typos too | Sending distinct column values to the model |
+| 2026-09-26 | Only definition changes create versions; details are PATCHed | A rename isn't a new recipe version | Versioning metadata |
+| 2026-09-26 | Drafting limits 10/min + 200/day per person, in memory | A paid key is now configured | No limit; global limit |
+| 2026-09-26 | Faint text `#656d80` (light) / `#7c84a3` (dark), flow-ink `#08736f`, ok-ink `#137a3a` | Computed to clear 4.5:1 on every surface; enforced by axe in e2e | Keeping the brief's lighter greys |
 
 ## Deviations from the brief
 - Added optional `ANTHROPIC_BASE_URL` / `OPENAI_BASE_URL` / `OPENROUTER_BASE_URL` · the browser test needs a local mock model (the model call is server-side) · no change when unset
@@ -91,7 +110,8 @@ Phase 8 hardening
 - Fixed: clicks before hydration were ignored on the login page; a native submit could have used GET
 - Fixed: reduced-motion users briefly saw staggered cards missing (animation delays not zeroed)
 - Fixed: dark-theme chart red failed the palette lightness band
-- Open (low): login throttle is in memory and per email, so an address can be locked out for 10 minutes · documented
+- Fixed in phase 9: title-only edits created versions; `?run=` from another recipe rendered as this recipe's result; the AI could copy sentence-initial capitals ("Paid"); faint text failed WCAG contrast
+- Open (low): login throttle and drafting limits are in memory (reset on restart); the login throttle is per email, so an address can be locked out for 10 minutes · documented
 - Open (low): CSV line numbers count records; a quoted field containing a newline shifts later numbers · documented
 - Open (cosmetic): build prints rolldown "use client" warnings from lucide-react; npm warns that Vitest's engines omit Node 25 (tests pass)
 
@@ -101,7 +121,7 @@ Phase 8 hardening
 - Seed / reset: `npm run seed` / `npm run seed:reset`
 - Test: `npm test` · E2E: `npm run test:e2e` · Typecheck: `npm run typecheck`
 - Build / start: `npm run build` → `npm start`
-- AI: put keys in `.env` (see `.env.example`), then `npm run check:model`
+- AI: put keys in `.env` (see `.env.example`), then `npm run check:model` and `npm run eval:model`
 - Screenshots: `npx tsx scripts/screenshots.ts --as asha --theme both / /library` (dev server running)
 
 ## Environment variables (names only)
@@ -116,12 +136,13 @@ DATABASE_PATH, SEED_PASSWORD, MODEL_PROVIDER, MODEL_NAME, ANTHROPIC_API_KEY, OPE
 - `src/routes/`: `__root.tsx` · `login.tsx` · `_app.tsx` (guard + shell) · `_app/{index,library,runs,access,system-design,workflows.new,w.$workflowId.index,w.$workflowId.edit}.tsx` · `api/$.ts`
 - `src/components/`: `ui.tsx` · `shell.tsx` · `command.tsx` · `editor.tsx` · `results.tsx` · `charts.tsx` · `workflow-bits.tsx` · `file-drop.tsx` · `share-dialog.tsx` · `fork-dialog.tsx` · `access-panel.tsx` · `states.tsx` · `toast.tsx` · `logo.tsx` · `theme.ts` · `diagrams/{architecture,versioning}.tsx`
 - `src/start.ts`: global request middleware (security headers, server-fn CSRF)
-- `tests/`: 6 Vitest suites + `helpers/` · `tests/e2e/`: `demo.spec.ts`, `mock-model.ts` · `playwright.config.ts`
-- `scripts/`: `seed.ts`, `check-model.ts`, `screenshots.ts` · `fixtures/`, `public/samples/`, `docs/screenshots/`
+- `tests/`: 6 Vitest suites + `helpers/` · `tests/e2e/`: `demo.spec.ts`, `features.spec.ts`, `a11y.spec.ts`, `mock-model.ts` · `playwright.config.ts`
+- `scripts/`: `seed.ts`, `check-model.ts`, `eval-model.ts`, `screenshots.ts` · `fixtures/`, `public/samples/`, `docs/screenshots/`
+- `src/lib/samples.ts` (sample catalogue) · `src/server/ratelimit.ts` (drafting limits)
 
 ## Demo checklist
 - [x] Asha creates & shares (e2e test 1) · [x] Vikram reruns (e2e test 2) · [x] Vikram forks (e2e test 2) · [x] Asha's original unchanged (e2e test 3) · [x] Meera/Olivia blocked (e2e test 4)
 
 ## Open questions for the owner
-- Which OpenRouter model to keep? Default meanwhile: `anthropic/claude-sonnet-5`. `openai/gpt-6-luna` was faster and much cheaper, and equally correct in the live checks. Please rotate the OpenRouter key after choosing, since it was shared in chat.
+- Please rotate the OpenRouter key that was shared in chat (the local `.env` needs the new value afterwards).
 - The brief was cut off after section 11 ("Governance: Access"). If sections 12–19 hold requirements beyond the system design PDF, share them and they can be checked against this build.

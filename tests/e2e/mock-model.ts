@@ -19,7 +19,14 @@ const DEMO = {
   ],
 }
 
+// Always invalid: filters on a column the group_sum already removed.
+const BROKEN = {
+  ...DEMO,
+  steps: [DEMO.steps[0], DEMO.steps[1], { ...DEMO.steps[2], column: 'sales_rep' }],
+}
+
 function answer(prompt: string) {
+  if (/broken draft/i.test(prompt)) return BROKEN
   if (/gmail|e-?mail|slack|schedule|every monday/i.test(prompt)) {
     return {
       kind: 'unsupported',

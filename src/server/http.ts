@@ -9,12 +9,14 @@ export class ApiError extends Error {
   readonly issues?: ApiIssue[]
   readonly draft?: unknown
   readonly runId?: string
+  /** Extra response headers, e.g. Retry-After on 429. */
+  readonly headers?: Record<string, string>
 
   constructor(
     status: number,
     code: string,
     message: string,
-    extra: { issues?: ApiIssue[]; draft?: unknown; runId?: string } = {},
+    extra: { issues?: ApiIssue[]; draft?: unknown; runId?: string; headers?: Record<string, string> } = {},
   ) {
     super(message)
     this.name = 'ApiError'
@@ -23,6 +25,7 @@ export class ApiError extends Error {
     this.issues = extra.issues
     this.draft = extra.draft
     this.runId = extra.runId
+    this.headers = extra.headers
   }
 }
 
@@ -52,7 +55,7 @@ export function errorResponse(err: ApiError, headers?: Record<string, string>): 
   if (err.issues?.length) error.issues = err.issues
   if (err.draft !== undefined) error.draft = err.draft
   if (err.runId) error.runId = err.runId
-  return json({ error }, { status: err.status, headers })
+  return json({ error }, { status: err.status, headers: { ...err.headers, ...headers } })
 }
 
 export function noContent(headers?: Record<string, string>): Response {

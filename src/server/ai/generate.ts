@@ -122,6 +122,8 @@ The only operations:
 Rules:
 - Use only the declared columns, plus columns created by earlier group_sum steps. Never invent column names.
 - Amounts are whole Indian rupees. Put amount values in literal_integer and text values in literal_string.
+- Text matching is case-sensitive and you cannot see the data, so write text values the way they are usually stored: lowercase for status-like words (paid, refunded, live). Never copy a capital letter that only comes from starting a sentence ("Paid orders…" means "paid"). Keep the user's exact casing only when they quote a value, e.g. "Enterprise".
+- A condition about a total per group ("regions with revenue below X", "reps whose paid total is at least X") filters the group_sum's new column in a step AFTER the group_sum, never the raw amount before it.
 - If the user calls a value configurable, adjustable, a threshold or a limit, or gives "default N", make it a parameter: type "integer" for amounts (integer_default N, min 0, max 1000000000) or "string" for text (string_default). Reference it with value_kind "parameter".
 - Step ids are s1, s2, s3 in order. Parameter names and "as" names use lowercase letters, digits and underscores, starting with a letter.
 - Use as few steps as the request needs, and never more than 10.

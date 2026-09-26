@@ -58,6 +58,13 @@ describe('access control', () => {
     }
   })
 
+  it('exposes a public health check that reveals nothing else', async () => {
+    const res = await new Client().get('/api/health')
+    expect(res.status).toBe(200)
+    expect(res.body).toEqual({ status: 'ok' })
+    expect(res.headers.get('cache-control')).toBe('private, no-store')
+  })
+
   it('gives the same answer for an unknown email and a wrong password, and throttles after 10 failures', async () => {
     const anon = new Client()
     const unknown = await anon.post('/api/auth/login', { email: 'nobody@demo.local', password: 'flowpilot-demo' })

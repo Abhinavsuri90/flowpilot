@@ -1,0 +1,144 @@
+// Offline eval set for AI drafting: fixed requests with structural expectations.
+// Runs each case against the configured model (or every --model given) and
+// prints pass/fail, latency and repairs. Costs a few cents at most.
+//   npm run eval:model
+//   npm run eval:model -- --model openai/gpt-6-luna --model anthropic/claude-sonnet-5
+import { loadEnv } from '../src/server/env'
+import { modelStatus } from '../src/server/ai/config'
+import { generateRecipe } from '../src/server/ai/generate'
+import { ApiError } from '../src/server/http'
+import { describeRecipe } from '../src/lib/workflow/describe'
+import type { ColumnType, Step, WorkflowDefinition } from '../src/lib/workflow/schema'
+import type { GenerateResult } from '../src/lib/types'
+
+type Columns = Record<string, ColumnType>
+const SALES: Columns = { status: 'string', region: 'string', sales_rep: 'string', amount: 'integer_inr' }
+const MARKETING: Columns = { status: 'string', channel: 'string', spend: 'integer_inr' }
+const TWO_REPS: Columns = { status: 'string', sales_rep: 'string', account_rep: 'string', amount: 'integer_inr' }
+
+const filter = (d: WorkflowDefinition, column: string, operator: string[], value?: (v: unknown) => boolean) =>
+  d.steps.some(
+    (s: Step) =>
+      s.type === 'filter' &&
+      s.column === column &&
+      operator.includes(s.operator) &&
+      (!value || ('literal' in s.value ? value(s.value.literal) : value(d.parameters[s.value.parameter]?.default))),
+  )
+const groupSum = (d: WorkflowDefinition, groupBy: string, valueColumn: string) =>
+  d.steps.some((s) => s.type === 'group_sum' && s.groupBy === groupBy && s.valueColumn === valueColumn)
+const param = (d: WorkflowDefinition, dflt: number) => Object.values(d.parameters).some((p) => p.type === 'integer' && p.default === dflt)
+const aliasFilter = (d: WorkflowDefinition, operator: string[]) => {
+  const g = d.steps.find((s) => s.type === 'group_sum')
+  return !!g && g.type === 'group_sum' && filter(d, g.as, operator)
+}
+
+type Case = {
+  name: string
+  request: string
+  columns: Columns
+  kind: GenerateResult['kind']
+  check?: (d: WorkflowDefinition) => boolean
+}
+
+const CASES: Case[] = [
+  {
+    name: 'demo sentence',
+    request: 'Keep paid orders, sum amount by region, and show regions with total below a configurable threshold, default 100000.',
+    columns: SALES,
+    kind: 'workflow',
+    check: (d) => filter(d, 'status', ['eq'], (v) => v === 'paid') && groupSum(d, 'region', 'amount') && aliasFilter(d, ['lt']) && param(d, 100000),
+  },
+  {
+    name: 'two filters',
+    request: 'Show only refunded orders with an amount above 50000.',
+    columns: SALES,
+    kind: 'workflow',
+    check: (d) => filter(d, 'status', ['eq'], (v) => v === 'refunded') && filter(d, 'amount', ['gt'], (v) => v === 50000),
+  },
+  {
+    name: 'group by rep',
+    request: 'Total paid amount for each sales rep.',
+    columns: SALES,
+    kind: 'workflow',
+    check: (d) => filter(d, 'status', ['eq'], (v) => v === 'paid') && groupSum(d, 'sales_rep', 'amount'),
+  },
+  {
+    name: 'at least, adjustable',
+    request: 'Which regions have paid revenue of at least an adjustable amount, default 80000?',
+    columns: SALES,
+    kind: 'workflow',
+    check: (d) => filter(d, 'status', ['eq'], (v) => v === 'paid') && groupSum(d, 'region', 'amount') && aliasFilter(d, ['gte']) && param(d, 80000),
+  },
+  {
+    name: 'exclusion',
+    request: 'Leave out cancelled orders and total the amount by region.',
+    columns: SALES,
+    kind: 'workflow',
+    check: (d) => filter(d, 'status', ['neq'], (v) => v === 'cancelled') && groupSum(d, 'region', 'amount'),
+  },
+  {
+    name: 'other contract',
+    request: 'Total live spend per channel.',
+    columns: MARKETING,
+    kind: 'workflow',
+    check: (d) => filter(d, 'status', ['eq'], (v) => v === 'live') && groupSum(d, 'channel', 'spend'),
+  },
+  {
+    name: 'Hinglish',
+    request: 'Paid orders ka region wise total dikhao.',
+    columns: SALES,
+    kind: 'workflow',
+    check: (d) => filter(d, 'status', ['eq'], (v) => v === 'paid') && groupSum(d, 'region', 'amount'),
+  },
+  { name: 'average → unsupported', request: 'Average order value by region.', columns: SALES, kind: 'unsupported' },
+  { name: 'count → unsupported', request: 'How many orders does each sales rep have?', columns: SALES, kind: 'unsupported' },
+  { name: 'Gmail + schedule → unsupported', request: 'Email this report to my manager through Gmail every Monday.', columns: SALES, kind: 'unsupported' },
+  { name: 'join → unsupported', request: 'Join these orders with the targets spreadsheet and compare.', columns: SALES, kind: 'unsupported' },
+  { name: 'chart → unsupported', request: 'Draw a bar chart of paid revenue by region.', columns: SALES, kind: 'unsupported' },
+  { name: 'ambiguous → question', request: 'Total the amount for each rep.', columns: TWO_REPS, kind: 'clarification' },
+  {
+    name: 'custom threshold wording',
+    request: 'Sum amount by region and keep regions under 60000, a limit I want to be able to change.',
+    columns: SALES,
+    kind: 'workflow',
+    check: (d) => groupSum(d, 'region', 'amount') && aliasFilter(d, ['lt', 'lte']) && param(d, 60000),
+  },
+]
+
+loadEnv()
+const argv = process.argv.slice(2)
+const models = argv.flatMap((a, i) => (a === '--model' && argv[i + 1] ? [argv[i + 1]!] : []))
+const status = modelStatus()
+if (!status.available) {
+  console.log('Model: not configured. Set a key in .env (see .env.example), then run again.')
+  process.exit(1)
+}
+
+let failures = 0
+for (const model of models.length ? models : [status.model!]) {
+  process.env.MODEL_NAME = model
+  console.log(`\n${status.provider} · ${model}`)
+  const results = await Promise.all(
+    CASES.map(async (c) => {
+      const started = Date.now()
+      try {
+        const r = await generateRecipe({ request: c.request, columns: c.columns })
+        const ok = r.kind === c.kind && (r.kind !== 'workflow' || !c.check || c.check(r.definition))
+        const detail =
+          r.kind === 'workflow' ? `${r.repaired ? '(repaired) ' : ''}${describeRecipe(r.definition).join(' | ')}` : r.kind === 'unsupported' ? r.reason : r.question
+        return { c, ok, got: r.kind, ms: Date.now() - started, detail }
+      } catch (err) {
+        const detail = err instanceof ApiError ? `${err.code}: ${err.message}` : String(err)
+        return { c, ok: false, got: 'error', ms: Date.now() - started, detail }
+      }
+    }),
+  )
+  for (const r of results) {
+    if (!r.ok) failures++
+    console.log(`${r.ok ? 'PASS' : 'FAIL'}  ${r.c.name.padEnd(30)} ${(r.ms / 1000).toFixed(1).padStart(5)} s  ${r.got.padEnd(13)} ${r.detail}`)
+  }
+  const times = results.map((r) => r.ms).sort((a, b) => a - b)
+  const passed = results.filter((r) => r.ok).length
+  console.log(`→ ${passed}/${results.length} passed · median ${(times[Math.floor(times.length / 2)]! / 1000).toFixed(1)} s · slowest ${(times[times.length - 1]! / 1000).toFixed(1)} s`)
+}
+process.exit(failures ? 2 : 0)

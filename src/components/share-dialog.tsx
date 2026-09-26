@@ -11,7 +11,18 @@ export function shareLink(workflowId: string, versionId: string): string {
   return `${origin}/w/${workflowId}?v=${versionId}`
 }
 
-export function CopyLinkButton({ href, label = 'Copy link', size = 'sm' }: { href: string; label?: string; size?: 'sm' | 'md' }) {
+export function CopyLinkButton({
+  href,
+  label = 'Copy link',
+  size = 'sm',
+  privateNote,
+}: {
+  href: string
+  label?: string
+  size?: 'sm' | 'md'
+  /** Shown after copying a link to a private recipe, which only the owner can open. */
+  privateNote?: boolean
+}) {
   const [copied, setCopied] = React.useState(false)
   const toast = useToast()
   return (
@@ -23,6 +34,9 @@ export function CopyLinkButton({ href, label = 'Copy link', size = 'sm' }: { hre
         try {
           await navigator.clipboard.writeText(href)
           setCopied(true)
+          if (privateNote) {
+            toast.show({ tone: 'info', title: 'Link copied', description: 'This recipe is private, so only you can open the link until you share it.' })
+          }
           window.setTimeout(() => setCopied(false), 1800)
         } catch {
           toast.show({ tone: 'bad', title: 'Could not copy', description: href })

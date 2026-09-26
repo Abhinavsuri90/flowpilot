@@ -27,7 +27,11 @@ const features = tableFeatures({
 const helper = createColumnHelper<typeof features, Row>()
 const EMPTY_ROWS: Row[] = []
 
+const PAGE = 100
+
 export function ResultTable({ columns, rows, caption }: { columns: Column[]; rows: Row[]; caption?: string }) {
+  // Large results render in pages so the browser stays responsive; sorting still covers every row.
+  const [visible, setVisible] = React.useState(PAGE)
   const defs = React.useMemo(
     (): Array<ColumnDef<typeof features, Row, any>> =>
       columns.map((column) =>
@@ -46,6 +50,8 @@ export function ResultTable({ columns, rows, caption }: { columns: Column[]; row
   )
   const table = useTable({ features, columns: defs, data: rows.length ? rows : EMPTY_ROWS })
   const typeOf = new Map(columns.map((c) => [c.name, c.type]))
+  const allRows = table.getRowModel().rows
+  const shownRows = allRows.slice(0, visible)
 
   return (
     <div className="scrollbar-thin overflow-x-auto rounded-xl border border-line">
@@ -89,7 +95,7 @@ export function ResultTable({ columns, rows, caption }: { columns: Column[]; row
           ))}
         </thead>
         <tbody>
-          {table.getRowModel().rows.map((row) => (
+          {shownRows.map((row) => (
             <tr key={row.id} className="border-b border-line last:border-0 hover:bg-surface-2">
               {row.getAllCells().map((cell) => {
                 const amount = typeOf.get(cell.column.id) === 'integer_inr'
@@ -106,6 +112,21 @@ export function ResultTable({ columns, rows, caption }: { columns: Column[]; row
           ))}
         </tbody>
       </table>
+      {allRows.length > shownRows.length && (
+        <div className="flex flex-wrap items-center justify-between gap-2 border-t border-line bg-surface-2 px-4 py-2.5 text-[12.5px] text-muted">
+          <span>
+            Showing {formatCount(shownRows.length)} of {formatCount(allRows.length)} rows. The CSV download has all of them.
+          </span>
+          <span className="flex gap-2">
+            <button type="button" onClick={() => setVisible((v) => v + PAGE)} className="font-medium text-brand-ink hover:underline">
+              Show {formatCount(Math.min(PAGE, allRows.length - shownRows.length))} more
+            </button>
+            <button type="button" onClick={() => setVisible(allRows.length)} className="font-medium text-brand-ink hover:underline">
+              Show all
+            </button>
+          </span>
+        </div>
+      )}
     </div>
   )
 }

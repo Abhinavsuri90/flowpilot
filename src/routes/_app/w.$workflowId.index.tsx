@@ -3,8 +3,10 @@ import { Link, createFileRoute, useNavigate } from '@tanstack/react-router'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { z } from 'zod'
 import {
+  AlertTriangle,
   ArrowLeft,
   CheckCircle2,
+  FileSpreadsheet,
   ChevronRight,
   Copy,
   Download,
@@ -21,10 +23,11 @@ import {
   XCircle,
 } from 'lucide-react'
 import { api, ApiError, qk, qs } from '~/lib/api'
-import { CsvError, parseTable } from '~/lib/csv'
+import { CsvError, literalMismatch, parseForContract, parseTable } from '~/lib/csv'
+import { compatibleSamples, fetchSample } from '~/lib/samples'
 import { formatBytes, formatCount, formatDuration, formatINR, timeAgo } from '~/lib/format'
 import { LIMITS, type IntegerParameter, type WorkflowDefinition } from '~/lib/workflow/schema'
-import type { RunDetail, RunSummary, WorkflowDetail } from '~/lib/types'
+import type { ApiIssue, RunDetail, RunSummary, WorkflowDetail } from '~/lib/types'
 import {
   Avatar,
   Badge,
@@ -159,7 +162,7 @@ function RecipePage() {
         </div>
 
         <div className="flex flex-wrap items-center gap-2">
-          <CopyLinkButton href={link} size="md" />
+          <CopyLinkButton href={link} size="md" privateNote={wf.visibility === 'private'} />
           {d.permissions.share.allowed && (
             <Button icon={<Share2 className="size-4" />} onClick={() => setShareOpen(true)}>
               Share
@@ -269,7 +272,17 @@ function RecipeOverview({ detail, className }: { detail: WorkflowDetail; classNa
 // ---------------------------------------------------------------------------
 
 type PreCheck =
-  | { kind: 'ok'; rows: number; missing: string[]; ignored: string[] }
+  | {
+      kind: 'ok'
+      rows: number
+      missing: string[]
+      ignored: string[]
+      /** Line-numbered problems the server would reject, found here first. */
+      issues: ApiIssue[]
+      issueSummary: string | null
+      /** Distinct values of each text column, for "this never matches" hints. */
+      valuesByColumn: Record<string, string[]>
+    }
   | { kind: 'error'; message: string }
 
 function defaultsFor(def: WorkflowDefinition): Record<string, string> {
@@ -304,13 +317,34 @@ function RunPanel({ detail, onRan }: { detail: WorkflowDetail; onRan: (runId: st
       return
     }
     try {
-      // Header pre-check in the browser; the server re-validates every cell.
-      const table = parseTable(await picked.text())
+      // The same parser as the server, run here first so problems show before
+      // anything is sent. The server still re-validates every cell.
+      const text = await picked.text()
+      const table = parseTable(text)
+      const missing = required.filter((c) => !table.headers.includes(c))
+      let issues: ApiIssue[] = []
+      let issueSummary: string | null = null
+      const valuesByColumn: Record<string, string[]> = {}
+      if (missing.length === 0) {
+        try {
+          const parsed = parseForContract(text, def.input.columns)
+          for (const [name, type] of Object.entries(def.input.columns)) {
+            if (type === 'string') valuesByColumn[name] = [...new Set(parsed.rows.map((r) => String(r[name])))].slice(0, 200)
+          }
+        } catch (err) {
+          if (!(err instanceof CsvError)) throw err
+          issues = err.issues
+          issueSummary = err.message
+        }
+      }
       setCheck({
         kind: 'ok',
         rows: table.records.length,
-        missing: required.filter((c) => !table.headers.includes(c)),
+        missing,
         ignored: table.headers.filter((h) => !required.includes(h)),
+        issues,
+        issueSummary,
+        valuesByColumn,
       })
     } catch (err) {
       setCheck({ kind: 'error', message: err instanceof CsvError ? err.message : 'This file could not be read as CSV.' })
@@ -345,7 +379,23 @@ function RunPanel({ detail, onRan }: { detail: WorkflowDetail; onRan: (runId: st
     Object.entries(def.parameters).map(([name, p]) => [name, paramProblem(p, values[name] ?? '')]),
   )
   const paramsOk = Object.values(problems).every((p) => !p)
-  const fileOk = !!file && check?.kind === 'ok' && check.missing.length === 0
+  const fileOk = !!file && check?.kind === 'ok' && check.missing.length === 0 && check.issues.length === 0
+  const samples = compatibleSamples(required)
+
+  // Text filters that can't match anything in this file (the recipe is fine; the data differs).
+  const hints =
+    check?.kind === 'ok'
+      ? def.steps.flatMap((step) => {
+          if (step.type !== 'filter' || step.operator !== 'eq') return []
+          const present = check.valuesByColumn[step.column]
+          if (!present) return []
+          const isParam = 'parameter' in step.value
+          const literal = isParam ? values[(step.value as { parameter: string }).parameter] ?? '' : (step.value as { literal: string | number }).literal
+          if (typeof literal !== 'string') return []
+          const found = literalMismatch(step.column, literal, present)
+          return found ? [{ ...found, parameter: isParam ? (step.value as { parameter: string }).parameter : null }] : []
+        })
+      : []
   const error = run.error instanceof ApiError ? run.error : run.error ? new ApiError(0, 'ERROR', run.error.message) : null
 
   return (
@@ -374,6 +424,21 @@ function RunPanel({ detail, onRan }: { detail: WorkflowDetail; onRan: (runId: st
           }}
           compact
         />
+        {!file && samples.length > 0 && (
+          <div className="-mt-1 flex flex-wrap items-center gap-1.5 text-[12px] text-muted">
+            <span>No file handy? Try</span>
+            {samples.map((sample) => (
+              <button
+                key={sample.name}
+                type="button"
+                onClick={async () => onFile(await fetchSample(sample.name))}
+                className="inline-flex items-center gap-1 rounded-md border border-line bg-surface px-1.5 py-0.5 font-mono text-[11.5px] text-ink-2 hover:border-flow/50 hover:text-flow-ink"
+              >
+                <FileSpreadsheet className="size-3" aria-hidden /> {sample.name}
+              </button>
+            ))}
+          </div>
+        )}
 
         {check?.kind === 'error' && <Callout tone="bad">{check.message}</Callout>}
         {check?.kind === 'ok' && (
@@ -408,8 +473,29 @@ function RunPanel({ detail, onRan }: { detail: WorkflowDetail; onRan: (runId: st
                 Ignored (not used, never stored): <span className="font-mono">{check.ignored.join(', ')}</span>
               </p>
             )}
+            {check.issues.length > 0 && (
+              <div className="mt-2.5 rounded-lg border border-bad/25 bg-bad-soft px-3 py-2 text-bad-ink" role="alert">
+                <p className="font-medium">{check.issueSummary} Fix these lines, then choose the file again:</p>
+                <ul className="mt-1 max-h-36 list-disc space-y-0.5 overflow-y-auto pl-4">
+                  {check.issues.map((issue, i) => (
+                    <li key={i}>{issue.message}</li>
+                  ))}
+                </ul>
+              </div>
+            )}
           </div>
         )}
+        {hints.map((hint, i) => (
+          <div key={i} className="flex flex-wrap items-center gap-2 rounded-xl border border-warn/25 bg-warn-soft px-3 py-2 text-[12.5px] text-warn-ink" role="status">
+            <AlertTriangle className="size-3.5 shrink-0" aria-hidden />
+            <span className="min-w-0 flex-1">In this file, {hint.message} The run would match nothing at this step.</span>
+            {hint.parameter && hint.suggestion && (
+              <Button size="sm" onClick={() => setValues((prev) => ({ ...prev, [hint.parameter!]: hint.suggestion! }))}>
+                Use “{hint.suggestion}”
+              </Button>
+            )}
+          </div>
+        ))}
 
         {Object.keys(def.parameters).length > 0 && (
           <div className="space-y-3">
@@ -526,6 +612,31 @@ function ResultCard({ runId, detail, onClose }: { runId: string; detail: Workflo
   }
 
   const r = run.data
+  if (r.workflowId !== detail.workflow.id) {
+    return (
+      <Callout
+        tone="info"
+        title="That result belongs to another recipe"
+        action={
+          <Button size="sm" variant="ghost" onClick={onClose}>
+            Dismiss
+          </Button>
+        }
+      >
+        {r.recipeAvailable ? (
+          <>
+            It was a run of{' '}
+            <Link to="/w/$workflowId" params={{ workflowId: r.workflowId }} search={{ run: r.id, v: r.versionId }} className="font-medium underline">
+              {r.workflowTitle}
+            </Link>
+            .
+          </>
+        ) : (
+          'The recipe it came from is no longer available to you; the result is still listed under My runs.'
+        )}
+      </Callout>
+    )
+  }
   const params = Object.entries(r.parameters)
   return (
     <Card className="animate-rise">

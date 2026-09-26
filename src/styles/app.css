@@ -21,7 +21,7 @@
   --ink: #0e1424;
   --ink-2: #2a3245;
   --muted: #5b6477;
-  --faint: #8a93a6;
+  --faint: #656d80; /* ≥ 4.5:1 on every light surface (WCAG AA) */
 
   --brand: #4353ff;
   --brand-2: #6b5cff;
@@ -29,14 +29,14 @@
   --brand-ink: #2f3ce0;
   --flow: #0ea5a0;
   --flow-soft: #e2f6f5;
-  --flow-ink: #0a7d79;
+  --flow-ink: #08736f;
   --ai: #8b5cf6;
   --ai-soft: #f1ebff;
   --ai-ink: #6b3ce0;
 
   --ok: #16a34a;
   --ok-soft: #e7f6ec;
-  --ok-ink: #15803d;
+  --ok-ink: #137a3a;
   --bad: #e5484d;
   --bad-soft: #fdecec;
   --bad-ink: #c3272c;
@@ -76,7 +76,7 @@
   --ink: #eef0f8;
   --ink-2: #cfd4e6;
   --muted: #9aa2bd;
-  --faint: #6b7392;
+  --faint: #7c84a3; /* ≥ 4.5:1 on every dark surface (WCAG AA) */
 
   --brand: #6e7bff;
   --brand-2: #8d7fff;

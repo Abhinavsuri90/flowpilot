@@ -66,12 +66,18 @@ function Dashboard() {
 function Hero({ me, data }: { me: Me; data?: DashboardData }) {
   const canCreate = canCreateInWorkspace(me.workspace?.role ?? null)
   const ws = me.workspace?.workspaceName ?? 'your workspace'
-  const steps = [
-    { done: data?.checklist.created, icon: <Sparkles />, label: 'Describe and save a recipe', hint: 'AI drafts, you review' },
-    { done: data?.checklist.ran, icon: <Play />, label: 'Run it on a file', hint: 'No AI on reruns' },
-    { done: data?.checklist.shared, icon: <Share2 />, label: `Share it with ${ws}`, hint: 'A link is a pointer, not a grant' },
-    { done: data?.checklist.copied, icon: <CopyPlus />, label: 'A teammate makes a copy', hint: 'Their copy never changes yours' },
-  ]
+  // Viewers can't create or copy, so their loop is the part they can do.
+  const steps = canCreate
+    ? [
+        { done: data?.checklist.created, icon: <Sparkles />, label: 'Describe and save a recipe', hint: 'AI drafts, you review' },
+        { done: data?.checklist.ran, icon: <Play />, label: 'Run it on a file', hint: 'No AI on reruns' },
+        { done: data?.checklist.shared, icon: <Share2 />, label: `Share it with ${ws}`, hint: 'A link is a pointer, not a grant' },
+        { done: data?.checklist.copied, icon: <CopyPlus />, label: 'A teammate makes a copy', hint: 'Their copy never changes yours' },
+      ]
+    : [
+        { done: (data?.stats.teamRecipes ?? 0) > 0, icon: <Users />, label: `Find a recipe shared in ${ws}`, hint: 'In the Team library' },
+        { done: data?.checklist.ran, icon: <Play />, label: 'Run it on your own file', hint: 'Results stay private to you' },
+      ]
   const doneCount = steps.filter((s) => s.done).length
 
   return (
@@ -116,6 +122,9 @@ function Hero({ me, data }: { me: Me; data?: DashboardData }) {
               style={{ width: `${(doneCount / steps.length) * 100}%` }}
             />
           </div>
+          {!canCreate && (
+            <p className="mt-3 text-[12px] text-muted">As a viewer you can run any recipe shared with {ws}. An admin can make you a member so you can create and copy recipes too.</p>
+          )}
           <ol className="mt-4 space-y-2.5">
             {steps.map((s) => (
               <li key={s.label} className="flex items-center gap-3">

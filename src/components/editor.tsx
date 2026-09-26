@@ -3,6 +3,7 @@ import { useBlocker, useNavigate } from '@tanstack/react-router'
 import { useMutation, useQueryClient } from '@tanstack/react-query'
 import {
   AlertCircle,
+  AlertTriangle,
   ArrowDown,
   ArrowUp,
   Braces,
@@ -21,7 +22,8 @@ import {
   Wand2,
 } from 'lucide-react'
 import { api, ApiError, qk } from '~/lib/api'
-import { CsvError, inferColumns } from '~/lib/csv'
+import { CsvError, inferColumns, literalMismatch } from '~/lib/csv'
+import { SAMPLE_FILES, fetchSample, type SampleName } from '~/lib/samples'
 import { formatINR } from '~/lib/format'
 import { describeStep } from '~/lib/workflow/describe'
 import { analyze, validateDefinition } from '~/lib/workflow/validate'
@@ -67,6 +69,7 @@ type AiNote =
   | { kind: 'unsupported'; reason: string }
   | { kind: 'clarification'; question: string }
   | { kind: 'unavailable'; message: string }
+  | { kind: 'limited'; message: string }
   | null
 
 const isIdLike = (name: string) => /(^|[_\s-])id$/i.test(name.trim())
@@ -86,6 +89,9 @@ export function RecipeEditor(props: Props) {
   const issues: ApiIssue[] = validation.ok ? [] : validation.issues
   const titleProblem = !draft.title.trim() ? 'Give the recipe a title' : draft.title.length > LIMITS.titleMax ? 'Titles can be at most 120 characters' : null
   const dirty = JSON.stringify(draft) !== JSON.stringify(props.initial)
+  const initialDefinition = React.useMemo(() => JSON.stringify(draftToDefinition(props.initial)), [props.initial])
+  const definitionChanged = JSON.stringify(raw) !== initialDefinition
+  const detailsChanged = draft.title.trim() !== props.initial.title.trim() || draft.description.trim() !== props.initial.description.trim()
 
   // Refs, not state: the blocker runs during navigation, possibly in the same
   // tick as a successful save, and must see the latest values.
@@ -123,14 +129,16 @@ export function RecipeEditor(props: Props) {
           definition,
         })
       }
-      const res = await api.post<{ workflowId: string; version: { id: string; number: number } }>(
-        `/api/workflows/${props.workflowId}/versions`,
-        { definition },
-      )
+      // Only a changed definition creates a new version; title and description are recipe details.
+      const res = definitionChanged
+        ? await api.post<{ workflowId: string; version: { id: string; number: number } }>(`/api/workflows/${props.workflowId}/versions`, {
+            definition,
+          })
+        : null
       if (draft.title.trim() !== props.savedTitle || draft.description.trim() !== props.savedDescription) {
         await api.patch(`/api/workflows/${props.workflowId}`, { title: draft.title.trim(), description: draft.description.trim() })
       }
-      return { workflow: { id: props.workflowId } as WorkflowSummary, version: res.version }
+      return { workflow: { id: props.workflowId } as WorkflowSummary, version: res?.version ?? null }
     },
     onSuccess: async (res) => {
       savedRef.current = true
@@ -141,8 +149,13 @@ export function RecipeEditor(props: Props) {
       ])
       toast.show({
         tone: 'ok',
-        title: mode === 'create' ? 'Recipe saved as version 1' : `Saved version ${res.version.number}`,
-        description: mode === 'create' ? 'It is private. Run it, then share it when you are ready.' : 'Earlier versions and their runs are unchanged.',
+        title: mode === 'create' ? 'Recipe saved as version 1' : res.version ? `Saved version ${res.version.number}` : 'Details saved',
+        description:
+          mode === 'create'
+            ? 'It is private. Run it, then share it when you are ready.'
+            : res.version
+              ? 'Earlier versions and their runs are unchanged.'
+              : 'Title and description changed; the steps and their version stay as they were.',
       })
       await navigate({ to: '/w/$workflowId', params: { workflowId: res.workflow.id } })
     },
@@ -171,6 +184,8 @@ export function RecipeEditor(props: Props) {
       if (err instanceof ApiError && err.code === 'DRAFT_INVALID' && err.draft) {
         applyDefinition(err.draft, 'ai')
         setAiNote({ kind: 'invalid', message: err.message })
+      } else if (err instanceof ApiError && err.status === 429) {
+        setAiNote({ kind: 'limited', message: err.message })
       } else if (err instanceof ApiError && err.status === 503) {
         setAiNote({ kind: 'unavailable', message: err.message })
       } else {
@@ -179,7 +194,7 @@ export function RecipeEditor(props: Props) {
     },
   })
 
-  const canSave = validation.ok && !titleProblem && !save.isPending && (mode === 'create' || dirty)
+  const canSave = validation.ok && !titleProblem && !save.isPending && (mode === 'create' || definitionChanged || detailsChanged)
   const inputIssues = issues.filter((i) => i.path.startsWith('input'))
   const stepIssues = (index: number) => issues.filter((i) => i.stepIndex === index)
   const paramIssues = (name: string) => issues.filter((i) => i.path === `parameters.${name}` || i.path.startsWith(`parameters.${name}.`))
@@ -252,6 +267,7 @@ export function RecipeEditor(props: Props) {
                 issues={stepIssues(i)}
                 aiDraft={draft.origin === 'ai'}
                 definition={validation.ok ? validation.definition : null}
+                sampleValues={draft.columns.find((c) => c.name === step.column && c.type === 'string')?.values}
                 onChange={(patch) => updateStep(step.key, patch)}
                 onMove={(dir) =>
                   setDraft((d) => {
@@ -377,7 +393,11 @@ export function RecipeEditor(props: Props) {
               </Callout>
             )}
             <Button variant="brand" size="lg" className="w-full" icon={<Save className="size-4" />} disabled={!canSave} loading={save.isPending} onClick={() => save.mutate()}>
-              {mode === 'create' ? 'Save recipe' : `Save as version ${props.mode === 'edit' ? props.currentVersion + 1 : ''}`}
+              {mode === 'create'
+                ? 'Save recipe'
+                : definitionChanged || !detailsChanged
+                  ? `Save as version ${props.mode === 'edit' ? props.currentVersion + 1 : ''}`
+                  : 'Save details'}
             </Button>
             <p className="text-center text-[12px] text-muted">
               {mode === 'create'
@@ -440,14 +460,16 @@ function Section({
 function IssueList({ issues }: { issues: ApiIssue[] }) {
   if (!issues.length) return null
   return (
-    <ul className="space-y-1" role="alert">
-      {issues.map((issue, i) => (
-        <li key={i} className="flex items-start gap-1.5 text-[12.5px] text-bad-ink">
-          <AlertCircle className="mt-0.5 size-3.5 shrink-0" aria-hidden />
-          <span>{issue.message}</span>
-        </li>
-      ))}
-    </ul>
+    <div role="alert">
+      <ul className="space-y-1">
+        {issues.map((issue, i) => (
+          <li key={i} className="flex items-start gap-1.5 text-[12.5px] text-bad-ink">
+            <AlertCircle className="mt-0.5 size-3.5 shrink-0" aria-hidden />
+            <span>{issue.message}</span>
+          </li>
+        ))}
+      </ul>
+    </div>
   )
 }
 
@@ -471,6 +493,7 @@ function InputSection({ draft, setDraft, issues }: { draft: Draft; setDraft: Rea
           include: previous.get(c.name)?.include ?? !isIdLike(c.name),
           samples: c.samples,
           blanks: c.blanks,
+          values: c.values,
         }))
         return { ...d, columns }
       })
@@ -481,11 +504,10 @@ function InputSection({ draft, setDraft, issues }: { draft: Draft; setDraft: Rea
     }
   }
 
-  const loadDemoFile = async (name: string) => {
-    const res = await fetch(`/samples/${name}`)
-    const textValue = await res.text()
-    setFile(new File([textValue], name, { type: 'text/csv' }))
-    loadSample(textValue, name)
+  const loadDemoFile = async (name: SampleName) => {
+    const sample = await fetchSample(name)
+    setFile(sample)
+    loadSample(await sample.text(), name)
   }
 
   const included = draft.columns.filter((c) => c.include).length
@@ -497,41 +519,38 @@ function InputSection({ draft, setDraft, issues }: { draft: Draft; setDraft: Rea
       description="The columns every file must have. Read a sample to fill this in; the sample stays in your browser and is never uploaded."
     >
       <div className="space-y-4">
-        <div className="grid gap-3 sm:grid-cols-[1fr_auto] sm:items-center">
-          <FileDrop
-            id="sample-file"
-            file={file}
-            compact
-            label="Drop a sample CSV, or choose one"
-            hint="Only the header and a few values are read, in this browser"
-            onFile={async (picked) => {
-              setFile(picked)
-              if (picked.size > LIMITS.fileBytes) {
-                setError('The sample is larger than the 1 MiB limit.')
-                return
-              }
-              loadSample(await picked.text(), picked.name)
-            }}
-            onClear={() => {
-              setFile(null)
-              setError(null)
-            }}
-          />
-          <div className="flex flex-row gap-2 sm:flex-col">
-            <Button size="sm" icon={<FileSpreadsheet className="size-3.5" />} onClick={() => loadDemoFile('sales_A.csv')}>
-              Use sales_A.csv
+        <FileDrop
+          id="sample-file"
+          file={file}
+          compact
+          label="Drop a sample CSV, or choose one"
+          hint="Read in this browser to suggest columns; it is never uploaded"
+          onFile={async (picked) => {
+            setFile(picked)
+            if (picked.size > LIMITS.fileBytes) {
+              setError('The sample is larger than the 1 MiB limit.')
+              return
+            }
+            loadSample(await picked.text(), picked.name)
+          }}
+          onClear={() => {
+            setFile(null)
+            setError(null)
+          }}
+        />
+        <div className="flex flex-wrap items-center gap-2 text-[12.5px] text-muted">
+          <span>Or use a sample file:</span>
+          {SAMPLE_FILES.map((sample) => (
+            <Button
+              key={sample.name}
+              size="sm"
+              aria-label={`Use ${sample.name}`}
+              icon={<FileSpreadsheet className="size-3.5" />}
+              onClick={() => loadDemoFile(sample.name)}
+            >
+              {sample.name}
             </Button>
-            <span className="text-center text-[12px] text-muted">
-              Download{' '}
-              <a href="/samples/sales_A.csv" download className="text-brand-ink hover:underline">
-                A
-              </a>{' '}
-              ·{' '}
-              <a href="/samples/sales_B.csv" download className="text-brand-ink hover:underline">
-                B
-              </a>
-            </span>
-          </div>
+          ))}
         </div>
         {error && <Callout tone="bad">{error}</Callout>}
 
@@ -723,6 +742,11 @@ function DescribeSection({
             {note.question} Edit your description and generate again.
           </Callout>
         )}
+        {note?.kind === 'limited' && (
+          <Callout tone="warn" title="Slow down a little">
+            {note.message}
+          </Callout>
+        )}
         {note?.kind === 'unavailable' && (
           <Callout tone="bad" title="AI generation is unavailable">
             {note.message} Saved recipes still run, and you can add steps by hand.
@@ -754,6 +778,7 @@ function StepCard({
   onMove,
   onRemove,
   onMakeParameter,
+  sampleValues,
 }: {
   step: DraftStep
   index: number
@@ -767,6 +792,8 @@ function StepCard({
   onMove: (dir: -1 | 1) => void
   onRemove: () => void
   onMakeParameter: (defaultValue: string, type: 'integer' | 'string') => void
+  /** Distinct values of this step's column in the sample file, if one was read. */
+  sampleValues?: string[]
 }) {
   const columnType = available.find((c) => c.name === step.column)?.type
   const isAmount = columnType === 'integer_inr'
@@ -774,6 +801,11 @@ function StepCard({
   const matchingParams = parameters.filter((p) => (isAmount ? p.type === 'integer' : columnType === 'string' ? p.type === 'string' : true))
   const savedStep = definition?.steps[index]
   const preview = savedStep && issues.length === 0 ? describeStep(savedStep, columnType, definition!) : null
+  // The model never sees data, so a text value can be valid yet never match (e.g. "Paid" vs "paid").
+  const mismatch =
+    step.type === 'filter' && columnType === 'string' && step.valueKind === 'literal' && sampleValues?.length
+      ? literalMismatch(step.column, step.literal.trim(), sampleValues)
+      : null
   const idOk = NAME_PATTERN.test(step.id)
 
   return (
@@ -914,11 +946,22 @@ function StepCard({
           </div>
         )}
 
+        {mismatch && (
+          <div className="flex flex-wrap items-center gap-2 rounded-lg border border-warn/25 bg-warn-soft px-3 py-2 text-[12.5px] text-warn-ink" role="status">
+            <AlertTriangle className="size-3.5 shrink-0" aria-hidden />
+            <span className="min-w-0 flex-1">In your sample file, {mismatch.message}</span>
+            {mismatch.suggestion && (
+              <Button size="sm" onClick={() => onChange({ literal: mismatch.suggestion! })}>
+                Use “{mismatch.suggestion}”
+              </Button>
+            )}
+          </div>
+        )}
         {issues.length > 0 ? (
           <IssueList issues={issues} />
         ) : preview ? (
-          <p className="flex items-start gap-1.5 text-[12.5px] text-ok-ink">
-            <CheckCircle2 className="mt-0.5 size-3.5 shrink-0" aria-hidden /> {preview}
+          <p className={cn('flex items-start gap-1.5 text-[12.5px]', mismatch ? 'text-muted' : 'text-ok-ink')}>
+            {!mismatch && <CheckCircle2 className="mt-0.5 size-3.5 shrink-0" aria-hidden />} {preview}
           </p>
         ) : null}
       </div>
@@ -1142,7 +1185,7 @@ function JsonDialog({
       }
     >
       <textarea
-        aria-label="Recipe JSON"
+        aria-label="Definition JSON"
         value={textValue}
         onChange={(e) => setTextValue(e.target.value)}
         spellCheck={false}

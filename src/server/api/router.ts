@@ -1,7 +1,7 @@
 import { getDb } from '../db'
 import { userFromRequest } from '../auth'
 import { loadEnv } from '../env'
-import { ApiError, errorResponse, unauthorized } from '../http'
+import { ApiError, errorResponse, json, unauthorized } from '../http'
 import type { ApiContext, AuthedContext } from './context'
 import * as auth from './auth'
 import * as workflows from './workflows'
@@ -25,6 +25,7 @@ const ROUTES: Route[] = [
   { method: 'POST', pattern: '/api/auth/login', auth: false, handler: auth.login },
   { method: 'POST', pattern: '/api/auth/logout', auth: false, handler: auth.logout },
   { method: 'GET', pattern: '/api/me', auth: true, handler: auth.me },
+  { method: 'GET', pattern: '/api/health', auth: false, handler: ({ db }) => json({ status: db.prepare('SELECT 1').pluck().get() === 1 ? 'ok' : 'degraded' }) },
   { method: 'GET', pattern: '/api/dashboard', auth: true, handler: dashboard.get },
   { method: 'GET', pattern: '/api/workflows', auth: true, handler: workflows.list },
   { method: 'POST', pattern: '/api/workflows', auth: true, handler: workflows.create },

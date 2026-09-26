@@ -235,7 +235,7 @@ function BrandPanel() {
             <Lock className="mt-0.5 size-4 shrink-0 text-[#9aa6ff]" /> Results stay private to whoever ran them
           </li>
         </ul>
-        <div className="mt-6 flex items-center gap-2 text-[12px] text-sidebar-muted/80">
+        <div className="mt-6 flex items-center gap-2 text-[12px] text-sidebar-muted">
           <GitFork className="size-3.5" /> Copies are independent: adapting a recipe never changes the original.
         </div>
       </div>
