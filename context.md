@@ -1,5 +1,5 @@
 # FlowPilot: context
-_Last updated: 2026-09-26 14:10 · Phase 9 (evaluation) · Complete: evaluation findings fixed; 79 unit + 14 browser tests green_
+_Last updated: 2026-09-26 15:05 · Phase 10 (second evaluation) · Complete: 17 findings fixed; 97 unit + 19 browser tests green. Next: phase 11 (accounts and teams)_
 
 ## What this is
 FlowPilot turns a one-sentence description of a repetitive CSV report into a saved, versioned recipe that a workspace can run on their own files, share and fork. AI drafts; a deterministic server executes; one access policy guards every request.
@@ -7,8 +7,8 @@ Stack: TanStack Start 1.168 (React 19.3, Vite 8, Nitro 3 beta), TanStack Router/
 Run: `npm install && npm run dev` → http://localhost:3000 (demo password `flowpilot-demo`)
 
 ## Current status
-- Phase: 9 evaluation + enhancements (owner asked for a strict review after phase 8). Status: done
-- Tests: 79/79 (`npm test`: engine 13, csv 12, validator 13, access 20, demo-loop 12, ai 9) · Browser 14/14 (`npm run test:e2e`: demo 4, features 8, a11y 2) · Model eval 14/14 (`npm run eval:model`, gpt-6-luna, two runs) · Typecheck: pass · Build: pass (prod smoke with live gpt-6-luna)
+- Phase: 10 second evaluation (owner: "run fully, find more problems, solve each"). Status: done
+- Tests: 97/97 (`npm test`: engine 13, csv 18, validator 13, access 20, demo-loop 12, ai 9, hardening 12) · Browser 19/19 (`npm run test:e2e`: demo 4, features 13, a11y 2) · Model eval 14/14 (phase 9; AI code unchanged since) · Typecheck: pass, also with --noUnusedLocals/--noUnusedParameters · Build: pass (prod smoke with live gpt-6-luna: South ₹40,000 · West ₹70,000)
 - App runs with: `npm install && npm run dev` → http://localhost:3000
 
 ## Done (with evidence)
@@ -25,10 +25,10 @@ Recipe language
 - [x] Deterministic summary (`2 rows · status = "paid" · grouped by region · total < ₹1,00,000`). Evidence: engine + demo-loop suites
 
 API and access
-- [x] All 20 REST endpoints behind one dispatcher `handleApi(Request)` (route → origin → session → handler → errors). Evidence: access (19) + demo-loop (12) + ai (8) suites
+- [x] All 21 REST endpoints behind one dispatcher `handleApi(Request)` (route → origin → session → handler → errors); HEAD/OPTIONS/405 on every path. Evidence: access (20) + demo-loop (12) + ai (9) + hardening (12) suites
 - [x] 404 hides existence; 403 only for visible-but-not-yours; runs private to the runner; unshare → 404 while copies keep running with hidden attribution. Evidence: access suite
 - [x] Activity feed tells a source owner about a copy without revealing it. Evidence: demo-loop 11; e2e test 3
-- [x] AI authoring: flat strict schema, Anthropic forced tool call / OpenAI + OpenRouter strict json_schema, one repair, 422 DRAFT_INVALID with draft, 503 MODEL_UNAVAILABLE, never writes; run path never imports the model client. Evidence: `tests/ai.test.ts` (8)
+- [x] AI authoring: flat strict schema, Anthropic forced tool call / OpenAI + OpenRouter strict json_schema, one repair, 422 DRAFT_INVALID with draft, 503 MODEL_UNAVAILABLE, never writes; run path never imports the model client. Evidence: `tests/ai.test.ts` (9)
 - [x] OpenRouter live: `npm run check:model` and the production server both produced a valid demo recipe from `anthropic/claude-sonnet-5` on the first try (7.6 s through prod), then saved and ran it (South ₹40,000 · West ₹70,000). Model comparison in README
 
 UI (evidence screenshots in `docs/screenshots/`)
@@ -38,6 +38,23 @@ UI (evidence screenshots in `docs/screenshots/`)
 - [x] Recipe page: version picker + "latest is M" banner, run panel with header pre-check and parameter reset, results (summary chips, Table v9 sorting, funnel, CSV), my runs + delete, who has access, share + copy dialogs. Evidence: `02`–`05`
 - [x] Library, My runs, Access (matrix from `policy.ts`, roles, one-click sharing, principles), Dashboard (checklist, stats, validated run chart with table view, activity), System design (interactive diagrams, live schema). Evidence: `06`, `08`, `09`, `10-dashboard-dark.png`
 - [x] No horizontal overflow at 390px on the main pages; light and dark themes
+
+Phase 10: second evaluation, 17 findings fixed (evidence: `tests/hardening.test.ts`, `tests/csv.test.ts`, last 5 tests of `tests/e2e/features.spec.ts`; each unit test was checked to fail against the old code)
+- [x] Run panel kept a stale header check after a version switch ("region found" for a file without it; server then 422) → check tagged with its version, re-run on switch, file kept
+- [x] CSV: non-UTF-8 files (Windows Excel "CSV") silently became "Montr�al" → rejected with line + Save-As fix; UTF-16 named; semicolon/tab files named instead of "missing every column"; empty trailing header explained; near-miss headers ("the file has "Status"") in server + browser messages
+- [x] Activity feed went empty once 400 newer events were teammates' private runs → privacy rules in SQL + batched scan (≤2,000 rows); deleted runs no longer linked ("(result deleted)")
+- [x] Library returned every recipe (919 KiB, 6,009 statements at 1,500 recipes) → `limit/offset/total/nextOffset`, 60 per page + Show more; palette asks for 7 (now 37 KiB, 2.9 ms)
+- [x] My runs capped at 500 with counts from the capped list → server-side `status` filter + exact `counts`; note when capped
+- [x] PUT/OPTIONS on /api/* returned the HTML app (200); HEAD returned 405 → `ANY` handler; HEAD = GET without body, OPTIONS 204 + Allow, others 405
+- [x] Malformed %-encoding in an id threw (500 via handleApi) → 404
+- [x] Login redirect with a tab/newline ("/%09/evil") crashed the page (500) → control characters refused (`src/lib/redirect.ts`)
+- [x] Phone width: recipe page scrolled sideways (525 px): sr-only cell labels escaped `overflow-x-auto` (containing block was body) → `relative` on every table scroller
+- [x] Unknown URL while signed in lost the app shell → `_app/$` splat route is its own not-found boundary (404, sidebar kept)
+- [x] Expired sessions never purged; re-login kept the old session → purge on sign-in (+ index, migration 2), previous session deleted
+- [x] No-op PATCH bumped updated_at (reordered the library) → only real changes written/logged
+- [x] Library search box could overwrite typing when its own URL update landed → tracks the last pushed value
+- [x] Dead code (2 unused React imports, an unused variable, an unused test binding) → removed; strict unused check passes
+- Checked and fine: console clean on every page in both themes; session end mid-use and Back after sign-out; email lookup is case-insensitive (COLLATE NOCASE); no 5xx in a 70-case hostile-input probe; prod 400 bodies carry no stack traces
 
 Phase 9: evaluation findings, all fixed (evidence: `tests/e2e/features.spec.ts`, `tests/e2e/a11y.spec.ts`, `tests/ai.test.ts`)
 - [x] Model switched to `openai/gpt-6-luna` (owner's choice; OpenRouter default in code and `.env`). Evidence: `npm run eval:model` 14/14 twice, median 3.0 s; claude-sonnet-5 and gemini-3.8-flash also 14/14 but slower (5.3 s / 5.0 s median)
@@ -60,12 +77,14 @@ Phase 8 hardening
 - [x] README: quick start, AI setup, OpenRouter model comparison, demo script, architecture, security, tests, limitations
 
 ## In progress
-- Nothing. The project is complete; phase 9 evaluation findings are all fixed.
+- Nothing mid-change. Owner asked (after phase 10) for: every endpoint and error smoke-tested, real sign-up/sign-in (not demo-only), company-grade features, a stronger system design, then deployment.
 
 ## Next steps (ordered)
-1. Owner: rotate the OpenRouter key that was shared in chat (the model is chosen: `openai/gpt-6-luna`)
-2. If deploying: HTTPS (cookies become Secure automatically), a persistent disk for SQLite, and `SEED_PASSWORD` set to something private
-3. Production path from the design: Postgres + row-level security, a job queue for execution, Redis-backed rate limits
+1. Phase 11: accounts and teams: sign-up (creates a workspace), invitations with roles, account settings, password reset links, workspace switcher, member removal, demo accounts only in DEMO_MODE
+2. Phase 12: recipe language v2 (count/avg/min/max, sort, top N, column select/rename, more filter operators), archive recipes, admin audit log
+3. Phase 13: `npm run smoke` against any URL (every endpoint and error code); system design page + docs upgrade
+4. Phase 14: deploy (recommended: Fly.io, Mumbai region, SQLite on a volume); needs the owner's account login
+5. Owner: rotate the OpenRouter key that was shared in chat
 
 ## Decisions log
 | Date | Decision | Why | Alternatives rejected |
@@ -87,7 +106,7 @@ Phase 8 hardening
 | 2026-09-26 | Dashboard day buckets in UTC | Prototype | Per-user time zones |
 | 2026-09-26 | Id-like sample columns (`order_id`) unchecked by default; after a copy the editor opens | Matches the demo contract and flow | — |
 | 2026-09-26 | Model reply parsed leniently, then the definition validated strictly; literals placed by column type | Don't waste the single repair on omissions | Strict reply parse |
-| 2026-09-26 | Defaults: `claude-sonnet-5` (Anthropic), `gpt-5` (OpenAI), `anthropic/claude-sonnet-5` (OpenRouter) | Brief's intended model; overridable with MODEL_NAME | `openai/gpt-6-luna` offered as the budget option |
+| 2026-09-26 | Defaults: `claude-sonnet-5` (Anthropic), `gpt-5` (OpenAI); OpenRouter later changed to `openai/gpt-6-luna` (row below) | Brief's intended model; overridable with MODEL_NAME | — |
 | 2026-09-26 | Tests never load `.env` (skipped under VITEST); e2e forces a mock provider | Real keys never reach tests or spend credits | Per-test stubs only |
 | 2026-09-26 | Run chart tokens `--chart-ok`/`--chart-bad`; failed = #e5484d in both themes | Validated with the dataviz checker; dark UI red failed the band | Reusing status tokens |
 | 2026-09-26 | `src/start.ts` adds security headers and re-adds CSRF for server functions | Defining start.ts replaces Start's default CSRF middleware | No start.ts (earlier choice) |
@@ -98,6 +117,15 @@ Phase 8 hardening
 | 2026-09-26 | Only definition changes create versions; details are PATCHed | A rename isn't a new recipe version | Versioning metadata |
 | 2026-09-26 | Drafting limits 10/min + 200/day per person, in memory | A paid key is now configured | No limit; global limit |
 | 2026-09-26 | Faint text `#656d80` (light) / `#7c84a3` (dark), flow-ink `#08736f`, ok-ink `#137a3a` | Computed to clear 4.5:1 on every surface; enforced by axe in e2e | Keeping the brief's lighter greys |
+| 2026-09-26 | Reject non-UTF-8 CSV bytes (fatal decoding) with a Save-As fix | Silent "�" breaks filters and grouping; "nothing is guessed" like amounts | Guessing Windows-1252 |
+| 2026-09-26 | Headers still match exactly; near misses are only named in the message | Column names may legally differ by case; no silent renaming | Case-insensitive matching |
+| 2026-09-26 | Empty headers stay rejected (brief), but a trailing one explains the stray comma | Brief: "reject empty or duplicate headers" | Dropping empty trailing columns |
+| 2026-09-26 | Lists page: recipes 60 (max 200) with offset; runs ≤500 with exact per-status counts | Payload and render cost grew with every recipe | Returning everything |
+| 2026-09-26 | Activity privacy rules in SQL, then batched per-row checks (≤2,000 rows) | A fixed 400-row window starved busy workspaces | Bigger fixed window |
+| 2026-09-26 | `/api/$` uses one `ANY` handler; dispatcher answers HEAD/OPTIONS/405 | Unlisted methods fell through to the SSR page | Listing every method |
+| 2026-09-26 | Unknown app URLs: `_app/$` splat is its own not-found boundary | A boundary on `_app` replaces the shell itself | Root-only 404 |
+| 2026-09-26 | Tables scroll inside a `relative` wrapper | sr-only labels are absolutely positioned; without a containing block they widen the page | `min-w-0` on grid items (tested: not the cause) |
+| 2026-09-26 | Commits end with a Co-Authored-By trailer from phase 10 on | Current tool guidance; the brief fixes only the subject format | — |
 
 ## Deviations from the brief
 - Added optional `ANTHROPIC_BASE_URL` / `OPENAI_BASE_URL` / `OPENROUTER_BASE_URL` · the browser test needs a local mock model (the model call is server-side) · no change when unset
@@ -111,9 +139,11 @@ Phase 8 hardening
 - Fixed: reduced-motion users briefly saw staggered cards missing (animation delays not zeroed)
 - Fixed: dark-theme chart red failed the palette lightness band
 - Fixed in phase 9: title-only edits created versions; `?run=` from another recipe rendered as this recipe's result; the AI could copy sentence-initial capitals ("Paid"); faint text failed WCAG contrast
+- Fixed in phase 10: see "Phase 10" under Done (17 items)
 - Open (low): login throttle and drafting limits are in memory (reset on restart); the login throttle is per email, so an address can be locked out for 10 minutes · documented
-- Open (low): CSV line numbers count records; a quoted field containing a newline shifts later numbers · documented
+- By design: CSV line numbers count records (= spreadsheet row numbers); only in a text editor does a quoted newline shift them · documented
 - Open (cosmetic): build prints rolldown "use client" warnings from lucide-react; npm warns that Vitest's engines omit Node 25 (tests pass)
+- Open (cosmetic): react-hooks lint (not installed in the repo) flags 10 intentional client-only effects (hydration flag, theme, platform, dialog resets); reviewed, no bug (the fork dialog reset was probed in a browser: no reset on refetch)
 
 ## How to run
 - Install: `npm install` (Node 22+; built on Node 25.3) · E2E browser once: `npx playwright install chromium`
@@ -129,14 +159,14 @@ DATABASE_PATH, SEED_PASSWORD, MODEL_PROVIDER, MODEL_NAME, ANTHROPIC_API_KEY, OPE
 
 ## File map
 - `src/lib/workflow/`: `schema.ts` (contract, LIMITS) · `validate.ts` (validateDefinition, analyze, resolveParameters) · `execute.ts` (engine) · `describe.ts` (INR, steps, summary) · `draft.ts` (editor model) · `examples.ts`
-- `src/lib/`: `csv.ts` · `policy.ts` (pure access policy + matrix) · `api.ts` (client + query keys) · `types.ts` · `format.ts` · `session.ts` (server fns) · `demo.ts`
+- `src/lib/`: `csv.ts` · `policy.ts` (pure access policy + matrix) · `api.ts` (client + query keys) · `types.ts` · `format.ts` · `session.ts` (server fns) · `demo.ts` · `redirect.ts` (safe post-login paths)
 - `src/server/`: `migrations.ts` (schema + triggers) · `db.ts` · `auth.ts` · `repo.ts` (access-aware queries, transactions, stale reaper) · `events.ts` (audit + feed) · `seed.ts` · `http.ts` · `env.ts` · `ids.ts`
 - `src/server/api/`: `router.ts` (dispatcher) · `auth.ts` · `workflows.ts` · `runs.ts` · `generate.ts` · `workspace.ts` · `dashboard.ts` · `system.ts`
 - `src/server/ai/`: `config.ts` (providers, env) · `generate.ts` (prompt, schema, adapters, repair loop)
-- `src/routes/`: `__root.tsx` · `login.tsx` · `_app.tsx` (guard + shell) · `_app/{index,library,runs,access,system-design,workflows.new,w.$workflowId.index,w.$workflowId.edit}.tsx` · `api/$.ts`
+- `src/routes/`: `__root.tsx` · `login.tsx` · `_app.tsx` (guard + shell) · `_app/{index,library,runs,access,system-design,workflows.new,w.$workflowId.index,w.$workflowId.edit}.tsx` · `_app/$.tsx` (in-app 404) · `api/$.ts`
 - `src/components/`: `ui.tsx` · `shell.tsx` · `command.tsx` · `editor.tsx` · `results.tsx` · `charts.tsx` · `workflow-bits.tsx` · `file-drop.tsx` · `share-dialog.tsx` · `fork-dialog.tsx` · `access-panel.tsx` · `states.tsx` · `toast.tsx` · `logo.tsx` · `theme.ts` · `diagrams/{architecture,versioning}.tsx`
 - `src/start.ts`: global request middleware (security headers, server-fn CSRF)
-- `tests/`: 6 Vitest suites + `helpers/` · `tests/e2e/`: `demo.spec.ts`, `features.spec.ts`, `a11y.spec.ts`, `mock-model.ts` · `playwright.config.ts`
+- `tests/`: 7 Vitest suites (incl. `hardening.test.ts`) + `helpers/` · `tests/e2e/`: `demo.spec.ts`, `features.spec.ts`, `a11y.spec.ts`, `mock-model.ts` · `playwright.config.ts`
 - `scripts/`: `seed.ts`, `check-model.ts`, `eval-model.ts`, `screenshots.ts` · `fixtures/`, `public/samples/`, `docs/screenshots/`
 - `src/lib/samples.ts` (sample catalogue) · `src/server/ratelimit.ts` (drafting limits)
 

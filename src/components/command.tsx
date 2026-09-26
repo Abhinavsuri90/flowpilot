@@ -38,7 +38,7 @@ export function CommandPalette({ open, onClose, pages }: { open: boolean; onClos
 
   const recipes = useQuery({
     queryKey: ['palette', debounced],
-    queryFn: () => api.get<WorkflowList>(`/api/workflows${qs({ scope: 'all', q: debounced })}`),
+    queryFn: () => api.get<WorkflowList>(`/api/workflows${qs({ scope: 'all', q: debounced, limit: 7 })}`),
     enabled: open,
     staleTime: 5_000,
   })

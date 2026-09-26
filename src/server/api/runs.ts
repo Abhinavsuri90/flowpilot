@@ -1,5 +1,6 @@
 import { ApiError, invalid, json, NO_STORE, notFound, readBodyCapped } from '../http'
 import {
+  countRuns,
   deleteFinishedRuns,
   finishRunFailed,
   finishRunSucceeded,
@@ -20,7 +21,7 @@ import { execute, ExecutionError } from '../../lib/workflow/execute'
 import { summarize } from '../../lib/workflow/describe'
 import { resolveParameters, validateDefinition } from '../../lib/workflow/validate'
 import { LIMITS } from '../../lib/workflow/schema'
-import type { RunDetail } from '../../lib/types'
+import type { RunDetail, RunList, RunStatus } from '../../lib/types'
 import type { AuthedContext } from './context'
 
 /** Multipart overhead allowed on top of the 1 MiB file. */
@@ -140,12 +141,18 @@ export async function create({ db, user, request }: AuthedContext): Promise<Resp
   return json(body, { status: 201 })
 }
 
+const RUN_STATUSES = new Set<RunStatus>(['running', 'succeeded', 'failed'])
+
 export function list({ db, user, url }: AuthedContext): Response {
   reapStaleRuns(db)
   const workflowId = url.searchParams.get('workflowId') || undefined
-  const limit = Number(url.searchParams.get('limit') ?? '') || undefined
-  const runs = listRuns(db, user.id, { workflowId, limit }).map((run) => toRunSummary(db, user, run))
-  return json({ runs })
+  const statusParam = url.searchParams.get('status') as RunStatus | null
+  const status = statusParam && RUN_STATUSES.has(statusParam) ? statusParam : undefined
+  const limitParam = url.searchParams.get('limit')
+  const limit = limitParam && /^\d{1,9}$/.test(limitParam) ? Number(limitParam) : undefined
+  const runs = listRuns(db, user.id, { workflowId, status, limit }).map((run) => toRunSummary(db, user, run))
+  const body: RunList = { runs, counts: countRuns(db, user.id, { workflowId }) }
+  return json(body)
 }
 
 function loadOwnRun({ db, user, params }: AuthedContext) {

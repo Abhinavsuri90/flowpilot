@@ -47,23 +47,38 @@ type EventRow = {
  * runs only for their runner, recipe events only while the viewer can read the
  * recipe, and a copy is announced to the source owner without revealing it.
  */
-export function listActivity(db: DB, viewer: { id: string }, limit = 12): ActivityItem[] {
-  const rows = db
-    .prepare(
-      `SELECT * FROM events
-        WHERE workspace_id IN (SELECT workspace_id FROM workspace_members WHERE user_id = @me)
-           OR actor_id = @me
-           OR workflow_id IN (SELECT id FROM workflows WHERE owner_id = @me)
-        ORDER BY id DESC
-        LIMIT 400`,
-    )
-    .all({ me: viewer.id }) as EventRow[]
+const ACTIVITY_BATCH = 200
+/** Upper bound on events read per feed, however little of it is relevant. */
+const ACTIVITY_MAX_SCANNED = 2_000
 
+export function listActivity(db: DB, viewer: { id: string }, limit = 12): ActivityItem[] {
+  // Rules that need no lookups run in SQL (other people's runs are private; a copy
+  // is news only to its maker and the source owner), so a busy workspace can't
+  // push everything relevant out of the window. The rest is checked per row,
+  // reading further back in batches until the feed is full.
+  const page = db.prepare(
+    `SELECT * FROM events
+      WHERE id < @before
+        AND (workspace_id IN (SELECT workspace_id FROM workspace_members WHERE user_id = @me)
+             OR actor_id = @me
+             OR workflow_id IN (SELECT id FROM workflows WHERE owner_id = @me))
+        AND (type NOT IN ('run.succeeded', 'run.failed') OR actor_id = @me)
+        AND (type <> 'workflow.forked' OR actor_id = @me OR workflow_id IN (SELECT id FROM workflows WHERE owner_id = @me))
+      ORDER BY id DESC
+      LIMIT @batch`,
+  )
   const items: ActivityItem[] = []
-  for (const row of rows) {
-    const item = describeEvent(db, viewer, row)
-    if (item) items.push(item)
-    if (items.length >= limit) break
+  let before = Number.MAX_SAFE_INTEGER
+  for (let scanned = 0; items.length < limit && scanned < ACTIVITY_MAX_SCANNED; ) {
+    const rows = page.all({ me: viewer.id, before, batch: ACTIVITY_BATCH }) as EventRow[]
+    for (const row of rows) {
+      const item = describeEvent(db, viewer, row)
+      if (item) items.push(item)
+      if (items.length >= limit) break
+    }
+    if (rows.length < ACTIVITY_BATCH) break
+    scanned += rows.length
+    before = rows[rows.length - 1]!.id
   }
   return items
 }
@@ -82,11 +97,14 @@ function describeEvent(db: DB, viewer: { id: string }, row: EventRow): ActivityI
     const title = readable ? wf!.title : 'a recipe you no longer have access to'
     const v = typeof detail.versionNumber === 'number' ? ` v${detail.versionNumber}` : ''
     const outcome = row.type === 'run.succeeded' ? 'ran' : 'had a failed run of'
+    // Results can be deleted ("Delete my results"); then the item stops linking to them.
+    const runId = typeof detail.runId === 'string' ? detail.runId : null
+    const kept = !!runId && db.prepare('SELECT 1 FROM runs WHERE id = ? AND runner_id = ?').get(runId, viewer.id) !== undefined
     return {
       ...base,
-      text: `You ${outcome} ${title}${readable ? v : ''}`,
+      text: `You ${outcome} ${title}${readable ? v : ''}${runId && !kept ? ' (result deleted)' : ''}`,
       workflowId: readable ? wf!.id : null,
-      runId: typeof detail.runId === 'string' ? detail.runId : null,
+      runId: kept ? runId : null,
     }
   }
 

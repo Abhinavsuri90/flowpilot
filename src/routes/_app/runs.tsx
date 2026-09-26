@@ -1,6 +1,6 @@
 import * as React from 'react'
 import { Link, createFileRoute, stripSearchParams, useNavigate } from '@tanstack/react-router'
-import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
+import { keepPreviousData, useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import {
   createColumnHelper,
   createSortedRowModel,
@@ -14,8 +14,8 @@ import {
 import { z } from 'zod'
 import { ArrowDown, ArrowUp, ChevronsUpDown, Download, History, Trash2 } from 'lucide-react'
 import { api, qk, qs } from '~/lib/api'
-import { formatDateTime, formatDuration, formatINR, timeAgo } from '~/lib/format'
-import type { RunStatus, RunSummary } from '~/lib/types'
+import { formatCount, formatDateTime, formatDuration, formatINR, timeAgo } from '~/lib/format'
+import type { RunList, RunSummary } from '~/lib/types'
 import { Button, Card, Dialog, EmptyState, PageHeader, Segmented, Skeleton, buttonClass, cn } from '~/components/ui'
 import { RunStatusBadge } from '~/components/workflow-bits'
 import { ErrorState } from '~/components/states'
@@ -37,6 +37,9 @@ const features = tableFeatures({
 })
 const helper = createColumnHelper<typeof features, RunSummary>()
 const EMPTY: RunSummary[] = []
+const NO_COUNTS: RunList['counts'] = { all: 0, running: 0, succeeded: 0, failed: 0 }
+/** Most runs listed at once; the counts above the table are always exact. */
+const RUNS_SHOWN = 500
 
 const COLUMNS: Array<ColumnDef<typeof features, RunSummary, any>> = [
   helper.accessor((r) => r.workflowTitle ?? '', {
@@ -121,18 +124,19 @@ const COLUMNS: Array<ColumnDef<typeof features, RunSummary, any>> = [
 function RunsPage() {
   const { status } = Route.useSearch()
   const navigate = useNavigate({ from: '/runs' })
-  const runs = useQuery({ queryKey: qk.runs(), queryFn: () => api.get<{ runs: RunSummary[] }>(`/api/runs${qs({ limit: 500 })}`) })
+  // Filtered on the server, so a status tab lists that status's latest runs even
+  // for someone with thousands; the counts come back exact.
+  const runs = useQuery({
+    queryKey: qk.runs(undefined, status),
+    queryFn: () => api.get<RunList>(`/api/runs${qs({ limit: RUNS_SHOWN, status: status === 'all' ? undefined : status })}`),
+    placeholderData: keepPreviousData,
+  })
   const [confirm, setConfirm] = React.useState(false)
   const queryClient = useQueryClient()
   const toast = useToast()
 
-  const all = runs.data?.runs ?? EMPTY
-  const counts = React.useMemo(() => {
-    const c: Record<RunStatus | 'all', number> = { all: all.length, succeeded: 0, failed: 0, running: 0 }
-    for (const r of all) c[r.status]++
-    return c
-  }, [all])
-  const filtered = React.useMemo(() => (status === 'all' ? all : all.filter((r) => r.status === status)), [all, status])
+  const counts = runs.data?.counts ?? NO_COUNTS
+  const filtered = runs.data?.runs ?? EMPTY
   const table = useTable({ features, columns: COLUMNS, data: filtered })
 
   const remove = useMutation({
@@ -182,7 +186,7 @@ function RunsPage() {
         </Card>
       ) : runs.isError ? (
         <ErrorState error={runs.error} onRetry={() => runs.refetch()} />
-      ) : all.length === 0 ? (
+      ) : counts.all === 0 ? (
         <EmptyState
           icon={<History />}
           title="No runs yet"
@@ -197,7 +201,7 @@ function RunsPage() {
         <EmptyState title={`No ${status} runs`} description="Try another filter." />
       ) : (
         <Card className="animate-rise overflow-hidden">
-          <div className="scrollbar-thin overflow-x-auto">
+          <div className="scrollbar-thin relative overflow-x-auto">
             <table className="w-full min-w-[860px] text-[13.5px]">
               <caption className="sr-only">My runs</caption>
               <thead className="bg-surface-2">
@@ -246,6 +250,12 @@ function RunsPage() {
               </tbody>
             </table>
           </div>
+          {counts[status] > filtered.length && (
+            <p className="border-t border-line px-4 py-2.5 text-[12.5px] text-muted">
+              Showing your latest {formatCount(filtered.length)} of {formatCount(counts[status])} runs. Older results are kept; delete them
+              here when you no longer need them.
+            </p>
+          )}
         </Card>
       )}
 

@@ -37,10 +37,10 @@ The full loop works end to end, and a real browser test proves it: **describe �
 
 **Running**
 - Run on any file with the declared columns; extra columns are ignored and never stored.
-- The file is checked in the browser before anything is sent, so bad amounts, missing columns and ragged rows show with line numbers.
+- The file is checked in the browser before anything is sent, so bad amounts, missing columns and ragged rows show with line numbers. Near-miss headers are named (“the file has "Status"”), and files that aren't UTF-8 or that use semicolons or tabs get a plain fix instead of a wall of errors. Switching versions re-checks the chosen file.
 - Per-run parameters with *Reset*, and a hint when a filter can never match the chosen file.
 - Results show a summary line, a sortable table (large results render 100 rows at a time), the rows remaining after each step, and a formula-safe CSV download.
-- Private run history, with *Delete my results*.
+- Private run history with exact counts per status, filtered on the server, and *Delete my results*.
 
 **Sharing and copies**
 - Share with your workspace in one click, and copy a link pinned to one version.
@@ -51,6 +51,7 @@ The full loop works end to end, and a real browser test proves it: **describe �
 - Roles: admin, member and viewer, plus outsiders from other workspaces. One policy module decides every permission.
 - The Access page renders the permission matrix from that same code; admins change roles there.
 - Anything you can't see answers 404, as if it didn't exist. Runs are private even from recipe owners and admins.
+- The library pages 60 recipes at a time, and the ⌘K search asks only for the 7 it shows.
 
 **Around it**
 - A dashboard with a checklist of the reuse loop, stats, a 14-day run chart, recent runs and a permission-filtered activity feed.
@@ -202,7 +203,7 @@ flowchart LR
 
 ## API reference
 
-One server route (`/api/$`) fronts 21 REST endpoints through a single dispatcher, `handleApi(Request)`. The dispatcher matches the route, blocks cross-site writes, reads the session, runs the handler and maps errors. Every response is `Cache-Control: private, no-store`. Every error has the shape `{ "error": { "code", "message", "issues"? , "draft"?, "runId"? } }`.
+One server route (`/api/$`) fronts 21 REST endpoints through a single dispatcher, `handleApi(Request)`. The dispatcher matches the route, blocks cross-site writes, reads the session, runs the handler and maps errors. Every response is `Cache-Control: private, no-store`. Every error has the shape `{ "error": { "code", "message", "issues"? , "draft"?, "runId"? } }`. Every path also answers `HEAD` (as `GET`, without a body) and `OPTIONS` (204 with `Allow`); any other method gets 405.
 
 | Method | Path | Who | Purpose |
 |---|---|---|---|
@@ -211,7 +212,7 @@ One server route (`/api/$`) fronts 21 REST endpoints through a single dispatcher
 | GET | `/api/health` | anyone | `{"status":"ok"}` when the database answers |
 | GET | `/api/me` | signed in | User, memberships, AI status |
 | GET | `/api/dashboard` | signed in | Stats, 14-day runs, recent runs, filtered activity, checklist |
-| GET | `/api/workflows?scope=mine\|team\|all&q=` | signed in | Recipes you can read, with counts |
+| GET | `/api/workflows?scope=mine\|team\|all&q=&limit=&offset=` | signed in | One page of recipes you can read (60 by default, at most 200), newest first, with `total`, `nextOffset` and the count for each tab |
 | POST | `/api/workflows` | admin, member | `{title, description, definition}` → private v1 |
 | GET | `/api/workflows/:id?v=` | can view | A version, the version list and your permissions |
 | PATCH | `/api/workflows/:id` | owner | `{title?, description?, visibility?}` (unknown keys → 422) |
@@ -220,7 +221,7 @@ One server route (`/api/$`) fronts 21 REST endpoints through a single dispatcher
 | GET | `/api/workflows/:id/access` | can view | Workspace members and what each can do |
 | POST | `/api/generate` | signed in | `{request, columns}` → a draft, “unsupported” or a question; never writes |
 | POST | `/api/runs` | can view | Multipart `{versionId, file, parameters}` → result, summary and step log |
-| GET | `/api/runs?workflowId=&limit=` | signed in | Your own runs only |
+| GET | `/api/runs?workflowId=&status=&limit=` | signed in | Your own runs only, newest first (at most 500), with exact `counts` per status |
 | DELETE | `/api/runs?workflowId=` | signed in | Delete your finished runs |
 | GET | `/api/runs/:id` | the runner | The full result and step log |
 | GET | `/api/runs/:id/csv` | the runner | A formula-escaped CSV attachment (409 if the run has no result) |
@@ -232,7 +233,7 @@ Status codes: 401 not signed in · 403 visible but not yours, or a cross-site wr
 
 ## Security and privacy
 
-- Passwords are hashed with scrypt and a random salt. Sessions are 256-bit tokens in an HttpOnly, SameSite=Lax cookie (Secure on HTTPS), and only a SHA-256 hash of each token is stored. Sign-in is throttled after 10 failures per email.
+- Passwords are hashed with scrypt and a random salt. Sessions are 256-bit tokens in an HttpOnly, SameSite=Lax cookie (Secure on HTTPS), and only a SHA-256 hash of each token is stored. Signing in replaces the browser's previous session and purges expired ones. Sign-in is throttled after 10 failures per email, and after signing in you are only ever sent to a path on this site.
 - Cross-site writes are rejected by an Origin check, and server functions have Start's CSRF middleware. Responses send `X-Frame-Options: DENY`, `nosniff` and `Referrer-Policy`. Login controls stay disabled until the page is interactive, so a native form submit can never put credentials in a URL.
 - Identity always comes from the session: an `owner_id` sent by a client is ignored on create and rejected on update. Recipe definitions are re-validated on save, on copy and before every run.
 - Uploaded files are processed inside the request and never stored. Results are visible only to the person who ran them, and anyone can delete their own. CSV exports escape formula-like cells.
@@ -241,16 +242,16 @@ Status codes: 401 not signed in · 403 visible but not yours, or a cross-site wr
 ## Testing
 
 ```bash
-npm test                          # 79 unit and API tests
+npm test                          # 97 unit and API tests
 npx playwright install chromium   # once
-npm run test:e2e                  # 14 browser tests
+npm run test:e2e                  # 19 browser tests
 npm run typecheck
 ```
 
-- **Unit and API tests (Vitest), 79 in total:** engine 13, CSV 12, validator 13, access 20, demo loop 12, AI 9. They call the same `handleApi(Request)` the server uses, with real session cookies, against an in-memory SQLite database, so access rules are tested end to end rather than mocked. The model is always stubbed, and the tests never read `.env`.
-- **Browser tests (Playwright), 14 in total:**
+- **Unit and API tests (Vitest), 97 in total:** engine 13, CSV 18, validator 13, access 20, demo loop 12, AI 9, hardening 12 (HTTP methods, redirects, sessions, no-op edits, the activity feed on a busy team, list paging and run counts). They call the same `handleApi(Request)` the server uses, with real session cookies, against an in-memory SQLite database, so access rules are tested end to end rather than mocked. The model is always stubbed, and the tests never read `.env`.
+- **Browser tests (Playwright), 19 in total:**
   - `demo.spec.ts` (4) is the demo above.
-  - `features.spec.ts` (8) covers the rest: the editor's value warning, an invalid AI draft and a clarifying question, Advanced JSON, in-browser file checks, samples and parameters, details-only saves and versions, runs from another recipe, large results, CSV escaping, the command palette, theme, roles, *Delete my results* and the mobile drawer.
+  - `features.spec.ts` (13) covers the rest: the editor's value warning, an invalid AI draft and a clarifying question, Advanced JSON, in-browser file checks, samples and parameters, details-only saves and versions, runs from another recipe, large results, CSV escaping, the command palette, theme, roles, *Delete my results*, the mobile drawer, re-checking a file when the version changes, refusing a non-UTF-8 file, the in-app 404, wide tables at phone width, and library paging.
   - `a11y.spec.ts` (2) runs an axe-core WCAG 2.1 AA scan of every page in light and dark mode.
 - The browser tests use their own database and a stand-in model (`tests/e2e/mock-model.ts`), so they never spend real credits. Screenshots of each demo stage are saved to `docs/screenshots/`.
 - **Model quality:** `npm run eval:model`, described above.
@@ -289,6 +290,9 @@ npm start            # node .output/server/index.mjs (PORT defaults to 3000)
 | AI drafting shows Off | Check the `.env` key and `MODEL_PROVIDER`, then restart the dev server and run `npm run check:model` |
 | “AI generation is unavailable (… out of credits, HTTP 402)” | Top up the provider account; saved recipes keep running meanwhile |
 | A run says “No rows matched” | Look for the amber hint in the run panel. Text matching is case-sensitive (“Paid” is not “paid”) |
+| “This file isn't saved as UTF-8 text” | Excel's plain *CSV* uses Windows-1252. Use File → Save As → *CSV UTF-8 (Comma delimited)*, or download a CSV from Google Sheets |
+| “This file separates values with semicolons” (or tabs) | Excel in many locales saves with semicolons. Save as *CSV UTF-8 (Comma delimited)* |
+| “Missing required column: status (the file has "Status")” | Column names must match exactly, including capitals: rename the header in the file |
 | E2E tests can't find a browser | `npx playwright install chromium` |
 | You want a clean slate | `npm run seed:reset` |
 
@@ -321,7 +325,8 @@ This is a working prototype, not a production platform:
 - **No deleting recipes.** Versions are immutable by design.
 - **Other small gaps:**
   - Dashboard days are in UTC.
-  - CSV line numbers count records, so a quoted field containing a newline shifts the numbers after it.
+  - CSV line numbers count records, the way a spreadsheet numbers rows; in a text editor, a quoted field containing a newline shifts the numbers after it.
+  - Lists show one page at a time: 60 recipes in the library (with *Show more*) and your latest 500 runs (the counts are always exact).
   - The model can't see values, so rely on the editor's sample check for text casing.
 - **Local only.** Everything has been run locally; nothing is deployed.
 

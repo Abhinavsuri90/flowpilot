@@ -481,9 +481,10 @@ function InputSection({ draft, setDraft, issues }: { draft: Draft; setDraft: Rea
   const [newName, setNewName] = React.useState('')
   const [newType, setNewType] = React.useState<ColumnType>('string')
 
-  const loadSample = (textValue: string, name: string) => {
+  // Bytes, not text(): the parser rejects files that aren't UTF-8 instead of guessing.
+  const loadSample = async (picked: Blob, name: string) => {
     try {
-      const inferred = inferColumns(textValue)
+      const inferred = inferColumns(new Uint8Array(await picked.arrayBuffer()))
       setError(null)
       setDraft((d) => {
         const previous = new Map(d.columns.map((c) => [c.name, c]))
@@ -507,7 +508,7 @@ function InputSection({ draft, setDraft, issues }: { draft: Draft; setDraft: Rea
   const loadDemoFile = async (name: SampleName) => {
     const sample = await fetchSample(name)
     setFile(sample)
-    loadSample(await sample.text(), name)
+    await loadSample(sample, name)
   }
 
   const included = draft.columns.filter((c) => c.include).length
@@ -531,7 +532,7 @@ function InputSection({ draft, setDraft, issues }: { draft: Draft; setDraft: Rea
               setError('The sample is larger than the 1 MiB limit.')
               return
             }
-            loadSample(await picked.text(), picked.name)
+            await loadSample(picked, picked.name)
           }}
           onClear={() => {
             setFile(null)

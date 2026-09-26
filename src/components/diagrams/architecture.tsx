@@ -49,7 +49,7 @@ function active(path: Path, view: PathView): boolean {
 export function ArchitectureDiagram({ view }: { view: PathView }) {
   const id = React.useId().replace(/:/g, '')
   return (
-    <div className="scrollbar-thin overflow-x-auto">
+    <div className="scrollbar-thin relative overflow-x-auto">
       <svg viewBox="0 0 1000 420" className="min-w-[760px]" role="img" aria-label="Architecture: the authoring path and the execution path share only the API dispatcher, the access policy and the validator">
         <defs>
           {(['authoring', 'execution', 'shared'] as const).map((p) => (

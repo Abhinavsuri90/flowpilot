@@ -66,6 +66,11 @@ export function deleteSession(db: DB, token: string): void {
   db.prepare('DELETE FROM sessions WHERE token_hash = ?').run(hashToken(token))
 }
 
+/** Expired sessions are useless; remove them (run on each sign-in, so the table can't grow forever). */
+export function purgeExpiredSessions(db: DB, now = Date.now()): number {
+  return db.prepare('DELETE FROM sessions WHERE expires_at <= ?').run(new Date(now).toISOString()).changes
+}
+
 export function readCookie(request: Request, name: string): string | null {
   const header = request.headers.get('cookie')
   if (!header) return null

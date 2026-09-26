@@ -74,12 +74,14 @@ export const api = {
 export const qk = {
   me: ['me'] as const,
   dashboard: ['dashboard'] as const,
-  workflows: (scope: string, q: string) => ['workflows', scope, q] as const,
+  workflows: (scope: string, q: string, limit?: number) => ['workflows', scope, q, limit ?? 'page'] as const,
+  /** The library's paged (infinite) list: its own key, since its cached shape differs. */
+  library: (tab: string, q: string) => ['workflows', 'library', tab, q] as const,
   workflowsAll: ['workflows'] as const,
   workflow: (id: string, v?: string) => ['workflow', id, v ?? 'current'] as const,
   workflowAll: (id: string) => ['workflow', id] as const,
   access: (id: string) => ['access', id] as const,
-  runs: (workflowId?: string) => ['runs', workflowId ?? 'all'] as const,
+  runs: (workflowId?: string, status?: string) => ['runs', workflowId ?? 'all', status ?? 'all'] as const,
   runsAll: ['runs'] as const,
   run: (id: string) => ['run', id] as const,
   workspace: ['workspace'] as const,

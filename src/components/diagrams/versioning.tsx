@@ -24,7 +24,7 @@ const RUNS = [
 export function VersioningDiagram() {
   const id = React.useId().replace(/:/g, '')
   return (
-    <div className="scrollbar-thin overflow-x-auto">
+    <div className="scrollbar-thin relative overflow-x-auto">
       <svg viewBox="0 0 960 310" className="min-w-[720px]" role="img" aria-label="Asha's recipe has v1 and v2; runs point at the version they executed; Vikram's private copy was forked from Asha's v1 and has its own v2 grouped by sales_rep">
         <defs>
           <marker id={`${id}-gray`} viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">

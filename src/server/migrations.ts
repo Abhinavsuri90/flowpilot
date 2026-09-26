@@ -204,4 +204,10 @@ BEGIN
 END;
 `,
   },
+  {
+    id: 2,
+    name: 'session_expiry_index',
+    // Expired sessions are purged on every sign-in.
+    sql: `CREATE INDEX sessions_expiry_idx ON sessions(expires_at);`,
+  },
 ]

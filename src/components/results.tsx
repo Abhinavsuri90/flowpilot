@@ -54,7 +54,9 @@ export function ResultTable({ columns, rows, caption }: { columns: Column[]; row
   const shownRows = allRows.slice(0, visible)
 
   return (
-    <div className="scrollbar-thin overflow-x-auto rounded-xl border border-line">
+    // `relative` makes the scroller the containing block of the sr-only labels in the
+    // cells; without it they escape the scroll box and widen the whole page on phones.
+    <div className="scrollbar-thin relative overflow-x-auto rounded-xl border border-line">
       <table className="w-full min-w-max border-collapse text-[13.5px]">
         {caption && <caption className="sr-only">{caption}</caption>}
         <thead className="bg-surface-2">

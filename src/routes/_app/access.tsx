@@ -94,7 +94,7 @@ function MatrixCard({ myRole }: { myRole: Role | null }) {
           />
         }
       />
-      <div className="scrollbar-thin overflow-x-auto px-5 pb-5">
+      <div className="scrollbar-thin relative overflow-x-auto px-5 pb-5">
         <table className="w-full min-w-[680px] text-[13px]">
           <thead>
             <tr>
@@ -236,8 +236,14 @@ function MembersCard() {
 
 // ----- One-click share / unshare ----------------------------------------------------
 
+/** Recipes listed for one-click sharing, most recently updated first. */
+const MY_RECIPES_SHOWN = 100
+
 function MyRecipesCard() {
-  const mine = useQuery({ queryKey: qk.workflows('mine', ''), queryFn: () => api.get<WorkflowList>(`/api/workflows${qs({ scope: 'mine' })}`) })
+  const mine = useQuery({
+    queryKey: qk.workflows('mine', '', MY_RECIPES_SHOWN),
+    queryFn: () => api.get<WorkflowList>(`/api/workflows${qs({ scope: 'mine', limit: MY_RECIPES_SHOWN })}`),
+  })
   const queryClient = useQueryClient()
   const toast = useToast()
   const share = useMutation({
@@ -297,6 +303,15 @@ function MyRecipesCard() {
               </li>
             ))}
           </ul>
+        )}
+        {mine.data && mine.data.total > items.length && (
+          <p className="mt-3 text-[12.5px] text-muted">
+            Showing your {items.length} most recently updated recipes of {mine.data.total}.{' '}
+            <Link to="/library" className="font-medium text-brand-ink hover:underline">
+              Find the others in the library
+            </Link>{' '}
+            and share them from their page.
+          </p>
         )}
       </div>
     </Card>

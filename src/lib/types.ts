@@ -68,7 +68,14 @@ export type WorkflowSummary = {
   updatedAt: string
 }
 
-export type WorkflowList = { items: WorkflowSummary[]; counts: { mine: number; team: number } }
+export type WorkflowList = {
+  items: WorkflowSummary[]
+  counts: { mine: number; team: number }
+  /** Recipes matching this scope and search (items holds one page of them). */
+  total: number
+  /** Offset of the next page, or null when this was the last. */
+  nextOffset: number | null
+}
 
 export type PermissionInfo = { allowed: boolean; reason: string; status?: 403 | 404 }
 
@@ -123,6 +130,9 @@ export type RunSummary = {
   createdAt: string
   finishedAt: string | null
 }
+
+/** GET /api/runs: one page of the caller's runs, plus exact counts per status. */
+export type RunList = { runs: RunSummary[]; counts: Record<RunStatus | 'all', number> }
 
 export type RunDetail = RunSummary & {
   columns: Column[]

@@ -34,9 +34,53 @@ function byteLength(input: CsvInput): number {
   return input.byteLength
 }
 
+const SAVE_AS_UTF8 = 'In Excel use File → Save As → “CSV UTF-8 (Comma delimited)”; in Google Sheets use File → Download → CSV.'
+
+/**
+ * Bytes must be UTF-8. Anything else (Windows Excel's plain "CSV" is
+ * Windows-1252) is rejected instead of silently turning letters into "�",
+ * which would make text never match a filter.
+ */
 function decode(input: CsvInput): string {
-  const text = typeof input === 'string' ? input : new TextDecoder('utf-8').decode(input)
+  if (typeof input === 'string') return input.charCodeAt(0) === 0xfeff ? input.slice(1) : input
+  const bytes = input instanceof Uint8Array ? input : new Uint8Array(input)
+  if ((bytes[0] === 0xff && bytes[1] === 0xfe) || (bytes[0] === 0xfe && bytes[1] === 0xff)) {
+    const message = `This file is saved as UTF-16 ("Unicode Text"), not CSV. ${SAVE_AS_UTF8}`
+    throw new CsvError(422, message, [{ path: 'file', line: 1, message }])
+  }
+  let text: string
+  try {
+    text = new TextDecoder('utf-8', { fatal: true }).decode(bytes)
+  } catch {
+    const loose = new TextDecoder('utf-8').decode(bytes)
+    const at = loose.indexOf('�')
+    const line = loose.slice(0, at).split('\n').length
+    const lineText = loose.split('\n')[line - 1]?.replace(/\r$/, '').slice(0, 80) ?? ''
+    const message = `Line ${line} has characters that aren't UTF-8 (“${lineText}”)`
+    throw new CsvError(422, `This file isn't saved as UTF-8 text, so some letters can't be read. ${SAVE_AS_UTF8}`, [
+      { path: 'file', line, message },
+    ])
+  }
   return text.charCodeAt(0) === 0xfeff ? text.slice(1) : text
+}
+
+/** A header that differs from a required column only by capitals, spaces, hyphens or underscores. */
+export function similarHeader(column: string, headers: string[]): string | undefined {
+  const norm = (s: string) => s.toLowerCase().replace(/[\s_-]+/g, '')
+  return headers.find((h) => h !== column && norm(h) === norm(column))
+}
+
+/** "Missing required columns: status (the file has "Status"), region", shared by the server and the browser pre-check. */
+export function missingColumnsMessage(missing: string[], headers: string[]): string {
+  let near = false
+  const described = missing.map((column) => {
+    const similar = similarHeader(column, headers)
+    if (!similar) return column
+    near = true
+    return `${column} (the file has "${similar}")`
+  })
+  const base = `Missing required column${missing.length > 1 ? 's' : ''}: ${described.join(', ')}`
+  return near ? `${base}. Column names must match exactly, including capitals` : base
 }
 
 const isBlank = (cells: string[]) => cells.every((c) => c.trim() === '')
@@ -69,6 +113,16 @@ export function parseTable(input: CsvInput): ParsedTable {
   if (headerIndex === -1) throw new CsvError(422, 'The file is empty.', [{ path: 'file', message: 'The file has no header row' }])
 
   const headers = rows[headerIndex]!.map((h) => h.trim())
+  // One "column" holding several names means another separator (Excel in many
+  // locales saves with semicolons; "Unicode Text" uses tabs).
+  if (headers.length === 1) {
+    const only = headers[0]!
+    const separator = only.includes(';') ? 'semicolons (;)' : only.includes('\t') ? 'tabs' : null
+    if (separator) {
+      const message = `This file separates values with ${separator}, not commas. ${SAVE_AS_UTF8}`
+      throw new CsvError(422, message, [{ path: 'file', line: headerIndex + 1, message: `The header row is separated by ${separator}` }])
+    }
+  }
   if (headers.length > LIMITS.columns) {
     throw new CsvError(422, `The file has ${headers.length} columns; the limit is ${LIMITS.columns}.`, [
       { path: 'file', line: headerIndex + 1, message: `The file has ${headers.length} columns; the limit is ${LIMITS.columns}` },
@@ -79,7 +133,15 @@ export function parseTable(input: CsvInput): ParsedTable {
   const firstSeen = new Map<string, number>()
   headers.forEach((h, i) => {
     if (h === '') {
-      headerIssues.push({ path: 'file', line: headerIndex + 1, message: `Column ${i + 1} has an empty header` })
+      // Empty trailing headers usually come from a stray comma at the end of every line.
+      const trailing = headers.slice(i).every((rest) => rest === '')
+      headerIssues.push({
+        path: 'file',
+        line: headerIndex + 1,
+        message: trailing
+          ? `Column ${i + 1} has an empty header (usually an extra comma at the end of each line: delete that empty column and save again)`
+          : `Column ${i + 1} has an empty header`,
+      })
       return
     }
     const earlier = firstSeen.get(h)
@@ -161,7 +223,7 @@ export function parseForContract(input: CsvInput, contract: Record<string, Colum
   const required = Object.keys(contract)
   const missing = required.filter((c) => !table.headers.includes(c))
   if (missing.length) {
-    const message = `Missing required column${missing.length > 1 ? 's' : ''}: ${missing.join(', ')}`
+    const message = missingColumnsMessage(missing, table.headers)
     throw new CsvError(422, `${message}.`, [{ path: 'file', line: 1, message }])
   }
 

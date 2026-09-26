@@ -91,7 +91,7 @@ function Section({ id, icon, title, description, children }: { id: string; icon:
 
 function Table({ head, rows, className }: { head: string[]; rows: React.ReactNode[][]; className?: string }) {
   return (
-    <div className={cn('scrollbar-thin overflow-x-auto rounded-xl border border-line', className)}>
+    <div className={cn('scrollbar-thin relative overflow-x-auto rounded-xl border border-line', className)}>
       <table className="w-full min-w-[560px] text-[13px]">
         <thead className="bg-surface-2 text-left text-[12px] text-muted">
           <tr>

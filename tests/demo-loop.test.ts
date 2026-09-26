@@ -7,7 +7,6 @@ import { REGIONAL_REVENUE_EXCEPTIONS as ORIGINAL, groupedBy } from '../src/lib/w
 // → share → a second person runs it on their own file → forks it → the fork
 // runs independently, and the original stays unchanged.
 
-let app: Awaited<ReturnType<typeof freshApp>>
 let asha: Client
 let vikram: Client
 let recipeId = ''
@@ -19,7 +18,7 @@ const fetchSpy = vi.fn(async () => {
 
 beforeAll(async () => {
   vi.stubGlobal('fetch', fetchSpy)
-  app = await freshApp()
+  await freshApp()
   asha = await signIn('asha')
   vikram = await signIn('vikram')
 })

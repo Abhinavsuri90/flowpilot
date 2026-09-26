@@ -266,12 +266,25 @@ function searchSql(q: string): { sql: string; pattern: string | null } {
   return { sql: ` AND (w.title LIKE @q ESCAPE '\\' OR w.description LIKE @q ESCAPE '\\')`, pattern }
 }
 
-/** Recipes the caller can read: their own ("mine") or shared with one of their workspaces ("team"). */
-export function listWorkflows(db: DB, caller: Caller, scope: Scope, q = ''): WorkflowSummary[] {
+export const WORKFLOW_PAGE = { default: 60, max: 200 } as const
+
+/**
+ * Recipes the caller can read: their own ("mine") or shared with one of their
+ * workspaces ("team"), newest first, one page at a time.
+ */
+export function listWorkflows(
+  db: DB,
+  caller: Caller,
+  scope: Scope,
+  q = '',
+  page: { limit?: number; offset?: number } = {},
+): WorkflowSummary[] {
   const search = searchSql(q)
+  const limit = Math.min(Math.max(Math.trunc(page.limit ?? WORKFLOW_PAGE.default), 1), WORKFLOW_PAGE.max)
+  const offset = Math.max(Math.trunc(page.offset ?? 0), 0)
   const rows = db
-    .prepare(`SELECT w.* FROM workflows w WHERE ${scopeSql(scope)}${search.sql} ORDER BY w.updated_at DESC, w.id`)
-    .all({ me: caller.id, q: search.pattern }) as WorkflowRow[]
+    .prepare(`SELECT w.* FROM workflows w WHERE ${scopeSql(scope)}${search.sql} ORDER BY w.updated_at DESC, w.id LIMIT @limit OFFSET @offset`)
+    .all({ me: caller.id, q: search.pattern, limit, offset }) as WorkflowRow[]
   return rows.map((wf) => toSummary(db, caller, wf))
 }
 
@@ -331,14 +344,31 @@ export function getRun(db: DB, id: string): RunRow | undefined {
   return db.prepare('SELECT * FROM runs WHERE id = ?').get(id) as RunRow | undefined
 }
 
-export function listRuns(db: DB, runnerId: string, opts: { workflowId?: string; limit?: number } = {}): RunRow[] {
-  const limit = Math.min(Math.max(opts.limit ?? 100, 1), 500)
-  if (opts.workflowId) {
-    return db
-      .prepare('SELECT * FROM runs WHERE runner_id = ? AND workflow_id = ? ORDER BY created_at DESC, id LIMIT ?')
-      .all(runnerId, opts.workflowId, limit) as RunRow[]
+export type RunFilter = { workflowId?: string; status?: RunStatus }
+
+function runFilterSql(filter: RunFilter): string {
+  return `runner_id = @runner${filter.workflowId ? ' AND workflow_id = @workflowId' : ''}${filter.status ? ' AND status = @status' : ''}`
+}
+
+/** The runner's own runs, newest first (at most 500). */
+export function listRuns(db: DB, runnerId: string, opts: RunFilter & { limit?: number } = {}): RunRow[] {
+  const limit = Math.min(Math.max(Math.trunc(opts.limit ?? 100), 1), 500)
+  return db
+    .prepare(`SELECT * FROM runs WHERE ${runFilterSql(opts)} ORDER BY created_at DESC, id LIMIT @limit`)
+    .all({ runner: runnerId, workflowId: opts.workflowId ?? null, status: opts.status ?? null, limit }) as RunRow[]
+}
+
+/** Exact counts per status for the runner (not limited by the page size). */
+export function countRuns(db: DB, runnerId: string, filter: Pick<RunFilter, 'workflowId'> = {}): Record<RunStatus | 'all', number> {
+  const rows = db
+    .prepare(`SELECT status, COUNT(*) AS n FROM runs WHERE ${runFilterSql(filter)} GROUP BY status`)
+    .all({ runner: runnerId, workflowId: filter.workflowId ?? null, status: null }) as Array<{ status: RunStatus; n: number }>
+  const counts: Record<RunStatus | 'all', number> = { all: 0, running: 0, succeeded: 0, failed: 0 }
+  for (const row of rows) {
+    counts[row.status] = row.n
+    counts.all += row.n
   }
-  return db.prepare('SELECT * FROM runs WHERE runner_id = ? ORDER BY created_at DESC, id LIMIT ?').all(runnerId, limit) as RunRow[]
+  return counts
 }
 
 /** "Delete my results": removes the caller's finished runs (optionally for one recipe). */

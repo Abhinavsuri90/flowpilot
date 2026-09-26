@@ -14,6 +14,7 @@ import {
   updateWorkflowMeta,
   userRef,
   workspaceName,
+  WORKFLOW_PAGE,
   type Scope,
 } from '../repo'
 import { recordEvent } from '../events'
@@ -79,13 +80,25 @@ function permissionInfo(decisions: ReturnType<typeof decideAll>): Record<Action,
   return out
 }
 
+/** A non-negative whole number from the query string, or undefined. */
+function intParam(url: URL, name: string): number | undefined {
+  const raw = url.searchParams.get(name)
+  return raw !== null && /^\d{1,9}$/.test(raw) ? Number(raw) : undefined
+}
+
 export function list({ db, user, url }: AuthedContext): Response {
   const scopeParam = url.searchParams.get('scope')
   const scope: Scope = scopeParam === 'team' || scopeParam === 'all' ? scopeParam : 'mine'
   const q = url.searchParams.get('q') ?? ''
+  const limit = Math.min(Math.max(intParam(url, 'limit') ?? WORKFLOW_PAGE.default, 1), WORKFLOW_PAGE.max)
+  const offset = intParam(url, 'offset') ?? 0
+  const items = listWorkflows(db, user, scope, q, { limit, offset })
+  const total = countWorkflows(db, user, scope, q)
   const body: WorkflowList = {
-    items: listWorkflows(db, user, scope, q),
+    items,
     counts: { mine: countWorkflows(db, user, 'mine', q), team: countWorkflows(db, user, 'team', q) },
+    total,
+    nextOffset: offset + items.length < total ? offset + items.length : null,
   }
   return json(body)
 }
@@ -151,17 +164,23 @@ export async function patch({ db, user, params, request }: AuthedContext): Promi
     if (!d.allowed) throw forbidden(d.reason)
   }
 
-  updateWorkflowMeta(db, wf.id, body)
-  const detailsChanged =
-    (body.title !== undefined && body.title !== wf.title) || (body.description !== undefined && body.description !== wf.description)
+  // Only real changes are written, so a repeated or no-op PATCH doesn't move the
+  // recipe to the top of the library (ordered by updated_at).
+  const changes = {
+    ...(body.title !== undefined && body.title !== wf.title ? { title: body.title } : {}),
+    ...(body.description !== undefined && body.description !== wf.description ? { description: body.description } : {}),
+    ...(body.visibility !== undefined && body.visibility !== wf.visibility ? { visibility: body.visibility } : {}),
+  }
+  updateWorkflowMeta(db, wf.id, changes)
+  const detailsChanged = changes.title !== undefined || changes.description !== undefined
   if (detailsChanged) {
     recordEvent(db, { workspaceId: wf.workspace_id, actorId: user.id, type: 'workflow.updated', workflowId: wf.id })
   }
-  if (body.visibility && body.visibility !== wf.visibility) {
+  if (changes.visibility) {
     recordEvent(db, {
       workspaceId: wf.workspace_id,
       actorId: user.id,
-      type: body.visibility === 'team' ? 'workflow.shared' : 'workflow.unshared',
+      type: changes.visibility === 'team' ? 'workflow.shared' : 'workflow.unshared',
       workflowId: wf.id,
     })
   }

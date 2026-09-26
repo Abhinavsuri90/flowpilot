@@ -9,13 +9,7 @@ import { DEMO_PEOPLE } from '~/lib/demo'
 import type { Me } from '~/lib/types'
 import { Logo } from '~/components/logo'
 import { Avatar, Badge, Button, Callout, Field, Input, cn, useHydrated } from '~/components/ui'
-
-/** Only same-site paths are allowed as post-login destinations (no open redirects). */
-export function safeRedirect(target: string | undefined): string {
-  if (!target || !target.startsWith('/') || target.startsWith('//') || target.startsWith('/\\')) return '/'
-  if (target.startsWith('/login') || target.startsWith('/api/')) return '/'
-  return target
-}
+import { safeRedirect } from '~/lib/redirect'
 
 export const Route = createFileRoute('/login')({
   validateSearch: z.object({ redirect: z.string().max(500).optional().catch(undefined) }),

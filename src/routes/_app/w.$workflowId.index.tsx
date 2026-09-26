@@ -23,11 +23,11 @@ import {
   XCircle,
 } from 'lucide-react'
 import { api, ApiError, qk, qs } from '~/lib/api'
-import { CsvError, literalMismatch, parseForContract, parseTable } from '~/lib/csv'
+import { CsvError, literalMismatch, missingColumnsMessage, parseForContract, parseTable } from '~/lib/csv'
 import { compatibleSamples, fetchSample } from '~/lib/samples'
 import { formatBytes, formatCount, formatDuration, formatINR, timeAgo } from '~/lib/format'
 import { LIMITS, type IntegerParameter, type WorkflowDefinition } from '~/lib/workflow/schema'
-import type { ApiIssue, RunDetail, RunSummary, WorkflowDetail } from '~/lib/types'
+import type { ApiIssue, RunDetail, RunList, WorkflowDetail } from '~/lib/types'
 import {
   Avatar,
   Badge,
@@ -40,6 +40,7 @@ import {
   Input,
   Select,
   Skeleton,
+  Spinner,
   Tip,
   buttonClass,
   cn,
@@ -100,7 +101,6 @@ function RecipePage() {
 
   const d = detail.data
   const wf = d.workflow
-  const def = d.version.definition
   const link = shareLink(wf.id, d.version.id)
 
   return (
@@ -271,11 +271,13 @@ function RecipeOverview({ detail, className }: { detail: WorkflowDetail; classNa
 // Run panel
 // ---------------------------------------------------------------------------
 
-type PreCheck =
+type PreCheck = { versionId: string } & (
   | {
       kind: 'ok'
       rows: number
       missing: string[]
+      /** "Missing required column: status (the file has "Status")…" */
+      missingMessage: string | null
       ignored: string[]
       /** Line-numbered problems the server would reject, found here first. */
       issues: ApiIssue[]
@@ -283,7 +285,56 @@ type PreCheck =
       /** Distinct values of each text column, for "this never matches" hints. */
       valuesByColumn: Record<string, string[]>
     }
-  | { kind: 'error'; message: string }
+  | { kind: 'error'; message: string; issues: ApiIssue[] }
+)
+
+/**
+ * Checks a file against one version's input contract, in the browser, with the
+ * same parser as the server (which still re-validates every cell). Re-run
+ * whenever the version changes: another version can need other columns.
+ */
+async function checkFile(picked: File, versionId: string, def: WorkflowDefinition): Promise<PreCheck> {
+  if (picked.size > LIMITS.fileBytes) {
+    return { versionId, kind: 'error', message: `This file is ${formatBytes(picked.size)}; the limit is 1 MiB.`, issues: [] }
+  }
+  try {
+    // Bytes, not text(): the parser rejects files that aren't UTF-8 instead of guessing.
+    const bytes = new Uint8Array(await picked.arrayBuffer())
+    const table = parseTable(bytes)
+    const required = Object.keys(def.input.columns)
+    const missing = required.filter((c) => !table.headers.includes(c))
+    let issues: ApiIssue[] = []
+    let issueSummary: string | null = null
+    const valuesByColumn: Record<string, string[]> = {}
+    if (missing.length === 0) {
+      try {
+        const parsed = parseForContract(bytes, def.input.columns)
+        for (const [name, type] of Object.entries(def.input.columns)) {
+          if (type === 'string') valuesByColumn[name] = [...new Set(parsed.rows.map((r) => String(r[name])))].slice(0, 200)
+        }
+      } catch (err) {
+        if (!(err instanceof CsvError)) throw err
+        issues = err.issues
+        issueSummary = err.message
+      }
+    }
+    return {
+      versionId,
+      kind: 'ok',
+      rows: table.records.length,
+      missing,
+      missingMessage: missing.length ? missingColumnsMessage(missing, table.headers) : null,
+      ignored: table.headers.filter((h) => !required.includes(h)),
+      issues,
+      issueSummary,
+      valuesByColumn,
+    }
+  } catch (err) {
+    return err instanceof CsvError
+      ? { versionId, kind: 'error', message: err.message, issues: err.issues }
+      : { versionId, kind: 'error', message: 'This file could not be read as CSV.', issues: [] }
+  }
+}
 
 function defaultsFor(def: WorkflowDefinition): Record<string, string> {
   return Object.fromEntries(Object.entries(def.parameters).map(([name, p]) => [name, String(p.default)]))
@@ -301,60 +352,45 @@ function paramProblem(p: WorkflowDefinition['parameters'][string], raw: string):
 
 function RunPanel({ detail, onRan }: { detail: WorkflowDetail; onRan: (runId: string) => void }) {
   const def = detail.version.definition
+  const versionId = detail.version.id
   const required = Object.keys(def.input.columns)
   const [file, setFile] = React.useState<File | null>(null)
-  const [check, setCheck] = React.useState<PreCheck | null>(null)
+  const [latestCheck, setCheck] = React.useState<PreCheck | null>(null)
   const [values, setValues] = React.useState<Record<string, string>>(() => defaultsFor(def))
+  const [valuesFor, setValuesFor] = React.useState(versionId)
   const queryClient = useQueryClient()
 
-  React.useEffect(() => setValues(defaultsFor(def)), [detail.version.id]) // eslint-disable-line react-hooks/exhaustive-deps
+  // Switching versions keeps the chosen file but resets parameters to that
+  // version's defaults (adjusted during render, so no frame shows stale values).
+  if (valuesFor !== versionId) {
+    setValuesFor(versionId)
+    setValues(defaultsFor(def))
+  }
+  // A check made for another version is never shown or trusted.
+  const check = latestCheck?.versionId === versionId ? latestCheck : null
 
-  const onFile = async (picked: File) => {
+  // (Re)check the file against the version on screen.
+  React.useEffect(() => {
+    if (!file) return
+    let current = true
+    void checkFile(file, versionId, def).then((result) => {
+      if (current) setCheck(result)
+    })
+    return () => {
+      current = false
+    }
+  }, [file, versionId]) // eslint-disable-line react-hooks/exhaustive-deps -- def belongs to versionId
+
+  const onFile = (picked: File) => {
     setFile(picked)
+    setCheck(null)
     run.reset()
-    if (picked.size > LIMITS.fileBytes) {
-      setCheck({ kind: 'error', message: `This file is ${formatBytes(picked.size)}; the limit is 1 MiB.` })
-      return
-    }
-    try {
-      // The same parser as the server, run here first so problems show before
-      // anything is sent. The server still re-validates every cell.
-      const text = await picked.text()
-      const table = parseTable(text)
-      const missing = required.filter((c) => !table.headers.includes(c))
-      let issues: ApiIssue[] = []
-      let issueSummary: string | null = null
-      const valuesByColumn: Record<string, string[]> = {}
-      if (missing.length === 0) {
-        try {
-          const parsed = parseForContract(text, def.input.columns)
-          for (const [name, type] of Object.entries(def.input.columns)) {
-            if (type === 'string') valuesByColumn[name] = [...new Set(parsed.rows.map((r) => String(r[name])))].slice(0, 200)
-          }
-        } catch (err) {
-          if (!(err instanceof CsvError)) throw err
-          issues = err.issues
-          issueSummary = err.message
-        }
-      }
-      setCheck({
-        kind: 'ok',
-        rows: table.records.length,
-        missing,
-        ignored: table.headers.filter((h) => !required.includes(h)),
-        issues,
-        issueSummary,
-        valuesByColumn,
-      })
-    } catch (err) {
-      setCheck({ kind: 'error', message: err instanceof CsvError ? err.message : 'This file could not be read as CSV.' })
-    }
   }
 
   const run = useMutation({
-    mutationFn: () => {
+    mutationFn: (vars: { versionId: string }) => {
       const form = new FormData()
-      form.set('versionId', detail.version.id)
+      form.set('versionId', vars.versionId)
       form.set('file', file!)
       form.set('parameters', JSON.stringify(values))
       return api.upload<RunDetail>('/api/runs', form)
@@ -396,7 +432,9 @@ function RunPanel({ detail, onRan }: { detail: WorkflowDetail; onRan: (runId: st
           return found ? [{ ...found, parameter: isParam ? (step.value as { parameter: string }).parameter : null }] : []
         })
       : []
-  const error = run.error instanceof ApiError ? run.error : run.error ? new ApiError(0, 'ERROR', run.error.message) : null
+  // An error from running another version is not about the version on screen.
+  const runError = run.variables?.versionId === versionId ? run.error : null
+  const error = runError instanceof ApiError ? runError : runError ? new ApiError(0, 'ERROR', runError.message) : null
 
   return (
     <Card className="animate-rise overflow-hidden">
@@ -440,7 +478,17 @@ function RunPanel({ detail, onRan }: { detail: WorkflowDetail; onRan: (runId: st
           </div>
         )}
 
-        {check?.kind === 'error' && <Callout tone="bad">{check.message}</Callout>}
+        {file && !check && (
+          <p className="flex items-center gap-2 text-[12.5px] text-muted" role="status">
+            <Spinner className="size-3.5" /> Checking the file against v{detail.version.number}…
+          </p>
+        )}
+        {check?.kind === 'error' && (
+          <Callout tone="bad">
+            <p>{check.message}</p>
+            {check.issues[0]?.line !== undefined && <p className="mt-1 text-[12.5px]">{check.issues[0].message}</p>}
+          </Callout>
+        )}
         {check?.kind === 'ok' && (
           <div className="rounded-xl border border-line bg-surface-2 px-3.5 py-3 text-[12.5px]">
             <div className="mb-2 flex items-center justify-between">
@@ -465,9 +513,7 @@ function RunPanel({ detail, onRan }: { detail: WorkflowDetail; onRan: (runId: st
                 )
               })}
             </div>
-            {check.missing.length > 0 && (
-              <p className="mt-2 text-bad-ink">Missing required column{check.missing.length > 1 ? 's' : ''}: {check.missing.join(', ')}</p>
-            )}
+            {check.missingMessage && <p className="mt-2 text-bad-ink">{check.missingMessage}</p>}
             {check.ignored.length > 0 && (
               <p className="mt-2 text-muted">
                 Ignored (not used, never stored): <span className="font-mono">{check.ignored.join(', ')}</span>
@@ -563,7 +609,7 @@ function RunPanel({ detail, onRan }: { detail: WorkflowDetail; onRan: (runId: st
           icon={<Play className="size-4" />}
           loading={run.isPending}
           disabled={!fileOk || !paramsOk}
-          onClick={() => run.mutate()}
+          onClick={() => run.mutate({ versionId })}
         >
           {file ? 'Run recipe' : 'Choose a file to run'}
         </Button>
@@ -756,7 +802,7 @@ function MyRuns({
 }) {
   const runs = useQuery({
     queryKey: qk.runs(workflowId),
-    queryFn: () => api.get<{ runs: RunSummary[] }>(`/api/runs${qs({ workflowId })}`),
+    queryFn: () => api.get<RunList>(`/api/runs${qs({ workflowId })}`),
   })
   const [confirm, setConfirm] = React.useState(false)
   const queryClient = useQueryClient()

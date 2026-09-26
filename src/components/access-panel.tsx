@@ -54,7 +54,8 @@ export function WhoHasAccess({ workflowId }: { workflowId: string }) {
         ) : access.isError ? (
           <p className="text-sm text-muted">{access.error.message}</p>
         ) : (
-          <div className="scrollbar-thin overflow-x-auto">
+          // relative: keeps the sr-only cell labels inside the scroller (see ResultTable).
+          <div className="scrollbar-thin relative overflow-x-auto">
             <table className="w-full min-w-[520px] text-[13px]">
               <thead>
                 <tr className="text-left text-[11.5px] text-faint">

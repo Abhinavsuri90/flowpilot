@@ -1,7 +1,7 @@
 import { getDb } from '../db'
 import { userFromRequest } from '../auth'
 import { loadEnv } from '../env'
-import { ApiError, errorResponse, json, unauthorized } from '../http'
+import { ApiError, errorResponse, json, noContent, unauthorized } from '../http'
 import type { ApiContext, AuthedContext } from './context'
 import * as auth from './auth'
 import * as workflows from './workflows'
@@ -105,32 +105,59 @@ function mapError(err: unknown): Response {
   return errorResponse(new ApiError(500, 'INTERNAL_ERROR', 'Something went wrong on the server. Please try again.'))
 }
 
+/** Methods a path answers to: its routes, plus HEAD wherever GET works (RFC 9110) and OPTIONS. */
+function allowedMethods(candidates: CompiledRoute[]): string {
+  const methods = new Set<string>(candidates.map((route) => route.method))
+  if (methods.has('GET')) methods.add('HEAD')
+  methods.add('OPTIONS')
+  return [...methods].join(', ')
+}
+
+/** Path parameters, or null when one isn't valid percent-encoding (such an id can't exist). */
+function pathParams(keys: string[], match: RegExpExecArray): Record<string, string> | null {
+  const params: Record<string, string> = {}
+  try {
+    keys.forEach((key, i) => {
+      params[key] = decodeURIComponent(match[i + 1]!)
+    })
+  } catch {
+    return null
+  }
+  return params
+}
+
 /** The single entry point for the REST API. Tests call it directly with real cookies. */
 export async function handleApi(request: Request): Promise<Response> {
   loadEnv()
+  const isHead = request.method.toUpperCase() === 'HEAD'
+  const response = await dispatch(request, isHead ? 'GET' : request.method.toUpperCase())
+  // HEAD: the GET response's status and headers, without the body.
+  return isHead ? new Response(null, { status: response.status, headers: response.headers }) : response
+}
+
+async function dispatch(request: Request, method: string): Promise<Response> {
   try {
     const url = new URL(request.url)
-    const method = request.method.toUpperCase()
     const candidates = COMPILED.map((route) => ({ route, match: route.regex.exec(url.pathname) })).filter(
       (c) => c.match,
     )
     if (candidates.length === 0) throw new ApiError(404, 'NOT_FOUND', 'No such API endpoint.')
+    const allow = allowedMethods(candidates.map((c) => c.route))
+    if (method === 'OPTIONS') return noContent({ Allow: allow })
     const hit = candidates.find((c) => c.route.method === method)
     if (!hit) {
-      const allow = [...new Set(candidates.map((c) => c.route.method))].join(', ')
-      return errorResponse(new ApiError(405, 'METHOD_NOT_ALLOWED', `Use ${allow} for this endpoint.`), { Allow: allow })
+      return errorResponse(new ApiError(405, 'METHOD_NOT_ALLOWED', `Use ${allow.replace(/, OPTIONS$/, '')} for this endpoint.`), { Allow: allow })
     }
 
     if (WRITE_METHODS.has(method)) assertSameOrigin(request)
+
+    const params = pathParams(hit.route.keys, hit.match!)
+    if (!params) throw new ApiError(404, 'NOT_FOUND', "That item doesn't exist or you don't have access to it.")
 
     const db = getDb()
     const user = userFromRequest(db, request)
     if (hit.route.auth && !user) throw unauthorized()
 
-    const params: Record<string, string> = {}
-    hit.route.keys.forEach((key, i) => {
-      params[key] = decodeURIComponent(hit.match![i + 1]!)
-    })
     const ctx: ApiContext = { request, url, params, db, user }
     return await hit.route.handler(ctx as AuthedContext)
   } catch (err) {

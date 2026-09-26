@@ -207,3 +207,115 @@ test('command palette, theme, roles, my runs and the mobile drawer all work', as
   await expect(page.getByText('12 triggers')).toBeVisible()
   expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBeLessThanOrEqual(390)
 })
+
+// ----- Phase 10 review: each test pins a problem that was found and fixed ------------
+
+const BY_REP = {
+  schemaVersion: 1,
+  input: { format: 'csv', columns: { status: 'string', sales_rep: 'string', amount: 'integer_inr' } },
+  parameters: {},
+  steps: [
+    { id: 's1', type: 'filter', column: 'status', operator: 'eq', value: { literal: 'paid' } },
+    { id: 's2', type: 'group_sum', groupBy: 'sales_rep', valueColumn: 'amount', as: 'total' },
+  ],
+  output: { format: 'table' },
+}
+const BY_REGION = {
+  ...BY_REP,
+  input: { format: 'csv', columns: { status: 'string', region: 'string', amount: 'integer_inr' } },
+  steps: [BY_REP.steps[0], { id: 's2', type: 'group_sum', groupBy: 'region', valueColumn: 'amount', as: 'total' }],
+}
+
+test('switching versions re-checks the chosen file against that version', async ({ page }) => {
+  await signIn(page, 'Asha')
+  const { id, versionId: v1 } = await createRecipe(page, 'QA version switch', BY_REP)
+  const origin = new URL(page.url()).origin
+  const saved = await page.request.post(`/api/workflows/${id}/versions`, { headers: { origin }, data: { definition: BY_REGION } })
+  const v2 = (await saved.json()).version.id as string
+
+  // v2 first, so it is cached when we come back to it (the case that used to go stale).
+  await open(page, `/w/${id}`)
+  await page.getByLabel('Version').selectOption(v1)
+  await page.locator('#run-file').setInputFiles({ name: 'no_region.csv', mimeType: 'text/csv', buffer: Buffer.from('status,sales_rep,amount\npaid,Ravi,100\n') })
+  await expect(page.getByText('Header check')).toBeVisible()
+  const run = page.getByRole('button', { name: 'Run recipe' })
+  await expect(run).toBeEnabled()
+
+  await page.getByLabel('Version').selectOption(v2)
+  await expect(page.getByText('Missing required column: region')).toBeVisible()
+  await expect(run).toBeDisabled()
+  await expect(page.getByText('no_region.csv')).toBeVisible() // the file stays chosen
+
+  await page.getByLabel('Version').selectOption(v1)
+  await expect(page.getByText('Missing required column: region')).toHaveCount(0)
+  await expect(run).toBeEnabled()
+})
+
+test('the run panel refuses a file that is not UTF-8 before anything is uploaded', async ({ page }) => {
+  await signIn(page, 'Asha')
+  const { id } = await createRecipe(page, 'QA encoding')
+  await open(page, `/w/${id}`)
+  const windows1252 = Buffer.concat([Buffer.from('order_id,region,sales_rep,status,amount\nO-1,Montr'), Buffer.from([0xe9]), Buffer.from('al,Asha,paid,100\n')])
+  await page.locator('#run-file').setInputFiles({ name: 'excel.csv', mimeType: 'text/csv', buffer: windows1252 })
+  await expect(page.getByText(/isn't saved as UTF-8 text/)).toBeVisible()
+  await expect(page.getByText(/Line 2 has characters that aren't UTF-8/)).toBeVisible()
+  await expect(page.getByRole('button', { name: 'Run recipe' })).toBeDisabled()
+})
+
+test('an unknown address shows a 404 inside the app, with navigation', async ({ page }) => {
+  await signIn(page, 'Asha')
+  const res = await page.goto('/no-such-page')
+  expect(res?.status()).toBe(404)
+  await page.locator('html[data-hydrated="true"]').waitFor({ state: 'attached' })
+  await expect(page.getByRole('heading', { name: 'Nothing here' })).toBeVisible()
+  await expect(page).toHaveTitle('Not found · FlowPilot')
+  await page.getByRole('link', { name: 'Recipe library' }).first().click()
+  await expect(page).toHaveURL(/\/library/)
+})
+
+test('wide tables scroll inside their card: no page scrolls sideways on a phone, results never cover the run panel', async ({ page }) => {
+  await signIn(page, 'Asha')
+  const columns = Object.fromEntries(Array.from({ length: 12 }, (_, i) => [`column_${String(i + 1).padStart(2, '0')}`, 'string']))
+  const wide = {
+    schemaVersion: 1,
+    input: { format: 'csv', columns },
+    parameters: {},
+    steps: [{ id: 's1', type: 'filter', column: 'column_01', operator: 'eq', value: { literal: 'keep' } }],
+    output: { format: 'table' },
+  }
+  const { id } = await createRecipe(page, 'QA wide result', wide)
+  const header = Object.keys(columns).join(',')
+  const row = ['keep', ...Array.from({ length: 11 }, (_, i) => `a fairly long value number ${i + 1}`)].join(',')
+  await open(page, `/w/${id}`)
+  await page.locator('#run-file').setInputFiles({ name: 'wide.csv', mimeType: 'text/csv', buffer: Buffer.from(`${header}\n${row}\n`) })
+  await page.getByRole('button', { name: 'Run recipe' }).click()
+  await expect(page.getByText('1 row', { exact: false }).first()).toBeVisible()
+
+  // Desktop: the result card ends before the run panel starts.
+  const result = await page.getByRole('table').filter({ hasText: 'column_12' }).locator('xpath=ancestor::div[contains(@class,"rounded-2xl")][1]').boundingBox()
+  const panel = await page.getByRole('complementary').filter({ hasText: 'Run on your file' }).boundingBox()
+  expect(result!.x + result!.width).toBeLessThanOrEqual(panel!.x)
+
+  await page.setViewportSize({ width: 390, height: 844 })
+  for (const path of ['/', '/library', '/runs', '/access', '/system-design', '/workflows/new', page.url().replace(/^https?:\/\/[^/]+/, ''), `/w/${id}/edit`]) {
+    await open(page, path)
+    await page.waitForLoadState('networkidle')
+    expect(await page.evaluate(() => document.documentElement.scrollWidth), path).toBeLessThanOrEqual(390)
+  }
+})
+
+test('the library shows 60 recipes at a time and loads the rest on request', async ({ page }) => {
+  await signIn(page, 'Vikram')
+  const origin = new URL(page.url()).origin
+  for (let i = 0; i < 61; i++) {
+    const res = await page.request.post('/api/workflows', { headers: { origin }, data: { title: `QA bulk ${i}`, definition: ORIGINAL } })
+    expect(res.status()).toBe(201)
+  }
+  const total = (await (await page.request.get('/api/workflows?scope=mine&limit=1')).json()).total as number
+  await open(page, '/library')
+  const cards = page.locator('article')
+  await expect(cards).toHaveCount(60)
+  await expect(page.getByText(`Showing 60 of ${total} recipes`)).toBeVisible()
+  await page.getByRole('button', { name: `Show ${Math.min(total - 60, 60)} more` }).click()
+  await expect(cards).toHaveCount(Math.min(total, 120))
+})

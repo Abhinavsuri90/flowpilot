@@ -6,6 +6,7 @@ import {
   deleteSession,
   dummyPasswordHash,
   isLoginThrottled,
+  purgeExpiredSessions,
   readCookie,
   recordLoginFailure,
   SESSION_COOKIE,
@@ -53,6 +54,10 @@ export async function login({ request, db }: ApiContext): Promise<Response> {
   }
 
   clearLoginFailures(email)
+  // Signing in replaces whatever session this browser had, and tidies expired ones.
+  const previous = readCookie(request, SESSION_COOKIE)
+  if (previous) deleteSession(db, previous)
+  purgeExpiredSessions(db)
   const { token, expiresAt } = createSession(db, row.id)
   const cookie = sessionCookie(token, expiresAt, isSecureRequest(request))
   const user = userFromRequest(db, new Request(request.url, { headers: { cookie: `${SESSION_COOKIE}=${token}` } }))

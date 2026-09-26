@@ -1,5 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import { CsvError, checkAmount, inferColumns, parseForContract, parseTable, toCsv } from '../src/lib/csv'
+
+const bytes = (text: string) => new TextEncoder().encode(text)
 import { REGIONAL_REVENUE_EXCEPTIONS as ORIGINAL } from '../src/lib/workflow/examples'
 import { fixture } from './helpers/fixtures'
 
@@ -120,5 +122,57 @@ describe('csv: parsing against a recipe contract', () => {
     expect(lines[3]).toBe('South,40000')
     // Escaped cells are prefixed with ' and quoted; ordinary cells are untouched.
     expect(toCsv(['v'], [{ v: '+1' }, { v: '-2' }, { v: 'plain' }]).split('\r\n')).toEqual(['v', `"'+1"`, `"'-2"`, 'plain'])
+  })
+})
+
+describe('csv: files as spreadsheets really save them', () => {
+  it('reads UTF-8 bytes, with or without a BOM, like text', () => {
+    const text = `${HEADER}\nO-1,Montréal,Asha,paid,100\n`
+    const withBom = new Uint8Array([0xef, 0xbb, 0xbf, ...bytes(text)])
+    expect(parseForContract(bytes(text), CONTRACT).rows[0]!.region).toBe('Montréal')
+    expect(parseForContract(withBom, CONTRACT).rows[0]!.region).toBe('Montréal')
+  })
+
+  it("rejects Windows-1252 (Excel's plain CSV) instead of turning letters into �", () => {
+    // "Montréal" with é as the single byte 0xE9, as Windows Excel writes it.
+    const latin1 = new Uint8Array([...bytes(`${HEADER}\nO-1,Montr`), 0xe9, ...bytes('al,Asha,paid,100\n')])
+    const err = csvError(() => parseForContract(latin1, CONTRACT))
+    expect(err.status).toBe(422)
+    expect(err.message).toMatch(/isn't saved as UTF-8/)
+    expect(err.message).toMatch(/CSV UTF-8/)
+    expect(err.issues[0]).toMatchObject({ line: 2 })
+    expect(err.issues[0]!.message).toContain('O-1,Montr')
+    // The editor's sample reader gets the same answer.
+    expect(() => inferColumns(latin1)).toThrow(/UTF-8/)
+  })
+
+  it('rejects UTF-16 ("Unicode Text") with a way out', () => {
+    const utf16 = new Uint8Array([0xff, 0xfe, ...[...`${HEADER}\n`].flatMap((c) => [c.charCodeAt(0), 0])])
+    expect(csvError(() => parseTable(utf16)).message).toMatch(/UTF-16.*CSV UTF-8/)
+  })
+
+  it('names semicolon- and tab-separated files instead of listing every column as missing', () => {
+    const semicolons = csvError(() => parseForContract(`${HEADER.replaceAll(',', ';')}\nO-1;North;Asha;paid;100\n`, CONTRACT))
+    expect(semicolons.message).toMatch(/separates values with semicolons/)
+    const tabs = csvError(() => parseForContract(`${HEADER.replaceAll(',', '\t')}\nO-1\tNorth\tAsha\tpaid\t100\n`, CONTRACT))
+    expect(tabs.message).toMatch(/separates values with tabs/)
+  })
+
+  it('explains an empty last header (a trailing comma on every line), still rejecting it', () => {
+    const err = csvError(() => parseTable(`${HEADER},\nO-1,North,Asha,paid,100,\n`))
+    expect(err.issues[0]!.message).toMatch(/^Column 6 has an empty header \(usually an extra comma/)
+    // An empty header in the middle keeps the plain message.
+    expect(csvError(() => parseTable('a,,b\n1,2,3\n')).issues[0]!.message).toBe('Column 2 has an empty header')
+  })
+
+  it('points at near-miss headers when a required column is missing', () => {
+    const err = csvError(() => parseForContract('order_id,Region,sales_rep,Status,amount\nO-1,North,Asha,paid,1\n', CONTRACT))
+    expect(err.issues[0]!.message).toBe(
+      'Missing required columns: status (the file has "Status"), region (the file has "Region"). Column names must match exactly, including capitals',
+    )
+    // Headers are still matched exactly: no silent renaming.
+    expect(csvError(() => parseForContract('Sales Rep,status,region,amount\nA,paid,North,1\n', CONTRACT)).issues[0]!.message).toMatch(
+      /^Missing required column: sales_rep \(the file has "Sales Rep"\)/,
+    )
   })
 })
