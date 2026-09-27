@@ -9,10 +9,11 @@ import {
   useTable,
   type ColumnDef,
 } from '@tanstack/react-table'
-import { ArrowDown, ArrowUp, ChevronsUpDown, FileSpreadsheet } from 'lucide-react'
+import { ArrowDown, ArrowUp, ChevronsUpDown, Copy, FileSpreadsheet } from 'lucide-react'
 import { formatCount, formatINR } from '~/lib/format'
 import { isNumericType, type Column, type Row, type StepLogEntry, type WorkflowDefinition } from '~/lib/workflow/schema'
 import { describeRecipe } from '~/lib/workflow/describe'
+import { toTsv } from '~/lib/csv'
 import { cn } from './ui'
 import { StepIcon } from './workflow-bits'
 import { ChartTableToggle, ResultChart, chartable } from './charts'
@@ -136,16 +137,34 @@ export function ResultTable({ columns, rows, caption }: { columns: Column[]; row
   )
 }
 
-/** The result as a table, or as a bar chart when it has a figure to plot. */
+/** The result as a table (copyable into a spreadsheet or a message), or as a bar chart when it has a figure to plot. */
 export function ResultView({ columns, rows, caption }: { columns: Column[]; rows: Row[]; caption?: string }) {
   const [view, setView] = React.useState<'table' | 'chart'>('table')
-  if (!chartable(columns, rows)) return <ResultTable columns={columns} rows={rows} caption={caption} />
+  const [copied, setCopied] = React.useState(false)
+  const canChart = chartable(columns, rows)
+  const copy = async () => {
+    try {
+      await navigator.clipboard.writeText(toTsv(columns.map((c) => c.name), rows))
+      setCopied(true)
+      window.setTimeout(() => setCopied(false), 2000)
+    } catch {
+      // No clipboard access (insecure context or denied): the CSV download still works.
+    }
+  }
   return (
     <div>
-      <div className="mb-2 flex justify-end">
-        <ChartTableToggle view={view} onChange={setView} />
+      <div className="mb-2 flex flex-wrap items-center justify-end gap-2">
+        <button
+          type="button"
+          onClick={() => void copy()}
+          className="inline-flex items-center gap-1 rounded-md border border-line bg-surface px-2 py-0.5 text-[12px] font-medium text-muted hover:text-ink"
+          aria-label="Copy the table (tab-separated, pastes into a spreadsheet)"
+        >
+          <Copy className="size-3.5" aria-hidden /> {copied ? 'Copied' : 'Copy table'}
+        </button>
+        {canChart && <ChartTableToggle view={view} onChange={setView} />}
       </div>
-      {view === 'chart' ? <ResultChart columns={columns} rows={rows} /> : <ResultTable columns={columns} rows={rows} caption={caption} />}
+      {canChart && view === 'chart' ? <ResultChart columns={columns} rows={rows} /> : <ResultTable columns={columns} rows={rows} caption={caption} />}
     </div>
   )
 }
