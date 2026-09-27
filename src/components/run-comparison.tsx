@@ -60,8 +60,8 @@ export function RunComparison({ run }: { run: RunDetail }) {
   const otherSummary = candidates.find((c) => c.id === otherId)
   const heading = otherSummary
     ? otherIsOlder
-      ? `Since your run of ${timeAgo(otherSummary.createdAt)}`
-      : `Until your later run of ${timeAgo(otherSummary.createdAt)}`
+      ? `Since your earlier run (${timeAgo(otherSummary.createdAt)})`
+      : `Until your later run (${timeAgo(otherSummary.createdAt)})`
     : 'Compared with another run'
 
   return (
