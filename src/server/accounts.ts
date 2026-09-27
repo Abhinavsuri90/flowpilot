@@ -46,10 +46,10 @@ export function setDisplayName(db: DB, userId: string, name: string): void {
 
 // ----- workspaces and members ---------------------------------------------------------
 
-/** A new workspace with its creator as the first admin. */
-export function createWorkspace(db: DB, name: string, adminId: string): string {
+/** A new workspace with its creator as the first admin; its calendar is the creator's time zone when known. */
+export function createWorkspace(db: DB, name: string, adminId: string, timeZone = 'UTC'): string {
   const id = newId('ws')
-  db.prepare('INSERT INTO workspaces (id, name) VALUES (?, ?)').run(id, name)
+  db.prepare('INSERT INTO workspaces (id, name, time_zone) VALUES (?, ?, ?)').run(id, name, timeZone)
   addMember(db, id, adminId, 'admin')
   recordEvent(db, { workspaceId: id, actorId: adminId, type: 'workspace.created', detail: { name } })
   return id
@@ -57,6 +57,15 @@ export function createWorkspace(db: DB, name: string, adminId: string): string {
 
 export function renameWorkspace(db: DB, workspaceId: string, name: string): void {
   db.prepare('UPDATE workspaces SET name = ? WHERE id = ?').run(name, workspaceId)
+}
+
+export function setWorkspaceTimeZone(db: DB, workspaceId: string, timeZone: string): void {
+  db.prepare('UPDATE workspaces SET time_zone = ? WHERE id = ?').run(timeZone, workspaceId)
+}
+
+/** A workspace's calendar; UTC for one that doesn't exist (it can't have runs either). */
+export function workspaceTimeZone(db: DB, workspaceId: string): string {
+  return (db.prepare('SELECT time_zone FROM workspaces WHERE id = ?').pluck().get(workspaceId) as string | undefined) ?? 'UTC'
 }
 
 export function addMember(db: DB, workspaceId: string, userId: string, role: Role): void {

@@ -3,6 +3,7 @@ import { currentMembership } from '../auth'
 import { countWorkflows, listRuns, reapStaleRuns, toRunSummary } from '../repo'
 import { listActivity } from '../events'
 import { modelStatus } from '../ai/config'
+import { addDays, dayIn, todayIn } from '../../lib/dates'
 import type { Dashboard } from '../../lib/types'
 import type { AuthedContext } from './context'
 
@@ -14,7 +15,8 @@ export function get({ db, user }: AuthedContext): Response {
   const now = Date.now()
   const since7 = new Date(now - 7 * DAY).toISOString()
   // Recipe numbers and activity are for the workspace in use; runs are personal.
-  const workspaceId = currentMembership(user)?.workspaceId ?? null
+  const membership = currentMembership(user)
+  const workspaceId = membership?.workspaceId ?? null
 
   const myRuns7d = db.prepare('SELECT COUNT(*) FROM runs WHERE runner_id = ? AND created_at >= ?').pluck().get(user.id, since7) as number
   const succeeded7d = db
@@ -40,22 +42,21 @@ export function get({ db, user }: AuthedContext): Response {
   const ranAny = (db.prepare('SELECT COUNT(*) FROM runs WHERE runner_id = ?').pluck().get(user.id) as number) > 0
   const teamSize = workspaceId ? (db.prepare('SELECT COUNT(*) FROM workspace_members WHERE workspace_id = ?').pluck().get(workspaceId) as number) : 0
 
-  // 14 UTC days, oldest first.
-  const today = new Date(now)
-  today.setUTCHours(0, 0, 0, 0)
-  const days = Array.from({ length: 14 }, (_, i) => new Date(today.getTime() - (13 - i) * DAY).toISOString().slice(0, 10))
-  const counts = db
-    .prepare(
-      `SELECT substr(created_at, 1, 10) AS day, status, COUNT(*) AS n FROM runs
-        WHERE runner_id = ? AND created_at >= ? AND status <> 'running'
-        GROUP BY day, status`,
-    )
-    .all(user.id, `${days[0]}T00:00:00.000Z`) as Array<{ day: string; status: 'succeeded' | 'failed'; n: number }>
-  const runsByDay = days.map((date) => ({
-    date,
-    succeeded: counts.find((c) => c.day === date && c.status === 'succeeded')?.n ?? 0,
-    failed: counts.find((c) => c.day === date && c.status === 'failed')?.n ?? 0,
-  }))
+  // 14 days of the workspace's calendar, oldest first: a run at 01:30 in India counts
+  // on that Indian day, not on the previous UTC one. Runs are bucketed here rather than
+  // in SQL, which has no time zones; 15 UTC days back safely covers any zone's 14.
+  const timeZone = membership?.timeZone ?? 'UTC'
+  const today = todayIn(timeZone, now)
+  const days = Array.from({ length: 14 }, (_, i) => addDays(today, i - 13))
+  const recent = db
+    .prepare(`SELECT created_at, status FROM runs WHERE runner_id = ? AND created_at >= ? AND status <> 'running'`)
+    .all(user.id, new Date(now - 15 * DAY).toISOString()) as Array<{ created_at: string; status: 'succeeded' | 'failed' }>
+  const tally = new Map<string, { succeeded: number; failed: number }>(days.map((date) => [date, { succeeded: 0, failed: 0 }]))
+  for (const run of recent) {
+    const day = tally.get(dayIn(run.created_at, timeZone))
+    if (day) day[run.status] += 1
+  }
+  const runsByDay = days.map((date) => ({ date, ...tally.get(date)! }))
 
   const body: Dashboard = {
     stats: {

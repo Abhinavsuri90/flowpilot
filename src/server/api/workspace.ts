@@ -2,9 +2,10 @@ import { z } from 'zod'
 import { ApiError, forbidden, invalid, json, notFound, readJson } from '../http'
 import { recordEvent } from '../events'
 import { currentMembership } from '../auth'
-import { adminCount, findUserById, removeMember as removeFromWorkspace, renameWorkspace, seniorAdmin } from '../accounts'
+import { adminCount, findUserById, removeMember as removeFromWorkspace, renameWorkspace, seniorAdmin, setWorkspaceTimeZone } from '../accounts'
 import { canManageMembers, canManageRoles, decideLeave, decideRemoval, decideRoleChange } from '../../lib/policy'
 import { workspaceNameProblem } from '../../lib/account'
+import { canonicalTimeZone, isTimeZone } from '../../lib/dates'
 import type { Membership, Role, WorkspaceInfo } from '../../lib/types'
 import type { AuthedContext } from './context'
 import { toMe } from './auth'
@@ -13,7 +14,10 @@ const RoleBody = z.strictObject({
   role: z.enum(['admin', 'member', 'viewer'], { error: 'Role must be admin, member or viewer' }),
   workspaceId: z.string().min(1).max(64).optional(),
 })
-const RenameBody = z.strictObject({ name: z.string({ error: 'Give the workspace a name' }) })
+const SettingsBody = z.strictObject({
+  name: z.string({ error: 'Give the workspace a name' }).optional(),
+  timeZone: z.string({ error: 'Choose a time zone from the list' }).optional(),
+})
 
 function firstIssue(error: z.ZodError): string {
   const issue = error.issues[0]
@@ -49,7 +53,7 @@ export function get(ctx: AuthedContext): Response {
     recipes: number
   }>
   const body: WorkspaceInfo = {
-    workspace: { id: membership.workspaceId, name: membership.workspaceName },
+    workspace: { id: membership.workspaceId, name: membership.workspaceName, timeZone: membership.timeZone },
     role: membership.role,
     members: rows.map((r) => ({
       user: { id: r.id, name: r.display_name, hue: r.avatar_hue, email: r.email },
@@ -101,21 +105,38 @@ export async function setRole(ctx: AuthedContext): Promise<Response> {
   return json({ userId: targetId, role: parsed.data.role })
 }
 
-/** PATCH /api/workspace: rename the workspace you're working in (admins). */
-export async function rename(ctx: AuthedContext): Promise<Response> {
+/** PATCH /api/workspace: the name and time zone of the workspace you're working in (admins). */
+export async function update(ctx: AuthedContext): Promise<Response> {
   const membership = resolveWorkspace(ctx, null)
-  if (!canManageMembers(membership.role)) throw forbidden('Only admins can rename the workspace')
-  if (ctx.user.isDemo) throw forbidden('Demo workspaces keep their names')
-  const parsed = RenameBody.safeParse(await readJson(ctx.request))
+  if (!canManageMembers(membership.role)) throw forbidden('Only admins can change the workspace’s settings')
+  if (ctx.user.isDemo) throw forbidden('Demo workspaces keep their settings')
+  const parsed = SettingsBody.safeParse(await readJson(ctx.request))
   if (!parsed.success) throw invalid(firstIssue(parsed.error))
-  const name = parsed.data.name.trim()
+  if (parsed.data.name === undefined && parsed.data.timeZone === undefined) throw invalid('Send a name, a time zone, or both')
+
+  const name = parsed.data.name?.trim() ?? membership.workspaceName
   const problem = workspaceNameProblem(name)
   if (problem) throw invalid(problem, [{ path: 'name', message: problem }])
-  if (name !== membership.workspaceName) {
-    renameWorkspace(ctx.db, membership.workspaceId, name)
-    recordEvent(ctx.db, { workspaceId: membership.workspaceId, actorId: ctx.user.id, type: 'workspace.renamed', detail: { from: membership.workspaceName, to: name } })
-  }
-  return json({ workspace: { id: membership.workspaceId, name } })
+  const requested = parsed.data.timeZone ?? membership.timeZone
+  if (!isTimeZone(requested)) throw invalid('Choose a time zone from the list', [{ path: 'timeZone', message: 'Choose a time zone from the list' }])
+  const timeZone = canonicalTimeZone(requested)
+
+  ctx.db.transaction(() => {
+    if (name !== membership.workspaceName) {
+      renameWorkspace(ctx.db, membership.workspaceId, name)
+      recordEvent(ctx.db, { workspaceId: membership.workspaceId, actorId: ctx.user.id, type: 'workspace.renamed', detail: { from: membership.workspaceName, to: name } })
+    }
+    if (timeZone !== membership.timeZone) {
+      setWorkspaceTimeZone(ctx.db, membership.workspaceId, timeZone)
+      recordEvent(ctx.db, {
+        workspaceId: membership.workspaceId,
+        actorId: ctx.user.id,
+        type: 'workspace.time_zone_changed',
+        detail: { from: membership.timeZone, to: timeZone },
+      })
+    }
+  })()
+  return json({ workspace: { id: membership.workspaceId, name, timeZone } })
 }
 
 /** DELETE /api/workspace/members/:userId: admins remove someone; their recipes here move to the admin. */

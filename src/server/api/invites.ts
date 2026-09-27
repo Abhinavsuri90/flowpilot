@@ -1,6 +1,6 @@
 import { z } from 'zod'
 import { ApiError, forbidden, invalid, json, notFound, readJson } from '../http'
-import { currentMembership, userFromRequest } from '../auth'
+import { currentMembership, membershipsFor, userFromRequest } from '../auth'
 import { addMember, createInvite, pendingInvites, revokeInvite, setSessionWorkspace, usableInvite, useInvite, type InviteRow } from '../accounts'
 import { absoluteUrl, appConfig } from '../config'
 import { recordEvent } from '../events'
@@ -130,7 +130,7 @@ export function accept(ctx: AuthedContext): Response {
       useInvite(ctx.db, invite.id)
       recordEvent(ctx.db, { workspaceId: invite.workspace_id, actorId: ctx.user.id, type: 'member.joined', detail: { role: invite.role, via: 'invite' } })
     })()
-    memberships = [...memberships, { workspaceId: invite.workspace_id, workspaceName: workspaceName(ctx.db, invite.workspace_id), role: invite.role }]
+    memberships = membershipsFor(ctx.db, ctx.user.id)
   }
   setSessionWorkspace(ctx.db, ctx.user.sessionHash, invite.workspace_id)
   return json({ alreadyMember: !!already, me: toMe({ ...ctx.user, memberships, activeWorkspaceId: invite.workspace_id }) })

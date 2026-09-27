@@ -29,7 +29,7 @@ import { api, ApiError, qk, qs } from '~/lib/api'
 import { CsvError, literalMismatch, missingColumnsMessage, parseForContract, parseTable, renameHeaders, similarHeader } from '~/lib/csv'
 import { diffDefinitions } from '~/lib/workflow/diff'
 import { AS_OF_KEY, formatParameterValue, parameterUnits, type ParameterUnit } from '~/lib/workflow/describe'
-import { formatDate, isIsoDate, todayIso, usesRelativeDates } from '~/lib/dates'
+import { formatDate, isIsoDate, usesRelativeDates } from '~/lib/dates'
 import { compatibleSamples, fetchSample } from '~/lib/samples'
 import { exportFileName, resultWorkbook, saveBlob } from '~/lib/spreadsheet'
 import { formatBytes, formatCount, formatDuration, timeAgo } from '~/lib/format'
@@ -487,9 +487,10 @@ function RunPanel({ detail, busy, onRan }: { detail: WorkflowDetail; busy: boole
   const [latestCheck, setCheck] = React.useState<PreCheck | null>(null)
   const [values, setValues] = React.useState<Record<string, string>>(() => defaultsFor(def))
   const [valuesFor, setValuesFor] = React.useState(versionId)
-  // The day "last month" or "30 days ago" count from: today here, unless the runner picks another day.
+  // The day "last month" or "30 days ago" count from: today in the recipe's workspace
+  // (the same day a script gets), unless the runner picks another day.
   const relativeDates = usesRelativeDates(def)
-  const [asOf, setAsOf] = React.useState(() => todayIso())
+  const [asOf, setAsOf] = React.useState(() => detail.today)
   const queryClient = useQueryClient()
 
   // Switching versions keeps the chosen file but resets parameters to that
@@ -700,15 +701,17 @@ function RunPanel({ detail, busy, onRan }: { detail: WorkflowDetail; busy: boole
               <label htmlFor="run-as-of" className="flex items-center gap-1.5 text-[13px] font-medium text-ink-2">
                 <CalendarDays className="size-3.5" aria-hidden /> As of
               </label>
-              {asOf !== todayIso() && (
-                <button type="button" onClick={() => setAsOf(todayIso())} className="inline-flex items-center gap-1 text-[12px] text-brand-ink hover:underline">
+              {asOf !== detail.today && (
+                <button type="button" onClick={() => setAsOf(detail.today)} className="inline-flex items-center gap-1 text-[12px] text-brand-ink hover:underline">
                   <RotateCcw className="size-3" /> Reset to today
                 </button>
               )}
             </div>
             <Input id="run-as-of" type="date" value={asOf} aria-invalid={asOfOk ? undefined : true} onChange={(e) => setAsOf(e.target.value)} />
             <p className={cn('mt-1 text-[12px]', asOfOk ? 'text-muted' : 'text-bad-ink')}>
-              {asOfOk ? `This recipe counts “last month” and “N days ago” from this day (${formatDate(asOf)}); it is saved with the run.` : 'A date like 2026-04-03'}
+              {asOfOk
+                ? `This recipe counts “last month” and “N days ago” from this day (${formatDate(asOf)}); it is saved with the run. Today follows the workspace’s time zone, ${detail.timeZone.replaceAll('_', ' ')}.`
+                : 'A date like 2026-04-03'}
             </p>
           </div>
         )}

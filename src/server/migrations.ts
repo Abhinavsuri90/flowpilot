@@ -357,4 +357,13 @@ CREATE INDEX sign_in_challenges_user_idx ON sign_in_challenges(user_id);
 CREATE INDEX sign_in_challenges_expiry_idx ON sign_in_challenges(expires_at);
 `,
   },
+  {
+    id: 7,
+    name: 'workspace_time_zone',
+    sql: /* sql */ `
+-- Each workspace keeps its own calendar: "today" for relative dates and the
+-- dashboard's days. An IANA name, checked by the app (SQLite has no zone list).
+ALTER TABLE workspaces ADD COLUMN time_zone TEXT NOT NULL DEFAULT 'UTC' CHECK (length(time_zone) BETWEEN 1 AND 64);
+`,
+  },
 ]

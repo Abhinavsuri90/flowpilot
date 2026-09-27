@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it } from 'vitest'
-import { checkDate, datePart, dayNumber, describeRelative, formatDate, fromDayNumber, isoWeek, relativeDate, todayIso, usesRelativeDates } from '../src/lib/dates'
+import { checkDate, datePart, dayNumber, describeRelative, formatDate, fromDayNumber, isoWeek, relativeDate, todayIn, todayIso, usesRelativeDates } from '../src/lib/dates'
 import { execute } from '../src/lib/workflow/execute'
 import { resolveParameters, validateDefinition } from '../src/lib/workflow/validate'
 import { describeParameters, describeRecipe, summarize } from '../src/lib/workflow/describe'
@@ -297,10 +297,11 @@ describe('recipes with dates', () => {
       expect(bad.status).toBe(422)
       expect(bad.body.error.code).toBe('PARAMETERS_INVALID')
 
-      // Without an as-of day the server uses today, and a recipe without relative dates stores nothing extra.
+      // Without an as-of day the server uses today in the workspace's time zone (Sales keeps
+      // India time), and a recipe without relative dates stores nothing extra.
       const today = await asha.run(versionId, CSV)
       expect(today.status).toBe(201)
-      expect(today.body.parameters.as_of).toBe(todayIso(new Date(), true))
+      expect(today.body.parameters.as_of).toBe(todayIn('Asia/Kolkata'))
       const fixed = await asha.post('/api/workflows', { title: 'Paid after a date', definition: recipe([PAID]) })
       const plain = await asha.run(fixed.body.version.id, CSV)
       expect(plain.body.parameters).toEqual({})

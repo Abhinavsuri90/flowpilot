@@ -15,12 +15,13 @@ import {
   toRunSummary,
 } from '../repo'
 import { recordEvent } from '../events'
+import { workspaceTimeZone } from '../accounts'
 import { log, metrics } from '../observability'
 import { canReadRun, decide } from '../../lib/policy'
 import { CsvError, parseForContract, toCsv } from '../../lib/csv'
 import { execute, ExecutionError } from '../../lib/workflow/execute'
 import { AS_OF_KEY, summarize } from '../../lib/workflow/describe'
-import { isIsoDate, todayIso, usesRelativeDates } from '../../lib/dates'
+import { isIsoDate, todayIn, usesRelativeDates } from '../../lib/dates'
 import { resolveParameters, validateDefinition } from '../../lib/workflow/validate'
 import { LIMITS } from '../../lib/workflow/schema'
 import type { RunDetail, RunList, RunStatus } from '../../lib/types'
@@ -81,9 +82,10 @@ export async function create({ db, user, request }: AuthedContext): Promise<Resp
     }
   }
 
-  // 6b. The day relative dates ("last month", "30 days ago") count from; today unless the runner says otherwise
+  // 6b. The day relative dates ("last month", "30 days ago") count from: today in the
+  // recipe's workspace (its calendar, not the server's), unless the runner says otherwise
   const rawAsOf = form.get('asOf')
-  let asOf = todayIso(new Date(), true)
+  let asOf = todayIn(workspaceTimeZone(db, wf.workspace_id))
   if (typeof rawAsOf === 'string' && rawAsOf.trim()) {
     if (!isIsoDate(rawAsOf.trim())) {
       throw invalid('asOf must be a date like 2026-04-03.', [{ path: 'asOf', message: 'asOf must be a date like 2026-04-03' }], 'PARAMETERS_INVALID')

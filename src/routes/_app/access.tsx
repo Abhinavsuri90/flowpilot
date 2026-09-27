@@ -9,7 +9,7 @@ import {
   Link2,
   Lock,
   MailPlus,
-  Pencil,
+  Settings2,
   ShieldCheck,
   ShieldHalf,
   UserCog,
@@ -21,6 +21,7 @@ import { api, ApiError, qk, qs } from '~/lib/api'
 import { MATRIX_COLUMNS, permissionMatrix, type MatrixCell } from '~/lib/policy'
 import { emailProblem, normalizeEmail, workspaceNameProblem } from '~/lib/account'
 import { formatDateTime } from '~/lib/format'
+import { timeZoneOptions } from '~/lib/dates'
 import type { InviteInfo, Role, Visibility, WorkflowList, WorkflowSummary, WorkspaceInfo, WorkspaceMember } from '~/lib/types'
 import {
   Avatar,
@@ -176,7 +177,7 @@ function MembersCard() {
   const queryClient = useQueryClient()
   const toast = useToast()
   const [removing, setRemoving] = React.useState<WorkspaceMember | null>(null)
-  const [renaming, setRenaming] = React.useState(false)
+  const [editing, setEditing] = React.useState(false)
   const refreshAll = () =>
     Promise.all([
       queryClient.invalidateQueries({ queryKey: qk.workspace }),
@@ -218,8 +219,8 @@ function MembersCard() {
         }
         actions={
           ws.data?.canManageMembers && !me.user.isDemo ? (
-            <Button size="sm" variant="ghost" icon={<Pencil className="size-3.5" />} onClick={() => setRenaming(true)}>
-              Rename
+            <Button size="sm" variant="ghost" icon={<Settings2 className="size-3.5" />} onClick={() => setEditing(true)}>
+              Settings
             </Button>
           ) : undefined
         }
@@ -288,6 +289,7 @@ function MembersCard() {
         )}
         <p className="mt-3 text-[12px] text-muted">
           Roles are read on every request. People outside {ws.data?.workspace.name ?? 'this workspace'} never appear here and can’t see its recipes.
+          {ws.data && ` Dates follow ${ws.data.workspace.timeZone.replaceAll('_', ' ')} time.`}
         </p>
       </div>
 
@@ -322,56 +324,75 @@ function MembersCard() {
           </Callout>
         )}
       </Dialog>
-      {ws.data && <RenameWorkspaceDialog open={renaming} onClose={() => setRenaming(false)} current={ws.data.workspace.name} />}
+      {ws.data && <WorkspaceSettingsDialog open={editing} onClose={() => setEditing(false)} current={ws.data.workspace} />}
     </Card>
   )
 }
 
-function RenameWorkspaceDialog({ open, onClose, current }: { open: boolean; onClose: () => void; current: string }) {
-  const [name, setName] = React.useState(current)
+/** Admins name the workspace and set its calendar: the day relative dates count from, and the dashboard's days. */
+function WorkspaceSettingsDialog({ open, onClose, current }: { open: boolean; onClose: () => void; current: { name: string; timeZone: string } }) {
+  const [name, setName] = React.useState(current.name)
+  const [timeZone, setTimeZone] = React.useState(current.timeZone)
   const [seen, setSeen] = React.useState(open)
   if (open !== seen) {
     setSeen(open)
-    if (open) setName(current)
+    if (open) {
+      setName(current.name)
+      setTimeZone(current.timeZone)
+    }
   }
+  // Hundreds of zones, each with its offset: only built while the dialog is open.
+  const zones = React.useMemo(() => (open ? timeZoneOptions([current.timeZone]) : []), [open, current.timeZone])
   const router = useRouter()
   const queryClient = useQueryClient()
   const toast = useToast()
-  const rename = useMutation({
-    mutationFn: () => api.patch('/api/workspace', { name: name.trim() }),
+  const save = useMutation({
+    mutationFn: () => api.patch('/api/workspace', { name: name.trim(), timeZone }),
     onSuccess: async () => {
       onClose()
       await Promise.all([queryClient.invalidateQueries(), router.invalidate()])
-      toast.show({ tone: 'ok', title: `Renamed to ${name.trim()}` })
+      toast.show({ tone: 'ok', title: 'Workspace settings saved' })
     },
   })
   const problem = workspaceNameProblem(name)
+  const unchanged = name.trim() === current.name && timeZone === current.timeZone
   return (
     <Dialog
       open={open}
       onClose={onClose}
       size="sm"
-      icon={<Pencil />}
-      title="Rename workspace"
+      icon={<Settings2 />}
+      title="Workspace settings"
       footer={
         <>
           <Button variant="ghost" onClick={onClose}>
             Cancel
           </Button>
-          <Button variant="brand" loading={rename.isPending} disabled={!!problem || name.trim() === current} onClick={() => rename.mutate()}>
+          <Button variant="brand" loading={save.isPending} disabled={!!problem || unchanged} onClick={() => save.mutate()}>
             Save
           </Button>
         </>
       }
     >
-      <Field label="Workspace name" htmlFor="rename-workspace" error={problem ?? undefined}>
-        <Input id="rename-workspace" value={name} maxLength={80} onChange={(e) => setName(e.target.value)} />
-      </Field>
-      {rename.error && (
-        <Callout tone="bad" className="mt-3">
-          {rename.error.message}
-        </Callout>
-      )}
+      <div className="space-y-4">
+        <Field label="Workspace name" htmlFor="rename-workspace" error={problem ?? undefined}>
+          <Input id="rename-workspace" value={name} maxLength={80} onChange={(e) => setName(e.target.value)} />
+        </Field>
+        <Field
+          label="Time zone"
+          htmlFor="workspace-time-zone"
+          hint="“Today” for relative dates (“last month”, “30 days ago”) and the dashboard’s days follow this zone, for everyone in the workspace and every script."
+        >
+          <Select id="workspace-time-zone" value={timeZone} onChange={(e) => setTimeZone(e.target.value)}>
+            {zones.map((zone) => (
+              <option key={zone.value} value={zone.value}>
+                {zone.label}
+              </option>
+            ))}
+          </Select>
+        </Field>
+        {save.error && <Callout tone="bad">{save.error.message}</Callout>}
+      </div>
     </Dialog>
   )
 }

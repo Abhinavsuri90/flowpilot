@@ -135,13 +135,13 @@ const LAST_SEEN_EVERY_MS = 5 * 60 * 1000
 export function membershipsFor(db: DB, userId: string): Membership[] {
   const rows = db
     .prepare(
-      `SELECT m.workspace_id, w.name AS workspace_name, m.role
+      `SELECT m.workspace_id, w.name AS workspace_name, w.time_zone, m.role
          FROM workspace_members m JOIN workspaces w ON w.id = m.workspace_id
         WHERE m.user_id = ?
         ORDER BY m.joined_at, w.name`,
     )
-    .all(userId) as { workspace_id: string; workspace_name: string; role: Role }[]
-  return rows.map((r) => ({ workspaceId: r.workspace_id, workspaceName: r.workspace_name, role: r.role }))
+    .all(userId) as { workspace_id: string; workspace_name: string; time_zone: string; role: Role }[]
+  return rows.map((r) => ({ workspaceId: r.workspace_id, workspaceName: r.workspace_name, role: r.role, timeZone: r.time_zone }))
 }
 
 /**

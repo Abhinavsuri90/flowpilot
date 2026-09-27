@@ -70,7 +70,7 @@ const ROUTES: Route[] = [
   { method: 'GET', pattern: '/api/runs/:id', auth: true, handler: runs.detail },
   { method: 'GET', pattern: '/api/runs/:id/csv', auth: true, handler: runs.csv },
   { method: 'GET', pattern: '/api/workspace', auth: true, handler: workspace.get },
-  { method: 'PATCH', pattern: '/api/workspace', auth: 'session', handler: workspace.rename },
+  { method: 'PATCH', pattern: '/api/workspace', auth: 'session', handler: workspace.update },
   { method: 'POST', pattern: '/api/workspace/leave', auth: 'session', handler: workspace.leave },
   { method: 'PATCH', pattern: '/api/workspace/members/:userId', auth: 'session', handler: workspace.setRole },
   { method: 'DELETE', pattern: '/api/workspace/members/:userId', auth: 'session', handler: workspace.removeMember },

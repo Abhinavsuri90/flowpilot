@@ -6,6 +6,7 @@ import { ArrowRight, Building2, MailCheck } from 'lucide-react'
 import { getLoginInfoFn, getSessionFn } from '~/lib/session'
 import { api, ApiError } from '~/lib/api'
 import { emailProblem, nameProblem, normalizeEmail, passwordProblem, workspaceNameProblem } from '~/lib/account'
+import { browserTimeZone } from '~/lib/dates'
 import type { InviteLanding, Me } from '~/lib/types'
 import { AuthLayout, PasswordInput } from '~/components/auth-layout'
 import { Badge, Button, Callout, Field, Input, Skeleton, useHydrated } from '~/components/ui'
@@ -54,7 +55,7 @@ function SignupPage() {
         name: values.name.trim(),
         email: normalizeEmail(values.email),
         password: values.password,
-        ...(joining ? { inviteToken } : { workspaceName: values.workspaceName.trim() }),
+        ...(joining ? { inviteToken } : { workspaceName: values.workspaceName.trim(), timeZone: browserTimeZone() }),
       }),
     onSuccess: async () => {
       queryClient.clear()

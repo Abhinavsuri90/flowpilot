@@ -22,7 +22,13 @@ export type ApiErrorBody = {
   error: { code: string; message: string; issues?: ApiIssue[]; draft?: unknown; runId?: string }
 }
 
-export type Membership = { workspaceId: string; workspaceName: string; role: Role }
+export type Membership = {
+  workspaceId: string
+  workspaceName: string
+  role: Role
+  /** The workspace's calendar (IANA name): "today" for relative dates and the dashboard's days. */
+  timeZone: string
+}
 
 export type UserRef = { id: string; name: string; hue: number }
 
@@ -161,6 +167,10 @@ export type WorkflowDetail = {
   isOwner: boolean
   /** Only the owner sees how many copies were made (never who made them or what they are). */
   forkCount: number | null
+  /** Today in the recipe's workspace: the run panel's default "as of" day, the same one a script gets. */
+  today: string
+  /** The recipe's workspace calendar (IANA name) that `today` comes from. */
+  timeZone: string
 }
 
 export type AccessMember = {
@@ -227,7 +237,7 @@ export type WorkspaceMember = {
 }
 
 export type WorkspaceInfo = {
-  workspace: { id: string; name: string }
+  workspace: { id: string; name: string; timeZone: string }
   role: Role
   members: WorkspaceMember[]
   canManageRoles: boolean

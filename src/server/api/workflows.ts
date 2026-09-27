@@ -22,6 +22,8 @@ import {
   type Scope,
 } from '../repo'
 import { recordEvent } from '../events'
+import { workspaceTimeZone } from '../accounts'
+import { todayIn } from '../../lib/dates'
 import { canCreateInWorkspace, decide, decideAll } from '../../lib/policy'
 import { validateDefinition } from '../../lib/workflow/validate'
 import { LIMITS, type WorkflowDefinition } from '../../lib/workflow/schema'
@@ -158,6 +160,7 @@ export function detail({ db, user, params, url }: AuthedContext): Response {
   // A ?v= from another recipe is treated as not found.
   if (!version || version.workflow_id !== wf.id) throw notFound('That version')
   const versions = listVersions(db, wf.id)
+  const timeZone = workspaceTimeZone(db, wf.workspace_id)
   const body: WorkflowDetail = {
     workflow: toSummary(db, user, wf),
     version: {
@@ -174,6 +177,8 @@ export function detail({ db, user, params, url }: AuthedContext): Response {
     role: rel.role,
     isOwner: rel.isOwner,
     forkCount: rel.isOwner ? forkCountFor(db, wf.id) : null,
+    today: todayIn(timeZone),
+    timeZone,
   }
   return json(body)
 }

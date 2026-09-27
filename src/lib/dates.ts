@@ -165,6 +165,97 @@ export function todayIso(now: Date = new Date(), utc: boolean = typeof window ==
   return utc ? now.toISOString().slice(0, 10) : toIso({ y: now.getFullYear(), m: now.getMonth() + 1, d: now.getDate() })
 }
 
+// ----- Time zones: each workspace keeps its own calendar --------------------------------------
+
+/** Whether a value names a time zone this runtime knows: an IANA name such as Asia/Kolkata, or UTC. */
+export function isTimeZone(value: unknown): value is string {
+  if (typeof value !== 'string' || value.length > 64 || !/^[A-Za-z][A-Za-z0-9_+\-/]*$/.test(value)) return false
+  try {
+    new Intl.DateTimeFormat('en-US', { timeZone: value })
+    return true
+  } catch {
+    return false
+  }
+}
+
+/**
+ * Old names that browsers still report (ICU keeps them as its canonical IDs), and
+ * the names people know the zones by today, from the IANA "backward" file.
+ */
+const RENAMED_ZONES: Record<string, string> = {
+  'Asia/Calcutta': 'Asia/Kolkata',
+  'Asia/Katmandu': 'Asia/Kathmandu',
+  'Asia/Dacca': 'Asia/Dhaka',
+  'Asia/Thimbu': 'Asia/Thimphu',
+  'Asia/Rangoon': 'Asia/Yangon',
+  'Asia/Saigon': 'Asia/Ho_Chi_Minh',
+  'Asia/Ujung_Pandang': 'Asia/Makassar',
+  'Asia/Ulan_Bator': 'Asia/Ulaanbaatar',
+  'Europe/Kiev': 'Europe/Kyiv',
+  'Atlantic/Faeroe': 'Atlantic/Faroe',
+  'America/Godthab': 'America/Nuuk',
+  'America/Buenos_Aires': 'America/Argentina/Buenos_Aires',
+  'America/Indianapolis': 'America/Indiana/Indianapolis',
+  'America/Louisville': 'America/Kentucky/Louisville',
+  'Pacific/Enderbury': 'Pacific/Kanton',
+  'Pacific/Truk': 'Pacific/Chuuk',
+  'Pacific/Ponape': 'Pacific/Pohnpei',
+}
+
+/** A zone under the name people know it by today (Asia/Calcutta → Asia/Kolkata), when this runtime knows that name. */
+export function canonicalTimeZone(zone: string): string {
+  const modern = RENAMED_ZONES[zone]
+  return modern && isTimeZone(modern) ? modern : zone
+}
+
+const DAY_FORMATS = new Map<string, Intl.DateTimeFormat>()
+
+/** The calendar day a moment falls on in a time zone: 20:00 UTC on 27 Sep is 28 Sep in Asia/Kolkata. */
+export function dayIn(moment: Date | number | string, timeZone: string): string {
+  let format = DAY_FORMATS.get(timeZone)
+  if (!format) {
+    format = new Intl.DateTimeFormat('en-US', { timeZone, year: 'numeric', month: '2-digit', day: '2-digit' })
+    DAY_FORMATS.set(timeZone, format)
+  }
+  const parts = format.formatToParts(new Date(moment))
+  const part = (type: Intl.DateTimeFormatPartTypes) => parts.find((p) => p.type === type)?.value ?? ''
+  return `${part('year')}-${part('month')}-${part('day')}`
+}
+
+/** The browser's time zone, for a new workspace's calendar (UTC when it can't tell). */
+export function browserTimeZone(): string {
+  try {
+    return canonicalTimeZone(Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC')
+  } catch {
+    return 'UTC'
+  }
+}
+
+/** Time zones to choose from, labelled with their offset now, e.g. "Asia/Kolkata (GMT+5:30)". UTC first. */
+export function timeZoneOptions(include: string[] = [], now: Date = new Date()): Array<{ value: string; label: string }> {
+  const supported = (Intl as unknown as { supportedValuesOf?: (key: 'timeZone') => string[] }).supportedValuesOf?.('timeZone') ?? []
+  const zones = [...new Set(['UTC', ...include.filter(isTimeZone), ...supported].map(canonicalTimeZone))]
+  return zones.map((zone) => {
+    let offset = ''
+    try {
+      offset = new Intl.DateTimeFormat('en-US', { timeZone: zone, timeZoneName: 'shortOffset' }).formatToParts(now).find((p) => p.type === 'timeZoneName')?.value ?? ''
+    } catch {
+      // An unknown zone keeps a plain label.
+    }
+    return { value: zone, label: `${zone.replaceAll('_', ' ')}${offset ? ` (${offset})` : ''}` }
+  })
+}
+
+/** Today in a time zone: the day "last month" and "30 days ago" count from. */
+export const todayIn = (timeZone: string, now: Date | number = Date.now()): string => dayIn(now, timeZone)
+
+/** The ISO day `days` after (or before) another. */
+export function addDays(iso: string, days: number): string {
+  const ymd = fromIso(iso)
+  if (!ymd) throw new Error(`Not a date: ${iso}`)
+  return toIso(fromDayNumber(dayNumber(ymd) + days))
+}
+
 /** Whether any step depends on the day the recipe runs. */
 export function usesRelativeDates(def: Pick<WorkflowDefinition, 'steps'>): boolean {
   return def.steps.some((s) => s.type === 'filter' && 'relative' in s.value)

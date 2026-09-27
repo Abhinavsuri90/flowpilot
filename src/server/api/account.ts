@@ -20,6 +20,8 @@ import {
   useInvite,
 } from '../accounts'
 import { absoluteUrl, appConfig, clientIp } from '../config'
+import { membershipsFor } from '../auth'
+import { canonicalTimeZone, isTimeZone } from '../../lib/dates'
 import { recordEvent } from '../events'
 import { sendMail } from '../mail'
 import { takePasswordReset, takeRegistration } from '../ratelimit'
@@ -54,7 +56,11 @@ const RegisterBody = z.object({
   password: z.string({ error: 'Choose a password' }),
   workspaceName: z.string().optional(),
   inviteToken: z.string().max(128).optional(),
+  /** The browser's time zone, for a new workspace's calendar; anything unknown means UTC. */
+  timeZone: z.unknown().optional(),
 })
+
+const zoneOrUtc = (value: unknown) => (isTimeZone(value) ? canonicalTimeZone(value) : 'UTC')
 
 /**
  * POST /api/auth/register. Without an invite it creates a workspace with you as
@@ -110,7 +116,7 @@ export async function register({ db, request }: ApiContext): Promise<Response> {
       recordEvent(db, { workspaceId: invite.workspace_id, actorId: userId, type: 'member.joined', detail: { role: invite.role, via: 'invite' } })
       return { userId, workspaceId: invite.workspace_id }
     }
-    return { userId, workspaceId: createWorkspace(db, workspaceName, userId) }
+    return { userId, workspaceId: createWorkspace(db, workspaceName, userId, zoneOrUtc(parsed.data.timeZone)) }
   })()
 
   const { cookie, me } = issueSession(db, request, userId, workspaceId)
@@ -332,7 +338,7 @@ export async function switchWorkspace(ctx: AuthedContext): Promise<Response> {
   return json(toMe({ ...ctx.user, activeWorkspaceId: membership.workspaceId }))
 }
 
-const CreateWorkspaceBody = z.strictObject({ name: z.string({ error: 'Give the workspace a name' }) })
+const CreateWorkspaceBody = z.strictObject({ name: z.string({ error: 'Give the workspace a name' }), timeZone: z.unknown().optional() })
 
 /** POST /api/workspaces: a new workspace with you as admin; this browser switches to it. */
 export async function createWorkspaceHandler(ctx: AuthedContext): Promise<Response> {
@@ -342,8 +348,7 @@ export async function createWorkspaceHandler(ctx: AuthedContext): Promise<Respon
   const problem = workspaceNameProblem(name)
   if (problem) throw invalid(problem, [{ path: 'name', message: problem }])
   if (ctx.user.memberships.length >= 20) throw forbidden('You can belong to at most 20 workspaces')
-  const workspaceId = createWorkspace(ctx.db, name, ctx.user.id)
+  const workspaceId = createWorkspace(ctx.db, name, ctx.user.id, zoneOrUtc(parsed.data.timeZone))
   setSessionWorkspace(ctx.db, ctx.user.sessionHash, workspaceId)
-  const memberships = [...ctx.user.memberships, { workspaceId, workspaceName: name, role: 'admin' as const }]
-  return json(toMe({ ...ctx.user, memberships, activeWorkspaceId: workspaceId }), { status: 201 })
+  return json(toMe({ ...ctx.user, memberships: membershipsFor(ctx.db, ctx.user.id), activeWorkspaceId: workspaceId }), { status: 201 })
 }

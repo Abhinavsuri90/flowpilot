@@ -21,6 +21,7 @@ import {
   X,
 } from 'lucide-react'
 import { api, ApiError } from '~/lib/api'
+import { browserTimeZone } from '~/lib/dates'
 import { canCreateInWorkspace } from '~/lib/policy'
 import { workspaceNameProblem } from '~/lib/account'
 import type { Me } from '~/lib/types'
@@ -195,7 +196,7 @@ export function CreateWorkspaceDialog({ open, onClose }: { open: boolean; onClos
   const navigate = useNavigate()
   const toast = useToast()
   const create = useMutation({
-    mutationFn: () => api.post<Me>('/api/workspaces', { name: name.trim() }),
+    mutationFn: () => api.post<Me>('/api/workspaces', { name: name.trim(), timeZone: browserTimeZone() }),
     onSuccess: async (next) => {
       onClose()
       setName('')

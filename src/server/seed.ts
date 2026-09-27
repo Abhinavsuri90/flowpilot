@@ -37,7 +37,8 @@ export async function seedDatabase(db: DB, opts: { password?: string } = {}): Pr
   }
 
   db.transaction(() => {
-    const insertWorkspace = db.prepare('INSERT INTO workspaces (id, name) VALUES (?, ?)')
+    // The demo teams work in India, like the rupee amounts in their files.
+    const insertWorkspace = db.prepare(`INSERT INTO workspaces (id, name, time_zone) VALUES (?, ?, 'Asia/Kolkata')`)
     for (const [name, id] of Object.entries(result.workspaces)) insertWorkspace.run(id, name)
 
     // Demo accounts are shared, so they can't change their password, name or memberships.

@@ -261,3 +261,26 @@ test('two-step sign-in: turned on from a QR key, then the password alone no long
   await expect(page.getByText('Two-step sign-in is off')).toBeVisible()
   await expect(page.getByRole('button', { name: 'Turn on' })).toBeVisible()
 })
+
+test('a new workspace takes the browser’s time zone, and its admin can change it in the settings', async ({ browser }) => {
+  const context = await browser.newContext({ timezoneId: 'Asia/Kolkata' })
+  const page = await context.newPage()
+  await open(page, '/signup')
+  await signUp(page, { name: 'Ana Roy', email: `ana.${unique}@acme.test`, workspace: `Ana Co ${unique}` })
+  await page.getByRole('button', { name: /Create account/ }).click()
+  await expect(page.getByRole('heading', { name: 'Welcome, Ana' })).toBeVisible()
+
+  await open(page, '/access')
+  await expect(page.getByText('Dates follow Asia/Kolkata time.')).toBeVisible()
+  await page.getByRole('button', { name: 'Settings', exact: true }).click()
+  const dialog = page.getByRole('dialog', { name: 'Workspace settings' })
+  await expect(dialog.getByLabel('Time zone')).toHaveValue('Asia/Kolkata')
+  await dialog.getByLabel('Time zone').selectOption('Europe/London')
+  await dialog.getByRole('button', { name: 'Save' }).click()
+  await expect(page.getByText('Workspace settings saved')).toBeVisible()
+  await expect(page.getByText('Dates follow Europe/London time.')).toBeVisible()
+
+  await open(page, '/audit')
+  await expect(page.getByText('Ana Roy changed the time zone from Asia/Kolkata to Europe/London')).toBeVisible()
+  await context.close()
+})

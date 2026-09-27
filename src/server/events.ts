@@ -22,6 +22,7 @@ export type EventType =
   | 'role.changed'
   | 'workspace.created'
   | 'workspace.renamed'
+  | 'workspace.time_zone_changed'
   | 'member.joined'
   | 'member.left'
   | 'member.removed'
@@ -137,6 +138,8 @@ function describeEvent(db: DB, viewer: { id: string }, row: EventRow): ActivityI
         return { ...base, text: `${who} created the workspace ${String(detail.name ?? workspaceName(db, row.workspace_id))}` }
       case 'workspace.renamed':
         return { ...base, text: `${who} renamed the workspace to ${String(detail.to)}` }
+      case 'workspace.time_zone_changed':
+        return { ...base, text: `${who} set the workspace’s time zone to ${String(detail.to)}` }
       case 'member.joined':
         return { ...base, text: `${who} joined ${workspaceName(db, row.workspace_id)} as ${String(detail.role)}` }
       case 'member.left':
@@ -212,7 +215,7 @@ export const AUDIT_CATEGORIES = {
   sharing: ['workflow.shared', 'workflow.unshared'],
   people: ['member.joined', 'member.left', 'member.removed', 'role.changed'],
   invites: ['invite.created', 'invite.revoked'],
-  workspace: ['workspace.created', 'workspace.renamed'],
+  workspace: ['workspace.created', 'workspace.renamed', 'workspace.time_zone_changed'],
 } as const satisfies Record<string, readonly EventType[]>
 export type AuditCategory = keyof typeof AUDIT_CATEGORIES
 
@@ -289,6 +292,7 @@ function auditEntry(db: DB, admin: { id: string }, row: EventRow): AuditEntry {
     'invite.revoked': 'revoked an invite link',
     'workspace.created': `created the workspace ${String(detail.name ?? '')}`.trim(),
     'workspace.renamed': `renamed the workspace from ${String(detail.from)} to ${String(detail.to)}`,
+    'workspace.time_zone_changed': `changed the time zone from ${String(detail.from)} to ${String(detail.to)}`,
   }
   return {
     id: row.id,
