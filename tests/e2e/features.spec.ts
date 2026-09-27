@@ -241,14 +241,14 @@ test('switching versions keeps the chosen file and re-checks it against that ver
   await expect(run).toBeDisabled()
 
   // v1 isn't loaded yet: the page (and the file) stay while it loads, then the file is re-checked.
-  await page.getByLabel('Version').selectOption(v1)
+  await page.getByRole('combobox', { name: 'Version' }).selectOption(v1)
   await expect(page.getByText("You're viewing version 1")).toBeVisible()
   await expect(page.getByText('no_region.csv')).toBeVisible()
   await expect(page.getByText('Missing required column: region')).toHaveCount(0)
   await expect(run).toBeEnabled()
 
   // Back to v2, now cached: the check follows immediately.
-  await page.getByLabel('Version').selectOption(v2)
+  await page.getByRole('combobox', { name: 'Version' }).selectOption(v2)
   await expect(page.getByText('Missing required column: region')).toBeVisible()
   await expect(run).toBeDisabled()
 })
@@ -475,6 +475,11 @@ test('the front door: signed-out visitors to / see the landing page, and a templ
   await expect(page).toHaveURL(/\/welcome$/)
   await expect(page.getByRole('heading', { level: 1 })).toContainText('Describe the report once.')
   await expect(page.getByRole('link', { name: /Try the demo|Sign in/ }).first()).toBeVisible()
+  // Link previews and crawlers get what they need.
+  await expect(page.locator('meta[property="og:image"]')).toHaveAttribute('content', /\/og\.png$/)
+  await expect(page.locator('meta[property="og:title"]')).toHaveAttribute('content', /FlowPilot/)
+  expect((await page.request.get('/robots.txt')).status()).toBe(200)
+  expect((await page.request.get('/og.png')).headers()['content-type']).toContain('image/png')
   // A deeper link still goes to sign-in and comes back.
   await page.goto('/library')
   await expect(page).toHaveURL(/\/login\?redirect=%2Flibrary$/)
@@ -512,6 +517,36 @@ test('templates: pick one in the gallery, save it, run it on its sample, and rea
   await expect(page.getByRole('img', { name: 'West: ₹70,000' })).toBeVisible()
   await page.getByLabel('Figure to chart').selectOption('orders')
   await expect(page.getByRole('img', { name: 'North: 2' })).toBeVisible()
-  await page.getByRole('button', { name: 'Table' }).click()
+  await page.getByRole('button', { name: 'Table', exact: true }).click()
   await expect(table).toBeVisible()
+})
+
+test('a near-miss header is fixed in the browser with one click, and a version shows what changed since the one before', async ({ page }) => {
+  await signIn(page, 'Asha')
+  const { id } = await createRecipe(page, 'QA header fix')
+  await open(page, `/w/${id}`)
+  await page.locator('#run-file').setInputFiles({ name: 'export.csv', mimeType: 'text/csv', buffer: Buffer.from('Status,Region,Sales Rep,amount\npaid,North,Asha,60000\nrefunded,South,Vikram,5\n') })
+  await expect(page.getByText(/the file has "Status"/)).toBeVisible()
+  await expect(page.getByRole('button', { name: 'Run recipe' })).toBeDisabled()
+  await page.getByRole('button', { name: 'Use “Status” as status' }).click()
+  await page.getByRole('button', { name: 'Use “Region” as region' }).click()
+  await page.getByRole('button', { name: 'Use “Sales Rep” as sales_rep' }).click()
+  await expect(page.getByText('Renamed in your browser only')).toHaveCount(0)
+  await page.getByRole('button', { name: 'Run recipe' }).click()
+  await expect(page.getByRole('table', { name: /Result of run/ }).locator('tbody tr')).toHaveCount(1)
+
+  // The table copies as tab-separated text.
+  await page.context().grantPermissions(['clipboard-read', 'clipboard-write'])
+  await page.getByRole('button', { name: /Copy the table/ }).click()
+  await expect(page.getByRole('button', { name: /Copy the table/ })).toContainText('Copied')
+  expect(await page.evaluate(() => navigator.clipboard.readText())).toBe('region\ttotal\nNorth\t60000')
+
+  // A second version with a different default: the recipe page explains the change in words.
+  const origin = new URL(page.url()).origin
+  const v2 = { ...ORIGINAL, parameters: { threshold: { type: 'integer', default: 80000, min: 0, max: 1000000000 } } }
+  const saved = await page.request.post(`/api/workflows/${id}/versions`, { headers: { origin }, data: { definition: v2 } })
+  expect(saved.status()).toBe(201)
+  await open(page, `/w/${id}`)
+  await expect(page.getByRole('heading', { name: 'Changes from v1' })).toBeVisible()
+  await expect(page.getByText('threshold: default ₹1,00,000 → ₹80,000')).toBeVisible()
 })
