@@ -6,7 +6,9 @@ import { expect, test, type Page } from '@playwright/test'
 // file → makes a copy → the copy runs independently, and the original is unchanged.
 // "Generate steps" talks to tests/e2e/mock-model.ts, never a real provider.
 
-const SHOTS = 'docs/screenshots'
+// Evidence screenshots go to the git-ignored test-results/ folder, so a test run
+// leaves the working tree clean; UPDATE_SCREENSHOTS=1 refreshes the README's images.
+const SHOTS = process.env.UPDATE_SCREENSHOTS === '1' ? 'docs/screenshots' : 'test-results/demo-screenshots'
 mkdirSync(SHOTS, { recursive: true })
 const REQUEST = 'Keep paid orders, sum amount by region, and show regions with total below a configurable threshold, default 100000.'
 
