@@ -561,7 +561,7 @@ Design decisions and their trade-offs are recorded in [`docs/system-design.md`](
 
 ## Contributing
 
-Issues and pull requests are welcome. [CONTRIBUTING.md](CONTRIBUTING.md) covers setup, the checks CI runs, and the rules that keep runs private and deterministic. Please report security problems privately, as described in [SECURITY.md](SECURITY.md).
+Issues and pull requests are welcome. [CONTRIBUTING.md](CONTRIBUTING.md) covers setup, the checks CI runs, and the rules that keep runs private and deterministic. Please report security problems privately, as described in [SECURITY.md](SECURITY.md). What changed in each release is in [CHANGELOG.md](CHANGELOG.md).
 
 ## License
 
