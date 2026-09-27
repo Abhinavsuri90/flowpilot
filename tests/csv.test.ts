@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { CsvError, checkAmount, inferColumns, parseForContract, parseTable, toCsv } from '../src/lib/csv'
+import { CsvError, checkAmount, inferColumns, parseForContract, parseTable, renameHeaders, toCsv, toTsv } from '../src/lib/csv'
 
 const bytes = (text: string) => new TextEncoder().encode(text)
 import { REGIONAL_REVENUE_EXCEPTIONS as ORIGINAL } from '../src/lib/workflow/examples'
@@ -174,5 +174,23 @@ describe('csv: files as spreadsheets really save them', () => {
     expect(csvError(() => parseForContract('Sales Rep,status,region,amount\nA,paid,North,1\n', CONTRACT)).issues[0]!.message).toMatch(
       /^Missing required column: sales_rep \(the file has "Sales Rep"\)/,
     )
+  })
+})
+
+describe('csv: browser-side helpers', () => {
+  it('renames only the header row, keeping every data line and its quoting', () => {
+    const renamed = renameHeaders(bytes('\nStatus,Region,amount\npaid,"East, HQ",100\n\nrefunded,West,5\n'), { Status: 'status' })
+    expect(renamed.split('\n').slice(0, 2)).toEqual(['', 'status,Region,amount'])
+    expect(parseForContract(renamed, { status: 'string', amount: 'integer_inr' }).rows).toEqual([
+      { status: 'paid', amount: 100 },
+      { status: 'refunded', amount: 5 },
+    ])
+    // Unknown names are left alone; the file is otherwise untouched.
+    expect(renameHeaders('a,b\n1,2', { zzz: 'q' })).toBe('a,b\n1,2')
+  })
+
+  it('copies a result as tab-separated text that pastes into a spreadsheet, formula-safe', () => {
+    const text = toTsv(['region', 'total'], [{ region: 'North\tEast', total: 5 }, { region: '=HYPERLINK("x")', total: 0 }])
+    expect(text).toBe("region\ttotal\nNorth East\t5\n'=HYPERLINK(\"x\")\t0")
   })
 })

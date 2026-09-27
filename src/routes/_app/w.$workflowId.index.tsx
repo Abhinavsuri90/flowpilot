@@ -26,7 +26,8 @@ import {
   XCircle,
 } from 'lucide-react'
 import { api, ApiError, qk, qs } from '~/lib/api'
-import { CsvError, literalMismatch, missingColumnsMessage, parseForContract, parseTable } from '~/lib/csv'
+import { CsvError, literalMismatch, missingColumnsMessage, parseForContract, parseTable, renameHeaders, similarHeader } from '~/lib/csv'
+import { diffDefinitions } from '~/lib/workflow/diff'
 import { AS_OF_KEY, formatParameterValue, parameterUnits, type ParameterUnit } from '~/lib/workflow/describe'
 import { formatDate, isIsoDate, todayIso, usesRelativeDates } from '~/lib/dates'
 import { compatibleSamples, fetchSample } from '~/lib/samples'
@@ -340,8 +341,50 @@ function RecipeOverview({ detail, className }: { detail: WorkflowDetail; classNa
           <h3 className="mb-2.5 text-[12px] font-semibold tracking-wide text-faint uppercase">Steps</h3>
           <StepList definition={def} />
         </section>
+        <VersionChanges detail={detail} />
       </div>
     </Card>
+  )
+}
+
+const CHANGE_MARK = { added: ['+', 'bg-ok-soft text-ok-ink'], removed: ['−', 'bg-bad-soft text-bad-ink'], changed: ['~', 'bg-warn-soft text-warn-ink'] } as const
+
+/** What this version changed compared with the one before it, in the recipe's own words. */
+function VersionChanges({ detail }: { detail: WorkflowDetail }) {
+  const previous = detail.versions.find((v) => v.number === detail.version.number - 1)
+  const prior = useQuery({
+    queryKey: qk.workflow(detail.workflow.id, previous?.id),
+    queryFn: () => api.get<WorkflowDetail>(`/api/workflows/${detail.workflow.id}${qs({ v: previous!.id })}`),
+    enabled: !!previous,
+  })
+  if (!previous) return null
+  const diff = prior.data ? diffDefinitions(prior.data.version.definition, detail.version.definition) : null
+  return (
+    <section>
+      <h3 className="mb-2 text-[12px] font-semibold tracking-wide text-faint uppercase">Changes from v{previous.number}</h3>
+      {!diff ? (
+        <Skeleton className="h-6 w-64" />
+      ) : diff.all.length === 0 ? (
+        <p className="text-[12.5px] text-muted">The same columns, parameters and steps; only the title or description changed.</p>
+      ) : (
+        <ul className="space-y-1 text-[12.5px]" aria-label={`Changes from version ${previous.number}`}>
+          {diff.all.map((change, i) => {
+            const [mark, tone] = CHANGE_MARK[change.kind]
+            return (
+              <li key={i} className="flex items-start gap-2">
+                <span className={cn('mt-px grid size-4 shrink-0 place-items-center rounded font-mono text-[11px] font-semibold', tone)} aria-label={change.kind}>
+                  {mark}
+                </span>
+                <span className="min-w-0 text-ink-2">
+                  <span className="text-faint">{change.group} · </span>
+                  {change.text}
+                </span>
+              </li>
+            )
+          })}
+        </ul>
+      )}
+    </section>
   )
 }
 
@@ -356,6 +399,8 @@ type PreCheck = { versionId: string } & (
       missing: string[]
       /** "Missing required column: status (the file has "Status")…" */
       missingMessage: string | null
+      /** Missing columns the file has under a near-miss name (case, spaces, underscores), fixable in the browser. */
+      fixes: Array<{ column: string; found: string }>
       ignored: string[]
       /** Line-numbered problems the server would reject, found here first. */
       issues: ApiIssue[]
@@ -402,6 +447,10 @@ async function checkFile(picked: File, versionId: string, def: WorkflowDefinitio
       rows: table.records.length,
       missing,
       missingMessage: missing.length ? missingColumnsMessage(missing, table.headers) : null,
+      fixes: missing.flatMap((column) => {
+        const found = similarHeader(column, table.headers)
+        return found ? [{ column, found }] : []
+      }),
       ignored: table.headers.filter((h) => !required.includes(h)),
       issues,
       issueSummary,
@@ -467,6 +516,12 @@ function RunPanel({ detail, busy, onRan }: { detail: WorkflowDetail; busy: boole
     setFile(picked)
     setCheck(null)
     run.reset()
+  }
+  /** Renames a near-miss header in the browser (the file on disk is untouched) and re-checks. */
+  const fixHeader = async (fix: { column: string; found: string }) => {
+    if (!file) return
+    const csv = renameHeaders(new Uint8Array(await file.arrayBuffer()), { [fix.found]: fix.column })
+    onFile(new File([csv], file.name, { type: 'text/csv' }))
   }
 
   const run = useMutation({
@@ -599,6 +654,16 @@ function RunPanel({ detail, busy, onRan }: { detail: WorkflowDetail; busy: boole
               })}
             </div>
             {check.missingMessage && <p className="mt-2 text-bad-ink">{check.missingMessage}</p>}
+            {check.fixes.length > 0 && (
+              <div className="mt-2 flex flex-wrap items-center gap-1.5">
+                {check.fixes.map((fix) => (
+                  <Button key={fix.column} size="sm" onClick={() => void fixHeader(fix)}>
+                    Use “{fix.found}” as {fix.column}
+                  </Button>
+                ))}
+                <span className="text-muted">Renamed in your browser only; the file on your disk is unchanged.</span>
+              </div>
+            )}
             {check.ignored.length > 0 && (
               <p className="mt-2 text-muted">
                 Ignored (not used, never stored): <span className="font-mono">{check.ignored.join(', ')}</span>

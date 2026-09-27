@@ -103,6 +103,7 @@ function valueText(
   params?: ParameterValues,
   withName = true,
   asOf?: string,
+  showDefaults = true,
 ): string {
   if ('list' in value) return value.list.map((v) => JSON.stringify(v)).join(', ')
   if ('relative' in value) {
@@ -111,6 +112,7 @@ function valueText(
   }
   if ('parameter' in value) {
     const name = value.parameter
+    if (!showDefaults && !params) return name
     const resolved = params?.[name] ?? def.parameters?.[name]?.default
     if (resolved === undefined) return withName ? name : '?'
     const shown = formatValue(resolved, columnType)
@@ -125,9 +127,10 @@ function measureText(measure: Measure): string {
   return `${AGGREGATE_PHRASE[measure.op]} ${measure.column}${rounded} as ${measure.as}`
 }
 
-function limitText(step: LimitStep, def: Pick<WorkflowDefinition, 'parameters'>, params?: ParameterValues, withName = true): string {
+function limitText(step: LimitStep, def: Pick<WorkflowDefinition, 'parameters'>, params?: ParameterValues, withName = true, showDefaults = true): string {
   if ('literal' in step.rows) return formatCount(step.rows.literal)
   const name = step.rows.parameter
+  if (!showDefaults && !params) return name
   const resolved = params?.[name] ?? def.parameters?.[name]?.default
   if (resolved === undefined) return withName ? name : '?'
   return withName ? `${name} (${formatCount(Number(resolved))})` : formatCount(Number(resolved))
@@ -139,15 +142,17 @@ const listNames = (names: string[]) => names.join(', ')
  * One step in plain words, e.g. "Keep rows where status equals "paid"",
  * "Total amount by region as total", "Sort by revenue (highest first)".
  * `available` are the columns before the step (for value formatting); `asOf`
- * (the run day) turns relative dates into the dates they meant.
+ * (the run day) turns relative dates into the dates they meant; `showDefaults`
+ * false names parameters without their defaults (the version diff uses it, so a
+ * changed default reads as one change, not as every step that uses it).
  */
-export function describeStep(step: Step, available: Column[], def: Pick<WorkflowDefinition, 'parameters'>, params?: ParameterValues, asOf?: string): string {
+export function describeStep(step: Step, available: Column[], def: Pick<WorkflowDefinition, 'parameters'>, params?: ParameterValues, asOf?: string, showDefaults = true): string {
   switch (step.type) {
     case 'filter': {
       const type = available.find((c) => c.name === step.column)?.type
       const suffix = step.operator === 'contains' ? ' (ignoring capitals)' : ''
       const phrase = isDateType(type) ? DATE_OPERATOR_PHRASE[step.operator] : OPERATOR_PHRASE[step.operator]
-      return `Keep rows where ${step.column} ${phrase} ${valueText(step.value, type, def, params, true, asOf)}${suffix}`
+      return `Keep rows where ${step.column} ${phrase} ${valueText(step.value, type, def, params, true, asOf, showDefaults)}${suffix}`
     }
     case 'group_sum':
       return `Total ${step.valueColumn} by ${step.groupBy} as ${step.as}`
@@ -165,7 +170,7 @@ export function describeStep(step: Step, available: Column[], def: Pick<Workflow
         })
         .join(', then ')}`
     case 'limit':
-      return `Keep the first ${limitText(step, def, params)} rows`
+      return `Keep the first ${limitText(step, def, params, true, showDefaults)} rows`
     case 'select':
       return `Keep columns ${step.columns.map((c) => (c.as && c.as !== c.column ? `${c.column} as "${c.as}"` : c.column)).join(', ')}`
     case 'date_part':
@@ -199,9 +204,9 @@ export function stepChip(step: Step, available: Column[], def: Pick<WorkflowDefi
   }
 }
 
-export function describeRecipe(def: WorkflowDefinition, params?: ParameterValues, asOf?: string): string[] {
+export function describeRecipe(def: WorkflowDefinition, params?: ParameterValues, asOf?: string, showDefaults = true): string[] {
   const { before } = columnsThrough(def)
-  return def.steps.map((step, i) => describeStep(step, before[i] ?? [], def, params, asOf))
+  return def.steps.map((step, i) => describeStep(step, before[i] ?? [], def, params, asOf, showDefaults))
 }
 
 /** The deterministic summary line, e.g. `2 rows · status = "paid" · grouped by region · total < ₹1,00,000`. */

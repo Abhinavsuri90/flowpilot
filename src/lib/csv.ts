@@ -340,6 +340,27 @@ export function literalMismatch(
   return { message: `No row has ${column} = "${literal}". The data has ${shown}${present.length > 6 ? ', …' : ''}.` }
 }
 
+/**
+ * Rewrites only the header row with the given renames (old name → new name),
+ * keeping every data line. Runs in the browser before an upload, so a file
+ * whose header says "Status" can be run by a recipe that needs "status".
+ */
+export function renameHeaders(input: CsvInput, renames: Record<string, string>): string {
+  const rows = Papa.parse<string[]>(decode(input), { header: false, delimiter: ',', skipEmptyLines: false }).data
+  const headerIndex = rows.findIndex((cells) => !isBlank(cells))
+  if (headerIndex === -1) return decode(input)
+  rows[headerIndex] = rows[headerIndex]!.map((h) => renames[h.trim()] ?? h)
+  return Papa.unparse(rows, { newline: '\n' })
+}
+
+const formulaSafe = (cell: string) => (/^[=+\-@]/.test(cell) ? `'${cell}` : cell)
+
+/** Tab-separated text for the clipboard: pastes into a spreadsheet as cells. Tabs and newlines inside a cell become spaces. */
+export function toTsv(columns: string[], rows: Row[]): string {
+  const cell = (value: string | number | undefined) => formulaSafe(String(value ?? '').replace(/[\t\r\n]+/g, ' '))
+  return [columns.map(cell).join('\t'), ...rows.map((row) => columns.map((c) => cell(row[c])).join('\t'))].join('\n')
+}
+
 /** Serializes a result table. Cells that start like a formula are prefixed with ' so spreadsheets don't run them. */
 export function toCsv(columns: string[], rows: Row[]): string {
   const csv = Papa.unparse(
