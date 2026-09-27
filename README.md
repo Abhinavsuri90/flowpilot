@@ -1,5 +1,9 @@
 # FlowPilot
 
+[![CI](https://github.com/Abhinavsuri90/flowpilot/actions/workflows/ci.yml/badge.svg)](https://github.com/Abhinavsuri90/flowpilot/actions/workflows/ci.yml)
+[![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
+[![Node 22+](https://img.shields.io/badge/node-%3E%3D22-brightgreen.svg)](https://nodejs.org/)
+
 **Turn a repetitive CSV report into a recipe your whole team can run.**
 
 Describe the report in one sentence. FlowPilot drafts the steps with AI, and you review and save them as a versioned recipe. Anyone in your workspace can then run it on their own file, with no AI involved and the same result every time, or make an independent copy and adapt it. The original never changes.
@@ -25,6 +29,7 @@ The full loop works end to end, and a real browser test proves it: **describe â†
 - [Troubleshooting](#troubleshooting)
 - [Project structure](#project-structure)
 - [Limitations and next steps](#limitations-and-next-steps)
+- [Contributing](#contributing)
 
 ## Features
 
@@ -483,6 +488,10 @@ This is a working prototype, not a production platform:
 - **Not deployed yet.** The production image and the Oracle kit (app + Caddy, backups) were verified on a laptop; the console steps that need an Oracle account are documented in `deploy/oracle/README.md`, not executed.
 
 Design decisions and their trade-offs are recorded in [`docs/system-design.md`](docs/system-design.md).
+
+## Contributing
+
+Issues and pull requests are welcome. [CONTRIBUTING.md](CONTRIBUTING.md) covers setup, the checks CI runs, and the rules that keep runs private and deterministic. Please report security problems privately, as described in [SECURITY.md](SECURITY.md).
 
 ## License
 
