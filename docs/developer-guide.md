@@ -32,7 +32,7 @@ Sign in with a demo account from the buttons on `/login` (password `flowpilot-de
 |---|---|
 | `npm run dev` | Development server with hot reload (Vite + TanStack Start) |
 | `npm run build` · `npm start` | Production bundle in `.output/`, then serve it |
-| `npm test` · `npm run test:coverage` | 213 unit and API tests (Vitest), optionally with coverage |
+| `npm test` · `npm run test:coverage` | 214 unit and API tests (Vitest), optionally with coverage |
 | `npm run test:e2e` | 35 browser tests (Playwright), with their own server, database and stand-in model |
 | `npm run typecheck` · `npm run lint` | TypeScript and ESLint |
 | `npm run smoke -- --base <url>` | Checks all 52 endpoints against any running server |
