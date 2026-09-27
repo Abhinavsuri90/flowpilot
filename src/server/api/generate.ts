@@ -3,6 +3,7 @@ import { ApiError, invalid, json, readJson } from '../http'
 import { generateRecipe } from '../ai/generate'
 import { modelConfig } from '../ai/config'
 import { takeGenerateBudget } from '../ratelimit'
+import { metrics } from '../observability'
 import { columnNameProblem } from '../../lib/workflow/validate'
 import { COLUMN_TYPES, LIMITS } from '../../lib/workflow/schema'
 import type { AuthedContext } from './context'
@@ -32,17 +33,25 @@ export async function create({ request, user }: AuthedContext): Promise<Response
     const problem = columnNameProblem(name)
     if (problem) throw invalid(`Column "${name}": ${problem}`)
   }
-  // Only requests that would reach a paid model count against the budget.
-  if (modelConfig()) {
-    const budget = takeGenerateBudget(user.id)
-    if (!budget.allowed) {
-      throw new ApiError(
-        429,
-        'RATE_LIMITED',
-        `You've generated a lot of drafts recently. Try again in ${budget.retryAfterSec} second${budget.retryAfterSec === 1 ? '' : 's'}; editing steps by hand still works.`,
-        { headers: { 'Retry-After': String(budget.retryAfterSec) } },
-      )
-    }
+  // Only requests that would reach a paid model count against the budget (and in the metrics).
+  if (!modelConfig()) return json(await generateRecipe(parsed.data))
+  const budget = takeGenerateBudget(user.id)
+  if (!budget.allowed) {
+    throw new ApiError(
+      429,
+      'RATE_LIMITED',
+      `You've generated a lot of drafts recently. Try again in ${budget.retryAfterSec} second${budget.retryAfterSec === 1 ? '' : 's'}; editing steps by hand still works.`,
+      { headers: { 'Retry-After': String(budget.retryAfterSec) } },
+    )
   }
-  return json(await generateRecipe(parsed.data))
+  const started = performance.now()
+  let outcome = 'error'
+  try {
+    const result = await generateRecipe(parsed.data)
+    outcome = result.kind
+    return json(result)
+  } finally {
+    metrics.drafts.inc({ outcome })
+    metrics.draftDuration.observe({}, (performance.now() - started) / 1000)
+  }
 }

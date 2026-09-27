@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it } from 'vitest'
-import { Client, freshApp, pairs, signIn } from './helpers/app'
+import { Client, freshApp, pairs, signIn, withoutRequestId } from './helpers/app'
 import { fixture } from './helpers/fixtures'
 import { REGIONAL_REVENUE_EXCEPTIONS as ORIGINAL, groupedBy } from '../src/lib/workflow/examples'
 import { MATRIX_COLUMNS, decide, decideRoleChange, permissionMatrix } from '../src/lib/policy'
@@ -72,7 +72,7 @@ describe('access control', () => {
     const wrong = await anon.post('/api/auth/login', { email: 'asha@demo.local', password: 'not-it' })
     expect(unknown.status).toBe(401)
     expect(wrong.status).toBe(401)
-    expect(unknown.body).toEqual(wrong.body)
+    expect(withoutRequestId(unknown.body)).toEqual(withoutRequestId(wrong.body))
     for (let i = 0; i < 9; i++) await anon.post('/api/auth/login', { email: 'asha@demo.local', password: 'not-it' })
     const locked = await anon.post('/api/auth/login', { email: 'ASHA@demo.local', password: 'flowpilot-demo' })
     expect(locked.status).toBe(429)
@@ -163,7 +163,7 @@ describe('access control', () => {
     expect((await olivia.run(versionId, fixture('sales_A.csv'))).status).toBe(404)
     const missing = await olivia.get('/api/workflows/wf_0000000000000000')
     const hidden = await olivia.get(`/api/workflows/${id}`)
-    expect(hidden.body).toEqual(missing.body)
+    expect(withoutRequestId(hidden.body)).toEqual(withoutRequestId(missing.body))
   })
 
   it('isolates workspaces: each library lists only its own team', async () => {

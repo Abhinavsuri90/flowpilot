@@ -50,12 +50,14 @@ export function json(data: unknown, init: { status?: number; headers?: Record<st
   })
 }
 
-export function errorResponse(err: ApiError, headers?: Record<string, string>): Response {
+/** The standard error body; `requestId` ties it to the server's log line for the same request. */
+export function errorResponse(err: ApiError, opts: { headers?: Record<string, string>; requestId?: string } = {}): Response {
   const error: Record<string, unknown> = { code: err.code, message: err.message }
   if (err.issues?.length) error.issues = err.issues
   if (err.draft !== undefined) error.draft = err.draft
   if (err.runId) error.runId = err.runId
-  return json({ error }, { status: err.status, headers: { ...err.headers, ...headers } })
+  if (opts.requestId) error.requestId = opts.requestId
+  return json({ error }, { status: err.status, headers: { ...err.headers, ...opts.headers } })
 }
 
 export function noContent(headers?: Record<string, string>): Response {

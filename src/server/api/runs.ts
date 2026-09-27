@@ -15,6 +15,7 @@ import {
   toRunSummary,
 } from '../repo'
 import { recordEvent } from '../events'
+import { log, metrics } from '../observability'
 import { canReadRun, decide } from '../../lib/policy'
 import { CsvError, parseForContract, toCsv } from '../../lib/csv'
 import { execute, ExecutionError } from '../../lib/workflow/execute'
@@ -133,11 +134,15 @@ export async function create({ db, user, request }: AuthedContext): Promise<Resp
       rowCount: result.rows.length,
       durationMs: elapsed(),
     })
+    metrics.runs.inc({ status: 'succeeded' })
+    metrics.runDuration.observe({}, elapsed() / 1000)
   } catch (err) {
     const code = err instanceof ExecutionError ? err.code : 'EXECUTION_ERROR'
     const message = err instanceof ExecutionError ? err.message : 'The run failed unexpectedly.'
-    if (!(err instanceof ExecutionError)) console.error('[flowpilot] execution error', err)
+    if (!(err instanceof ExecutionError)) log('error', 'run failed unexpectedly', { runId, err })
     finishRunFailed(db, runId, { code, message, durationMs: elapsed() })
+    metrics.runs.inc({ status: 'failed' })
+    metrics.runDuration.observe({}, elapsed() / 1000)
     recordEvent(db, { workspaceId: wf.workspace_id, actorId: user.id, type: 'run.failed', workflowId: wf.id, detail: { runId, versionNumber: version.version_number } })
     throw new ApiError(500, code, message, { runId })
   }

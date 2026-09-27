@@ -1,8 +1,9 @@
 import { getDb } from '../db'
-import { userFromRequest } from '../auth'
+import { userFromRequest, type SessionUser } from '../auth'
 import { loadEnv } from '../env'
 import { ensureReady } from '../boot'
 import { ApiError, HSTS, errorResponse, isSecureRequest, json, noContent, unauthorized } from '../http'
+import { log, observeRequest, requestIdFor } from '../observability'
 import type { ApiContext, AuthedContext } from './context'
 import { APP_VERSION } from '../../lib/version'
 import * as auth from './auth'
@@ -15,6 +16,7 @@ import * as generate from './generate'
 import * as account from './account'
 import * as invites from './invites'
 import * as audit from './audit'
+import * as metrics from './metrics'
 
 type Method = 'GET' | 'POST' | 'PATCH' | 'DELETE'
 
@@ -44,6 +46,7 @@ const ROUTES: Route[] = [
   { method: 'DELETE', pattern: '/api/me/tokens/:id', auth: 'session', handler: account.revokeToken },
   { method: 'POST', pattern: '/api/workspaces', auth: 'session', handler: account.createWorkspaceHandler },
   { method: 'GET', pattern: '/api/health', auth: false, handler: ({ db }) => json(health(db)) },
+  { method: 'GET', pattern: '/api/metrics', auth: false, handler: metrics.get },
   { method: 'GET', pattern: '/api/dashboard', auth: true, handler: dashboard.get },
   { method: 'GET', pattern: '/api/workflows', auth: true, handler: workflows.list },
   { method: 'POST', pattern: '/api/workflows', auth: true, handler: workflows.create },
@@ -136,16 +139,19 @@ function assertSameOrigin(request: Request): void {
 
 const badOrigin = () => new ApiError(403, 'BAD_ORIGIN', 'Cross-site requests are not allowed.')
 
-function mapError(err: unknown): Response {
-  if (err instanceof ApiError) return errorResponse(err)
+function mapError(err: unknown, requestId: string): Response {
+  if (err instanceof ApiError) return errorResponse(err, { requestId })
   const code = (err as { code?: string } | null)?.code
   if (typeof code === 'string' && code.startsWith('SQLITE_CONSTRAINT')) {
     // A database invariant (trigger or CHECK) rejected the write.
-    console.warn('[flowpilot] constraint rejected a write:', (err as Error).message)
-    return errorResponse(new ApiError(409, 'CONFLICT', (err as Error).message))
+    log('warn', 'constraint rejected a write', { requestId, reason: (err as Error).message })
+    return errorResponse(new ApiError(409, 'CONFLICT', (err as Error).message), { requestId })
   }
-  console.error('[flowpilot] unexpected API error', err)
-  return errorResponse(new ApiError(500, 'INTERNAL_ERROR', 'Something went wrong on the server. Please try again.'))
+  log('error', 'unexpected API error', { requestId, err })
+  return errorResponse(
+    new ApiError(500, 'INTERNAL_ERROR', `Something went wrong on the server. Please try again; if it keeps happening, quote reference ${requestId}.`),
+    { requestId },
+  )
 }
 
 /** Methods a path answers to: its routes, plus HEAD wherever GET works (RFC 9110) and OPTIONS. */
@@ -169,30 +175,47 @@ function pathParams(keys: string[], match: RegExpExecArray): Record<string, stri
   return params
 }
 
-/** The single entry point for the REST API. Tests call it directly with real cookies. */
+/**
+ * The single entry point for the REST API. Tests call it directly with real cookies.
+ * Every response carries X-Request-Id, and every request is timed, counted and logged
+ * by its route pattern.
+ */
 export async function handleApi(request: Request): Promise<Response> {
+  const started = performance.now()
+  const requestId = requestIdFor(request)
   loadEnv()
   await ensureReady()
-  const isHead = request.method.toUpperCase() === 'HEAD'
-  const response = await dispatch(request, isHead ? 'GET' : request.method.toUpperCase())
+  const method = request.method.toUpperCase()
+  const isHead = method === 'HEAD'
+  const { response, route, user } = await dispatch(request, isHead ? 'GET' : method, requestId)
+  response.headers.set('X-Request-Id', requestId)
   if (isSecureRequest(request)) response.headers.set('Strict-Transport-Security', HSTS)
+  observeRequest({ requestId, method, route, status: response.status, durationMs: performance.now() - started, user })
   // HEAD: the GET response's status and headers, without the body.
   return isHead ? new Response(null, { status: response.status, headers: response.headers }) : response
 }
 
-async function dispatch(request: Request, method: string): Promise<Response> {
+type Dispatched = { response: Response; route: string | null; user: SessionUser | null }
+
+async function dispatch(request: Request, method: string, requestId: string): Promise<Dispatched> {
+  // The matched route pattern and the caller, known as early as possible, for metrics and logs.
+  let pattern: string | null = null
+  let user: SessionUser | null = null
   try {
     const url = new URL(request.url)
     const candidates = COMPILED.map((route) => ({ route, match: route.regex.exec(url.pathname) })).filter(
       (c) => c.match,
     )
     if (candidates.length === 0) throw new ApiError(404, 'NOT_FOUND', 'No such API endpoint.')
+    pattern = candidates[0]!.route.pattern
     const allow = allowedMethods(candidates.map((c) => c.route))
-    if (method === 'OPTIONS') return noContent({ Allow: allow })
+    if (method === 'OPTIONS') return { response: noContent({ Allow: allow }), route: pattern, user }
     const hit = candidates.find((c) => c.route.method === method)
     if (!hit) {
-      return errorResponse(new ApiError(405, 'METHOD_NOT_ALLOWED', `Use ${allow.replace(/, OPTIONS$/, '')} for this endpoint.`), { Allow: allow })
+      const notAllowed = new ApiError(405, 'METHOD_NOT_ALLOWED', `Use ${allow.replace(/, OPTIONS$/, '')} for this endpoint.`)
+      return { response: errorResponse(notAllowed, { headers: { Allow: allow }, requestId }), route: pattern, user }
     }
+    pattern = hit.route.pattern
 
     if (WRITE_METHODS.has(method)) assertSameOrigin(request)
 
@@ -200,16 +223,16 @@ async function dispatch(request: Request, method: string): Promise<Response> {
     if (!params) throw new ApiError(404, 'NOT_FOUND', "That item doesn't exist or you don't have access to it.")
 
     const db = getDb()
-    const user = userFromRequest(db, request)
+    user = userFromRequest(db, request)
     if (hit.route.auth && !user) throw unauthorized()
     if (hit.route.auth === 'session' && user?.via === 'token') {
       throw new ApiError(403, 'SESSION_REQUIRED', 'Sign in in a browser to change account, security or membership settings; API tokens can’t.')
     }
 
     const ctx: ApiContext = { request, url, params, db, user }
-    return await hit.route.handler(ctx as AuthedContext)
+    return { response: await hit.route.handler(ctx as AuthedContext), route: pattern, user }
   } catch (err) {
-    return mapError(err)
+    return { response: mapError(err, requestId), route: pattern, user }
   }
 }
 

@@ -1,6 +1,7 @@
 import { getDb } from './db'
 import { appConfig } from './config'
 import { isSeeded, seedDatabase } from './seed'
+import { startRuntimeMonitors } from './observability'
 
 let ready: Promise<void> | null = null
 
@@ -12,6 +13,7 @@ let ready: Promise<void> | null = null
 export function ensureReady(): Promise<void> {
   ready ??= (async () => {
     const db = getDb()
+    startRuntimeMonitors()
     if (appConfig().demoMode && process.env.NODE_ENV === 'production' && !isSeeded(db)) {
       const result = await seedDatabase(db, { password: process.env.SEED_PASSWORD })
       console.info(`[flowpilot] DEMO_MODE: seeded ${Object.keys(result.users).length} demo accounts`)

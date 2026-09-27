@@ -88,6 +88,16 @@ export async function signIn(key: DemoKey): Promise<Client> {
   return client
 }
 
+/**
+ * An error body without its request id, which differs on every request by design:
+ * for asserting that two answers are otherwise indistinguishable.
+ */
+export function withoutRequestId(body: { error?: Record<string, unknown> }) {
+  if (!body?.error) return body
+  const { requestId: _requestId, ...error } = body.error
+  return { ...body, error }
+}
+
 /** Result rows as [group, total] pairs for compact assertions. */
 export const pairs = (rows: Array<Record<string, string | number>>, key = 'region', value = 'total') =>
   rows.map((r) => [r[key], r[value]])

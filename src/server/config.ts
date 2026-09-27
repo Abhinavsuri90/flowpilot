@@ -14,6 +14,9 @@ export type RegistrationMode = 'open' | 'invite-only' | 'closed'
  */
 export type ProxyTrust = 'off' | 'forwarded' | 'fly'
 
+/** One line per API request: JSON for log collectors, short text for a terminal, or none. */
+export type LogFormat = 'json' | 'pretty' | 'off'
+
 export type AppConfig = {
   /** Shows the one-click demo accounts and seeds them into an empty database. */
   demoMode: boolean
@@ -25,6 +28,10 @@ export type AppConfig = {
   trustProxy: ProxyTrust
   /** Email delivery (Resend). Without it, emails are written to the server log instead. */
   mail: { apiKey: string; from: string } | null
+  /** Request logs: JSON in production, short text in development, none under the test runner. */
+  logFormat: LogFormat
+  /** Bearer token a Prometheus scraper sends to GET /api/metrics; without it the endpoint doesn't exist. */
+  metricsToken: string | null
 }
 
 function flag(raw: string | undefined, fallback: boolean): boolean {
@@ -35,6 +42,13 @@ function flag(raw: string | undefined, fallback: boolean): boolean {
 function proxyTrust(raw: string | undefined): ProxyTrust {
   if (raw?.trim().toLowerCase() === 'fly') return 'fly'
   return flag(raw, false) ? 'forwarded' : 'off'
+}
+
+function logFormat(raw: string | undefined, production: boolean): LogFormat {
+  const value = raw?.trim().toLowerCase()
+  if (value === 'json' || value === 'pretty' || value === 'off') return value
+  if (process.env.VITEST) return 'off'
+  return production ? 'json' : 'pretty'
 }
 
 export function appConfig(): AppConfig {
@@ -49,6 +63,8 @@ export function appConfig(): AppConfig {
     appUrl: process.env.APP_URL?.trim().replace(/\/+$/, '') || null,
     trustProxy: proxyTrust(process.env.TRUST_PROXY),
     mail: apiKey && from ? { apiKey, from } : null,
+    logFormat: logFormat(process.env.LOG_FORMAT, production),
+    metricsToken: process.env.METRICS_TOKEN?.trim() || null,
   }
 }
 

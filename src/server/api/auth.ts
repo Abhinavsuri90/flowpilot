@@ -19,6 +19,7 @@ import {
 import { clientIp } from '../config'
 import { modelStatus } from '../ai/config'
 import { ApiError, invalid, isSecureRequest, json, readJson } from '../http'
+import { metrics } from '../observability'
 import type { DB } from '../db'
 import type { Me } from '../../lib/types'
 import type { AuthedContext, ApiContext } from './context'
@@ -57,6 +58,7 @@ export async function login({ request, db }: ApiContext): Promise<Response> {
   const ip = clientIp(request)
 
   if (isLoginThrottled(email, ip)) {
+    metrics.signIns.inc({ outcome: 'throttled' })
     throw new ApiError(429, 'TOO_MANY_ATTEMPTS', 'Too many failed sign-in attempts. Try again in 10 minutes, or reset your password.')
   }
 
@@ -67,10 +69,12 @@ export async function login({ request, db }: ApiContext): Promise<Response> {
   const ok = await verifyPassword(password, row?.password_hash ?? (await dummyPasswordHash()))
   if (!row || !ok) {
     recordLoginFailure(email, ip)
+    metrics.signIns.inc({ outcome: 'invalid' })
     throw new ApiError(401, 'INVALID_CREDENTIALS', 'Email or password is incorrect.')
   }
 
   clearLoginFailures(email, ip)
+  metrics.signIns.inc({ outcome: 'success' })
   const { cookie, me } = issueSession(db, request, row.id)
   return json(me, { headers: { 'Set-Cookie': cookie } })
 }

@@ -4,6 +4,7 @@
 //   npm run smoke                                  # http://localhost:3000
 //   npm run smoke -- --base https://your-app.example.com
 //   npm run smoke -- --ai                          # also spend one real AI draft
+//   npm run smoke -- --metrics-token <token>       # also scrape /api/metrics (METRICS_TOKEN)
 //
 // It signs up two throwaway accounts (smoke-<time>@example.com), so the server
 // needs REGISTRATION=open, and exits non-zero if any check fails.
@@ -59,19 +60,20 @@ async function check(
   actor: Actor,
   method: string,
   path: string,
-  expected: number,
+  expected: number | number[],
   init: Parameters<Actor['call']>[2] = {},
   extra?: (r: Response_) => string | true,
 ): Promise<Response_> {
   let r: Response_
+  const allowed = Array.isArray(expected) ? expected : [expected]
   try {
     r = await actor.call(method, path, init)
   } catch (err) {
-    results.push({ name, method, path, expected: String(expected), got: 'network error', ok: false, note: (err as Error).message })
+    results.push({ name, method, path, expected: allowed.join('/'), got: 'network error', ok: false, note: (err as Error).message })
     return { status: 0, headers: new Headers(), text: '', data: null }
   }
-  const verdict = r.status === expected ? (extra ? extra(r) : true) : `${r.data?.error?.code ?? ''} ${r.data?.error?.message ?? r.text.slice(0, 120)}`.trim()
-  results.push({ name, method, path: path.replace(/[A-Za-z0-9_-]{30,}/g, '<token>'), expected: String(expected), got: String(r.status), ok: verdict === true, note: verdict === true ? undefined : verdict })
+  const verdict = allowed.includes(r.status) ? (extra ? extra(r) : true) : `${r.data?.error?.code ?? ''} ${r.data?.error?.message ?? r.text.slice(0, 120)}`.trim()
+  results.push({ name, method, path: path.replace(/[A-Za-z0-9_-]{30,}/g, '<token>'), expected: allowed.join('/'), got: String(r.status), ok: verdict === true, note: verdict === true ? undefined : verdict })
   return r
 }
 
@@ -117,6 +119,16 @@ async function main() {
       : 'missing X-Frame-Options / nosniff / no-store',
   )
   await check('HEAD like GET', anon, 'HEAD', '/api/health', 200)
+  await check('request id on every response', anon, 'GET', '/api/does-not-exist', 404, {}, (r) =>
+    r.headers.get('x-request-id') && r.data?.error?.requestId === r.headers.get('x-request-id') ? true : 'no X-Request-Id, or the error body lacks it',
+  )
+  await check('metrics need the scrape token (404 when off)', anon, 'GET', '/api/metrics', [401, 404])
+  const metricsToken = option('metrics-token') ?? process.env.METRICS_TOKEN
+  if (metricsToken) {
+    await check('metrics with the scrape token', anon, 'GET', '/api/metrics', 200, { headers: { authorization: `Bearer ${metricsToken}` } }, (r) =>
+      /^flowpilot_build_info\{/m.test(r.text) && /text\/plain; version=0\.0\.4/.test(r.headers.get('content-type') ?? '') ? true : 'not a Prometheus scrape',
+    )
+  }
   await check('OPTIONS lists methods', anon, 'OPTIONS', '/api/workflows', 204, {}, (r) => (/GET/.test(r.headers.get('allow') ?? '') ? true : 'no Allow header'))
   await check('other methods → 405', anon, 'PUT', '/api/workflows', 405, {}, code('METHOD_NOT_ALLOWED'))
   await check('unknown endpoint → 404', anon, 'GET', '/api/does-not-exist', 404, {}, code('NOT_FOUND'))

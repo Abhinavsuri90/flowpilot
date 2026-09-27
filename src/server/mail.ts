@@ -1,4 +1,5 @@
 import { appConfig } from './config'
+import { log } from './observability'
 
 // Transactional email (invites, password resets) through Resend's HTTP API.
 // Without RESEND_API_KEY + MAIL_FROM the message is written to the server log,
@@ -34,9 +35,9 @@ export async function sendMail(mail: Mail): Promise<'sent' | 'logged' | 'failed'
       signal: AbortSignal.timeout(10_000),
     })
     if (res.ok) return 'sent'
-    console.error(`[flowpilot] email to ${mail.to} failed: HTTP ${res.status}`)
+    log('error', 'email delivery failed', { to: mail.to, subject: mail.subject, status: res.status })
   } catch (err) {
-    console.error(`[flowpilot] email to ${mail.to} failed:`, (err as Error).message)
+    log('error', 'email delivery failed', { to: mail.to, subject: mail.subject, reason: (err as Error).message })
   }
   return 'failed'
 }
