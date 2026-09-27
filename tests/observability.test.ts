@@ -23,6 +23,7 @@ afterEach(() => {
   setLogSink(null)
   delete process.env.METRICS_TOKEN
   delete process.env.LOG_FORMAT
+  delete process.env.TRUST_PROXY
 })
 
 const REQUEST_ID = /^req_[0-9a-f]{16}$/
@@ -57,8 +58,13 @@ describe('request ids', () => {
     expect((await anon.get('/api/health')).headers.get('x-request-id')).not.toBe(ok.headers.get('x-request-id'))
   })
 
-  it('keeps an id a proxy already assigned when it is safe to log, and replaces anything else', async () => {
+  it('keeps an id the trusted proxy assigned when it is safe to log, and replaces anything else', async () => {
     const anon = new Client()
+    // Without a trusted proxy, a client's own id is never believed.
+    const direct = await anon.call('GET', '/api/health', { headers: { 'x-request-id': 'edge-7f3a9c21.b' } })
+    expect(direct.headers.get('x-request-id')).toMatch(REQUEST_ID)
+
+    process.env.TRUST_PROXY = 'true'
     const kept = await anon.call('GET', '/api/health', { headers: { 'x-request-id': 'edge-7f3a9c21.b' } })
     expect(kept.headers.get('x-request-id')).toBe('edge-7f3a9c21.b')
     for (const unsafe of ['short', 'has spaces in it', 'line\\nbreak-injection', 'x'.repeat(200), '"quoted-value"']) {

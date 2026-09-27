@@ -15,11 +15,15 @@ import { APP_VERSION } from '../lib/version'
 // Request ids
 // ---------------------------------------------------------------------------
 
-/** An id a proxy already assigned is kept when it is safe to log; anything else is replaced. */
+/**
+ * An id the proxy in front already assigned is kept, so its logs and ours line up,
+ * but only when TRUST_PROXY says there is such a proxy (like forwarded addresses)
+ * and the id is safe to log. Anything else gets a fresh id.
+ */
 const INCOMING_ID = /^[A-Za-z0-9][A-Za-z0-9._:-]{7,127}$/
 
 export function requestIdFor(request: Request): string {
-  const incoming = request.headers.get('x-request-id')?.trim()
+  const incoming = appConfig().trustProxy !== 'off' ? request.headers.get('x-request-id')?.trim() : undefined
   return incoming && INCOMING_ID.test(incoming) ? incoming : `req_${randomBytes(8).toString('hex')}`
 }
 

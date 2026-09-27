@@ -354,7 +354,7 @@ Every failure has an outcome the user can read, and none can corrupt a stored re
 
 ## 10. Observability
 
-- **Request ids.** Every API response carries `X-Request-Id`. An id a proxy already assigned is kept when it is safe to log; anything else is replaced. Error bodies include it, and an unexpected error quotes it, so a person's report leads to the log line.
+- **Request ids.** Every API response carries `X-Request-Id`. Behind a trusted proxy (`TRUST_PROXY`), an id it already assigned is kept when it is safe to log; anything else is replaced. Error bodies include it, and an unexpected error quotes it, so a person's report leads to the log line.
 - **Structured logs.** One line per API request (`LOG_FORMAT`: JSON in production, short text in development), with the route pattern, status, duration, caller and request id. Patterns, not raw paths, so invite and reset tokens never reach logs. Warnings and errors are always written, with their request id.
 - **Metrics.** `GET /api/metrics` serves the Prometheus text format when `METRICS_TOKEN` is set (404 otherwise; the bearer token is compared in constant time). Counters and histograms live in the process: requests by method, route and status, latency per route, runs, AI drafts, sign-ins and second-step checks. Gauges are read from the database when scraped: accounts, workspaces, recipes, versions, runs, active sessions and tokens. Event-loop lag (sampled every 20 ms) shows when synchronous work holds up other requests. Unknown HTTP methods share one label value, so a client can't create unbounded series.
 - **No dependencies.** The registry, the text format and the logger are under 300 lines (`src/server/observability.ts`), tested like any other code.

@@ -438,7 +438,7 @@ What both kits configure:
 What someone running FlowPilot watches once it is live:
 
 - **Health:** `GET /api/health` answers anyone with `status`, `version`, the schema state (migrations and triggers) and uptime. Both deployment kits point the platform's health check at it.
-- **Request ids:** every API response carries `X-Request-Id` (an id a proxy already set is kept when it is safe to log). Error bodies include it, and an unexpected error asks the user to quote it, so a report leads straight to the log line.
+- **Request ids:** every API response carries `X-Request-Id` (with `TRUST_PROXY` set, an id the proxy already assigned is kept when it is safe to log). Error bodies include it, and an unexpected error asks the user to quote it, so a report leads straight to the log line.
 - **Logs:** one line per API request, JSON in production, ready for any log collector:
 
   ```json
