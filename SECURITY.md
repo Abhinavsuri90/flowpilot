@@ -18,7 +18,7 @@ You'll get an acknowledgement within a week, and a fix or a plan as soon as the 
 
 ## What is in scope
 
-The application in this repository: sign-in and sessions, API tokens, invites and password resets, the access policy (roles, workspaces, private runs), recipe validation and execution, file handling, and the deployment kits in `deploy/` and `fly.toml`.
+The application in this repository: sign-in and sessions, two-step sign-in and recovery codes, API tokens, invites and password resets, the access policy (roles, workspaces, private runs), recipe validation and execution, file handling, and the deployment kits in `deploy/` and `fly.toml`.
 
 These are intentional and not vulnerabilities:
 

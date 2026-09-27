@@ -15,9 +15,10 @@ FlowPilot turns a one-sentence description of a repetitive CSV report into a sav
 7. [Access policy](#7-access-policy)
 8. [Security model](#8-security-model)
 9. [Failure modes](#9-failure-modes)
-10. [Deployment](#10-deployment)
-11. [Scaling path](#11-scaling-path)
-12. [Trade-offs](#12-trade-offs)
+10. [Observability](#10-observability)
+11. [Deployment](#11-deployment)
+12. [Scaling path](#12-scaling-path)
+13. [Trade-offs](#13-trade-offs)
 
 ## 1. Architecture
 
@@ -29,12 +30,12 @@ flowchart LR
     RP[Run panel]
   end
   subgraph Server[TanStack Start server - one Node process]
-    DP[API dispatcher<br/>origin · session · errors]
+    DP[API dispatcher<br/>origin · session · errors<br/>request ids · metrics]
     AI[AI author<br/>columns, never rows]
     PO[Access policy<br/>lib/policy.ts]
     VA[Validator<br/>strict schema + shape rule]
     CS[CSV parser<br/>UTF-8, limits, typed cells]
-    EN[Engine<br/>6 allowlisted steps]
+    EN[Engine<br/>7 allowlisted steps]
   end
   MP[(Model provider)]
   DB[(SQLite<br/>triggers enforce invariants)]
@@ -55,7 +56,7 @@ Two paths share only the dispatcher, the access policy and the validator:
 
 The model is never on the execution path, so saved recipes keep running when the AI provider is down, slow or unconfigured.
 
-All 45 REST endpoints sit behind one dispatcher, `handleApi(Request)`. It matches the route, answers `HEAD` and `OPTIONS`, rejects cross-site writes, reads the session or the bearer token, runs the handler, and maps every error to one JSON shape. Tests call the same function directly.
+All 52 REST endpoints sit behind one dispatcher, `handleApi(Request)`. It matches the route, answers `HEAD` and `OPTIONS`, rejects cross-site writes, reads the session or the bearer token, runs the handler, and maps every error to one JSON shape. It also stamps every response with a request id and times, counts and logs every request by its route pattern (see [Observability](#10-observability)). Tests call the same function directly.
 
 ## 2. Pressing Run: the request lifecycle
 
@@ -100,7 +101,8 @@ A strict JSON document: a declared input, typed parameters, and up to 10 linear 
 | `date_part` | Add the year, quarter, month or ISO week a date falls in (`2026-Q3`, `2026-09`, `2026-W39`) as a text column | Everything before, plus the period |
 
 - **Types:** text, amounts in whole rupees (`integer_inr`), whole numbers (`integer`, for counts and quantities) and dates (`date`, kept as `YYYY-MM-DD` text so text order is calendar order; the maths runs on day numbers, never on a time zone). Nothing is silently rounded, treated as zero or guessed: a cell like `03/04/2026` is reported with both readings instead of being read one way.
-- **Relative dates** ("the start of last month", "30 days ago") count from the day the recipe runs. The runner can choose another day; it is stored beside the run's parameters as `as_of` and the summary shows what each relative date meant. Averages are rounded half up with exact `BigInt` maths, and the step's description says so.
+- **Relative dates** ("the start of last month", "30 days ago") count from the day the recipe runs, in the workspace's time zone: a workspace keeps its own calendar, so a run at 01:30 in India counts on that Indian day, whether it comes from the run panel or a script. The runner can choose another day; it is stored beside the run's parameters as `as_of` and the summary shows what each relative date meant. Averages are rounded half up with exact `BigInt` maths, and the step's description says so.
+- **Comparing runs.** `lib/compare.ts` reads a result against an earlier run of the same recipe: rows are matched by their labels (text and date columns), figures are compared as exact integers, and results whose columns changed or whose labels repeat say why they can't be matched instead of guessing. Only the viewer's own runs are offered, so runs stay private.
 - **One shape rule.** `lib/workflow/columns.ts` decides which columns exist after each step. The engine, the validator, the editor, the plain-language descriptions and the AI adapter all use it, so they can't disagree. The validator explains problems in terms people understand: *"Column "status" is no longer available: step s2 summarized the rows, which keeps only "region", "orders"."*
 - **Immutable versions.** The language only grows. Every version saved before a step type existed still runs exactly as before.
 
@@ -111,9 +113,9 @@ A strict JSON document: a declared input, typed parameters, and up to 10 linear 
 - **What the model sees:** the user's sentence and the declared column names and types, never data rows.
 - **Structured output:** Anthropic uses a forced tool call; OpenAI and OpenRouter use strict `json_schema` (OpenRouter is asked to route only to providers that honour it). The schema is flat, with one variant per step type.
 - **Validation:** the reply is parsed leniently, turned into a definition with the author's own input contract (values placed by column type), then validated exactly like input from a browser. One automatic repair is allowed; after that the draft is returned with its problems pinned to step cards (`422 DRAFT_INVALID`).
-- **Honesty:** requests the language can't express (email, schedules, joins, charts, dates, percentages) get `unsupported` with a reason. Ambiguous columns get one clarifying question.
+- **Honesty:** requests the language can't express (email, schedules, joins, charts, percentages) get `unsupported` with a reason. Ambiguous columns get one clarifying question.
 - **Cost control:** each person can make 10 drafts per minute and 200 per day.
-- **Evaluation:** `npm run eval:model` runs 21 fixed requests and checks the drafts structurally. The chosen model, `openai/gpt-6-luna`, passes 21/21 with a median of 3.0 s.
+- **Evaluation:** `npm run eval:model` runs 28 fixed requests and checks the drafts structurally. The chosen model, `openai/gpt-6-luna`, passes 28/28 with a median of 3.6 s.
 - **Casing safety net:** because the model can't see values, the editor and the run panel compare text filters with the actual file, in the browser, and offer one-click fixes such as "Paid" → "paid".
 
 ## 5. Data model
@@ -126,6 +128,9 @@ erDiagram
   workspaces ||--o{ workflows : contains
   workspaces ||--o{ invites : issues
   users ||--o{ password_resets : requests
+  users ||--o{ api_tokens : "scripts with"
+  users ||--o{ recovery_codes : "keeps (hashed)"
+  users ||--o{ sign_in_challenges : "owes a code for"
   users ||--o{ workflows : owns
   workflows ||--|{ workflow_versions : "has (immutable)"
   workflow_versions ||--o{ workflows : "is forked into"
@@ -138,6 +143,9 @@ erDiagram
     text email UK
     text password_hash
     int is_demo
+    text totp_secret "encrypted"
+    text totp_enabled_at
+    int totp_last_step
   }
   sessions {
     text token_hash PK
@@ -148,6 +156,7 @@ erDiagram
   workspaces {
     text id PK
     text name
+    text time_zone
   }
   workspace_members {
     text workspace_id PK
@@ -198,17 +207,37 @@ erDiagram
     text type
     text detail
   }
+  api_tokens {
+    text id PK
+    text user_id FK
+    text token_hash UK
+    text expires_at
+    text revoked_at
+  }
+  recovery_codes {
+    int id PK
+    text user_id FK
+    text code_hash
+    text used_at
+  }
+  sign_in_challenges {
+    text token_hash PK
+    text user_id FK
+    text expires_at
+    int attempts
+  }
 ```
 
-**Invariants in the database itself.** Thirteen SQLite triggers make the rules hold whatever code path writes:
+**Invariants in the database itself.** Fifteen SQLite triggers make the rules hold whatever code path writes:
 
 - versions can't be edited or deleted, and are numbered sequentially by their recipe's owner;
 - a recipe's workspace and copy source never change, and ownership can only move to an admin or member of its workspace;
 - the current pointer must be the recipe's own version;
 - runs start as `running`, pin a version of their own recipe, and are final once finished;
-- the audit log is append-only.
+- the audit log is append-only;
+- two-step sign-in is on only with both a secret and a start time, and never for a shared demo account.
 
-Four migrations are tracked in `schema_migrations`.
+Seven migrations are tracked in `schema_migrations`.
 
 ## 6. Identity, teams and workspaces
 
@@ -234,11 +263,36 @@ sequenceDiagram
 - **Password resets:**
   - forgot-password gives the same answer for every email;
   - links are single use and last one hour;
-  - completing a reset signs out every device.
-- **Workspaces.** A person can belong to several. Each browser session works in one, chosen with the sidebar switcher, and lists, the dashboard, activity and the Access page follow it.
+  - completing a reset signs out every device;
+  - with two-step sign-in on, a reset still asks for a code: the link proves the inbox, not the phone.
+- **Workspaces.** A person can belong to several. Each browser session works in one, chosen with the sidebar switcher, and lists, the dashboard, activity and the Access page follow it. Each workspace has a time zone (from the browser at sign-up, stored under its modern name, since Chrome still reports Asia/Kolkata as Asia/Calcutta; admins can change it, and the change is audited).
 - **People leaving.** Their recipes move to an admin, so the team keeps its work. Their own runs stay private to them.
 - **Throttles.** Sign-in failures are counted per email plus address (10), per email (50) and per address (100) in 10 minutes. An attacker can't lock someone out just by knowing their email.
 - **Demo mode** (`DEMO_MODE`) adds one-click demo accounts that are locked against password, name and membership changes.
+
+### Two-step sign-in
+
+```mermaid
+sequenceDiagram
+  autonumber
+  actor P as Person
+  participant S as Server
+  participant DB as SQLite
+  P->>S: POST /api/auth/login {email, password}
+  S->>DB: Password right, two-step on: store a challenge (hash only, 5 minutes, 5 tries)
+  S-->>P: 200 {twoFactor: {challenge}}, no cookie
+  P->>S: POST /api/auth/two-factor {challenge, code}
+  S->>S: Per-person throttle (10 wrong codes in 10 minutes)
+  S->>DB: Decrypt the secret (AES-256-GCM, bound to this account) and match the code, ±1 step
+  S->>DB: Spend the step with a conditional update, so a racing request can't reuse the code
+  S-->>P: 200 + session cookie, and the challenge is deleted
+```
+
+- **Codes** follow RFC 6238 (HMAC-SHA1, 6 digits, 30 seconds), implemented on Node's crypto and checked against the RFC's test vectors. One step of clock drift either way is accepted; a spent step, and every older one, never is.
+- **Secrets** are encrypted at rest with AES-256-GCM under a key kept outside the database: `SECRET_KEY`, or a random `secret.key` created beside the database (mode 600). The account id is authenticated data, so a secret copied onto another row decrypts to nothing. A database backup alone reveals no secret.
+- **Recovery codes:** ten per person, about 49 bits each, from an alphabet without look-alike characters, stored as SHA-256 hashes and spent with a conditional update. They also work when the encryption key is lost.
+- **Turning it on** shows a QR code (an `otpauth://` link drawn as SVG in the browser) and needs the password and a first code; the other devices are signed out and an email is sent. **Turning it off** needs the password and a code. Operators can switch it off for a locked-out person with `scripts/two-factor-off.mjs`.
+- **API tokens** are separate credentials created while signed in; they keep working and still can't touch account or security settings.
 
 ## 7. Access policy
 
@@ -250,7 +304,7 @@ Pure functions in `src/lib/policy.ts` decide every permission. The API enforces 
 | Make a copy | ✓ | ✓ | ✓ | 403 | 404 |
 | Save a version, share, archive, hand over | ✓ | 403 | 403 | 403 | 404 |
 | See someone else's runs | 404 | 404 | 404 | 404 | 404 |
-| Invite or remove people, rename the workspace, read the audit log | — | ✓ | 403 | 403 | 404 |
+| Invite or remove people, change the workspace's name or time zone, read the audit log | — | ✓ | 403 | 403 | 404 |
 
 **404 hides existence;** 403 means "you can see it, but it isn't yours to change". Admins manage people, not recipes. The audit log never lists runs, and never names private recipes the admin can't see.
 
@@ -260,7 +314,9 @@ Pure functions in `src/lib/policy.ts` decide every permission. The API enforces 
 |---|---|---|
 | Seeing another team's recipes or runs | One policy on every request; 404 hides existence; runs private to the runner | `tests/access`, `tests/hardening` |
 | Cross-site request forgery | Origin check on every write (sign-up and resets included); SameSite=Lax cookie | `npm run smoke` |
-| Stolen database | scrypt passwords; sessions, invites and reset links stored only as hashes | `tests/accounts` |
+| Stolen database | scrypt passwords; sessions, invites and reset links stored only as hashes; authenticator secrets encrypted under a key outside the database; recovery codes hashed | `tests/accounts`, `tests/totp`, `tests/two-factor` |
+| Stolen password | Optional two-step sign-in: replay-proof codes, throttled per person across challenges; a password reset can't bypass it | `tests/two-factor`, browser test, smoke |
+| Link tokens leaking into logs | Logs and metrics name route patterns (`/api/invites/:token`), never raw paths | `tests/observability` |
 | Password guessing and lockout abuse | Three-way sign-in throttle; strong-password rules | `tests/accounts` |
 | Account enumeration | Uniform sign-in errors with a dummy scrypt; uniform forgot-password answer | `tests/accounts` |
 | Open redirect after sign-in | Same-site paths only; control characters refused | `tests/hardening` |
@@ -291,8 +347,19 @@ Every failure has an outcome the user can read, and none can corrupt a stored re
 | Execution over 30 s | Run stored as failed `TIMEOUT` |
 | Process crash mid-run | Run reported as failed `STALE` |
 | Someone edits a recipe you're viewing | Your pinned version keeps working; a banner says "latest is vN" |
+| Wrong or stale authenticator code | 401 `INVALID_CODE` with the tries left; after five, sign in again; recovery codes still work |
+| The key for authenticator secrets is lost or changed | App codes stop working (a warning is logged); recovery codes sign people in, and they set it up again |
+| Two results can't be compared row by row | The comparison says why (columns changed, or labels repeat) |
+| An unexpected server error | 500 `INTERNAL_ERROR` quoting the request id, which finds the log line with the cause |
 
-## 10. Deployment
+## 10. Observability
+
+- **Request ids.** Every API response carries `X-Request-Id`. An id a proxy already assigned is kept when it is safe to log; anything else is replaced. Error bodies include it, and an unexpected error quotes it, so a person's report leads to the log line.
+- **Structured logs.** One line per API request (`LOG_FORMAT`: JSON in production, short text in development), with the route pattern, status, duration, caller and request id. Patterns, not raw paths, so invite and reset tokens never reach logs. Warnings and errors are always written, with their request id.
+- **Metrics.** `GET /api/metrics` serves the Prometheus text format when `METRICS_TOKEN` is set (404 otherwise; the bearer token is compared in constant time). Counters and histograms live in the process: requests by method, route and status, latency per route, runs, AI drafts, sign-ins and second-step checks. Gauges are read from the database when scraped: accounts, workspaces, recipes, versions, runs, active sessions and tokens. Event-loop lag (sampled every 20 ms) shows when synchronous work holds up other requests. Unknown HTTP methods share one label value, so a client can't create unbounded series.
+- **No dependencies.** The registry, the text format and the logger are under 300 lines (`src/server/observability.ts`), tested like any other code.
+
+## 11. Deployment
 
 ```mermaid
 flowchart LR
@@ -312,19 +379,20 @@ flowchart LR
   - `TRUST_PROXY=true` behind Caddy or nginx (the last `X-Forwarded-For` hop, the one the proxy appended), `fly` on Fly.io (`Fly-Client-IP`); each mode believes exactly one header the proxy writes, so a client's own forwarded headers can't spoof rate limits
   - `APP_URL`
   - secrets: `OPENROUTER_API_KEY`, and optionally `RESEND_API_KEY` and `MAIL_FROM`
-- **Verification:** the platform polls `/api/health`, and `npm run smoke -- --base https://<app>` exercises all 45 endpoints and their error codes against the deployment.
+  - `SECRET_KEY` (or the generated `/data/secret.key`, kept apart from database backups), `METRICS_TOKEN`, `LOG_FORMAT`
+- **Verification:** the platform polls `/api/health`, and `npm run smoke -- --base https://<app>` exercises all 52 endpoints, two-step sign-in included, and their error codes against the deployment.
 
-## 11. Scaling path
+## 12. Scaling path
 
 | Concern | Today | Next (first real teams) | At scale |
 |---|---|---|---|
 | Storage | SQLite (WAL) with triggers, one file | Postgres with row-level security mirroring `lib/policy.ts` | Read replicas; runs partitioned by month |
 | Execution | In the request, ≤ 5,000 rows, 30 s | A job queue and workers; inputs in object storage with a short TTL | A columnar engine (e.g. DuckDB) streaming large files |
-| Identity | Email and password, invites, resets | SSO / OIDC, two-factor sign-in, email verification | SCIM provisioning |
+| Identity | Email and password, two-step sign-in (TOTP, recovery codes), invites, resets | SSO / OIDC, passkeys, email verification | SCIM provisioning; workspaces that require two-step sign-in |
 | Rate limits | In memory, one server | Redis, shared across servers | Edge rate limiting |
-| Observability | Audit log (admin page and CSV), health check, smoke test | Structured logs, OpenTelemetry traces | SLOs on run latency and failure rate |
+| Observability | Request ids, JSON request logs, Prometheus metrics, audit log, health check, smoke test | OpenTelemetry traces; alert rules on errors and run latency | SLOs on run latency and failure rate |
 
-## 12. Trade-offs
+## 13. Trade-offs
 
 | Decision | Gain | Cost |
 |---|---|---|
@@ -336,3 +404,6 @@ flowchart LR
 | Synchronous execution | No queue to operate | Bounded to small files |
 | 404 for anything you can't see | Ids can't be probed | Less specific errors for people without access |
 | SQLite and triggers | Zero setup; invariants still enforced in the database | Single node; Postgres with RLS is the production path |
+| Authenticator codes (TOTP) for the second step | Works offline with any app; no SMS cost or SIM-swap risk | A code can still be phished in real time, unlike passkeys |
+| Metrics kept in the process | No agent or extra service; one scrape shows everything | Counters reset on restart and are per machine |
+| One time zone per workspace | A team, its scripts and its dashboard agree on "today" | Someone travelling still sees the team's day |

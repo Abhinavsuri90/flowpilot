@@ -11,7 +11,7 @@ npm install
 npm run dev          # seeds ./data/flowpilot.db on the first run, then serves http://localhost:3000
 ```
 
-Sign in with a demo account from the login page (password `flowpilot-demo`), or create your own at `/signup`. AI drafting is optional; see [AI drafting and model choice](README.md#ai-drafting-and-model-choice) to turn it on.
+Sign in with a demo account from the login page (password `flowpilot-demo`), or create your own at `/signup`. [docs/developer-guide.md](docs/developer-guide.md) explains how the code fits together. AI drafting is optional; see [AI drafting and model choice](README.md#ai-drafting-and-model-choice) to turn it on.
 
 ## Before you open a pull request
 
@@ -20,7 +20,7 @@ Run the same checks as CI:
 ```bash
 npm run typecheck
 npm run lint
-npm test                           # unit and API tests
+npm test                           # unit and API tests (npm run test:coverage adds coverage; CI enforces its thresholds)
 npx playwright install chromium    # once
 npm run test:e2e                   # browser tests
 ```
@@ -37,6 +37,8 @@ These keep the product's promises true. The reasons are in [docs/system-design.m
 - **One access policy.** Every permission decision goes through `src/lib/policy.ts`, which is also what the Access page renders. Anything a person can't see answers 404.
 - **Versions are immutable.** Saving appends a version, and database triggers reject edits. Schema changes go in a new entry at the end of `MIGRATIONS` in `src/server/migrations.ts`; never edit one that has shipped.
 - **Uploaded files are never stored.** Runs keep results, not the file, and a run is visible only to the person who ran it.
+- **Secrets are hashed or sealed.** Anything that grants access and only needs checking (sessions, tokens, links, recovery codes) is stored as a hash. Anything the server must read back (authenticator secrets) is sealed with `src/server/secrets.ts`, never stored in plain text.
+- **Logs name route patterns, never raw paths.** A path can carry an invite or reset token; `src/server/observability.ts` logs and labels metrics by the matched pattern.
 - **Tests stay hermetic.** They never read `.env` and always stub the model.
 
 ## Commit messages

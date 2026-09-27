@@ -74,6 +74,9 @@ Your local `.env` and its keys are never copied to the server. The server keeps 
 | Logs | `sudo docker compose -f ~/flowpilot/deploy/oracle/docker-compose.yml logs -f app` |
 | Backup now | `sudo bash ~/flowpilot/deploy/oracle/backup.sh` (daily at 03:15 automatically, 14 kept, in `/srv/flowpilot/data/backups/`) |
 | Copy a backup to your computer | `scp ubuntu@<public-ip>:/srv/flowpilot/data/backups/<file>.db .` |
+| Keep the encryption key | Once: `sudo cat /srv/flowpilot/data/secret.key` and store it in a password manager. It encrypts two-step sign-in secrets and is deliberately not in the backups; to use it on a new server, put it back at the same path and `sudo chmod 600` it before the first start (the container fixes its owner) |
+| Turn off two-step sign-in for someone locked out | After confirming who is asking: `cd ~/flowpilot/deploy/oracle && sudo docker compose exec -u node app node scripts/two-factor-off.mjs person@company.com` |
+| Metrics for Prometheus | Add `METRICS_TOKEN=<a long random string>` to the server's `deploy/oracle/.env`, rerun `setup.sh`, and scrape `https://<your-address>/api/metrics` with that bearer token |
 | Restore a backup | `cd ~/flowpilot/deploy/oracle && sudo docker compose stop app && sudo cp /srv/flowpilot/data/backups/<file>.db /srv/flowpilot/data/flowpilot.db && sudo rm -f /srv/flowpilot/data/flowpilot.db-wal /srv/flowpilot/data/flowpilot.db-shm && sudo docker compose start app` |
 
 Run `npm run smoke` after an update. It signs up its own throwaway accounts (`smoke-<time>@example.com`) in their own workspace and never touches anyone else's data, so it's safe on a live server; the accounts stay behind, which is harmless.

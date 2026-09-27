@@ -25,6 +25,7 @@ The full loop works end to end, and a real browser test proves it: **describe �
 - [Testing](#testing)
 - [Configuration](#configuration)
 - [Deployment](#deployment)
+- [Operations and monitoring](#operations-and-monitoring)
 - [Automation](#automation)
 - [Troubleshooting](#troubleshooting)
 - [Project structure](#project-structure)
@@ -49,8 +50,9 @@ The full loop works end to end, and a real browser test proves it: **describe �
 - **Excel and ODS files work too** (`.xlsx`, `.xlsm`, `.xlsb`, `.xls`, `.ods`): the chosen sheet is converted to CSV in your browser (pick the sheet when there are several; dates become ISO dates, numbers stay raw), so the workbook itself is never uploaded and the server only ever parses CSV.
 - The file is checked in the browser before anything is sent, so bad amounts, missing columns and ragged rows show with line numbers. Near-miss headers (“Status”, “Sales Rep”) are named and **fixed with one click** (the header row is renamed in the browser; the file on disk is untouched), and files that aren't UTF-8 or that use semicolons or tabs get a plain fix instead of a wall of errors. Switching versions re-checks the chosen file.
 - Per-run parameters with *Reset*, and a hint when a filter can never match the chosen file.
-- **As of** a chosen day: a recipe with relative dates counts from today unless you pick another day; the day is saved with the run and the summary shows what each relative date meant (“ordered_on ≥ 30 days ago (28 Aug 2026)”).
+- **As of** a chosen day: a recipe with relative dates counts from today in the workspace's time zone unless you pick another day; the day is saved with the run and the summary shows what each relative date meant (“ordered_on ≥ 30 days ago (28 Aug 2026)”).
 - Results show a summary line, a sortable table (large results render 100 rows at a time) or a **bar chart** of any figure per row (direct-labelled, one click from the table), a **Copy table** button (tab-separated, pastes into a spreadsheet), the rows remaining after each step, and two downloads: a formula-safe CSV, or an **Excel workbook** with real numbers in Indian grouping, an autofilter, and an *About this run* sheet recording the recipe, version, file, parameters and a link back.
+- **What changed since last time:** a result opens with a one-line comparison with your previous run of the same recipe (“1 changed · 1 new · 1 gone”) and expands to before → after values with exact differences, rows matched by their labels (region, month, order id). Compare with any other of your runs, or read why two results can't be matched (their columns changed, or labels repeat).
 - Private run history with exact counts per status, filtered on the server, and *Delete my results*.
 
 **Sharing and copies**
@@ -74,7 +76,14 @@ The full loop works end to end, and a real browser test proves it: **describe �
 - Belong to several workspaces and switch between them; lists, the dashboard and the Access page follow the one you're in.
 - Admins rename the workspace and remove people. When someone leaves or is removed, their recipes stay with the team: ownership moves to an admin, and a database trigger only ever allows handing a recipe to an admin or member of its workspace. Owners can also hand a recipe over themselves.
 - Demo accounts appear only in demo mode (`DEMO_MODE`), and their password, name and memberships are locked, so a shared demo can't be hijacked.
+- **Two-step sign-in** with any authenticator app (Google Authenticator, Microsoft Authenticator, 1Password, Authy): scan a QR code, confirm with a code and your password, and save ten single-use recovery codes. A code works once, wrong ones are throttled, and a password reset still asks for one. App secrets are encrypted at rest under a key kept outside the database.
+- Each workspace keeps its own **time zone**, taken from the browser at sign-up and changed by admins in Workspace settings: “today” for relative dates, the run panel's default day and the dashboard's days follow it, so a run at 01:30 in India counts on that Indian day, for people and scripts alike.
 - **Personal API tokens** for scripts and schedulers (see [Automation](#automation)): shown once, hashed at rest, expiring, revocable, and never able to change account or security settings.
+
+**Operations**
+- Every API response carries an `X-Request-Id`, error bodies include it, and an unexpected error quotes it, so a user's report leads straight to the log line.
+- One structured log line per request (JSON in production) with the route pattern, status, time and caller; never the raw path, so invite and reset tokens stay out of logs.
+- Prometheus metrics at `/api/metrics`, behind a token: request rate and latency by route, runs, AI drafts, sign-ins and second-step checks, database totals, memory and event-loop lag. See [Operations and monitoring](#operations-and-monitoring).
 
 **Around it**
 - A public **landing page** (`/welcome`, where signed-out visitors to `/` land) that explains the product, shows an example pipeline and links straight into templates; deeper links still go to sign-in and come back.
@@ -89,6 +98,7 @@ The full loop works end to end, and a real browser test proves it: **describe �
 | ![The public landing page](docs/screenshots/11-landing.png) The landing page at `/welcome` | ![Templates on New recipe](docs/screenshots/12-templates.png) Ten templates, filterable by tag |
 | ![A date filter relative to the run day](docs/screenshots/13-date-filter-editor.png) A template loaded with its sample values | ![Monthly revenue as a chart](docs/screenshots/14-monthly-revenue-chart.png) A run as of a chosen day, read as a chart |
 | ![An Excel workbook with a sheet picker](docs/screenshots/15-excel-upload.png) An Excel workbook converted in the browser | ![A new API token](docs/screenshots/16-api-token.png) An API token, shown once |
+| ![Turning on two-step sign-in with a QR code](docs/screenshots/17-two-step-sign-in.png) Two-step sign-in: a QR code for any authenticator app | ![What changed since the previous run](docs/screenshots/18-run-comparison.png) A rerun shows what changed since the last one |
 
 ## Quick start
 
@@ -155,6 +165,7 @@ Sample files are in `public/samples/`. The editor and the run panel also offer t
 5. *Make a copy* → set *Group by* to `sales_rep` → *Save as version 2* → run on `sales_B.csv`: **Asha ₹90,000**.
 6. **Asha**: the dashboard says *“Vikram Nair made a private copy of your Regional revenue exceptions v1”*, without revealing the copy. Her recipe is still v1 and still grouped by region.
 7. **Meera** can run the recipe, but *Make a copy* is disabled. **Olivia** gets *“Nothing here”*: a 404, as if the recipe didn't exist.
+8. **Asha** runs her recipe again, this time on `sales_B.csv`: the result opens with *“Since your earlier run: 1 changed · 1 new · 1 gone”*. Open it: **West ₹70,000 → ₹20,000 (−₹50,000)**, North is new and South is gone.
 
 | Run | Expected result |
 |---|---|
@@ -167,7 +178,7 @@ Sample files are in `public/samples/`. The editor and the run panel also offer t
 
 ## How it works
 
-The full design, with diagrams of the architecture, the run lifecycle, the data model and the account flows, plus the security model, failure modes, deployment and scaling path, is in **[docs/system-design.md](docs/system-design.md)**. The in-app **System design** page (`/system-design`) shows the same, with a live view of the running server's schema, triggers, limits and endpoints.
+The full design, with diagrams of the architecture, the run lifecycle, the data model and the account flows, plus the security model, failure modes, deployment and scaling path, is in **[docs/system-design.md](docs/system-design.md)**. The in-app **System design** page (`/system-design`) shows the same, with a live view of the running server's schema, triggers, limits and endpoints. New to the code? **[docs/developer-guide.md](docs/developer-guide.md)** walks through where things live, the life of a request, and how to add an endpoint, a page, a step type or a migration.
 
 ```mermaid
 flowchart LR
@@ -177,12 +188,12 @@ flowchart LR
     RP[Run panel]
   end
   subgraph Server[TanStack Start server]
-    DP[API dispatcher: origin, session, errors]
+    DP[API dispatcher: origin, session, errors, request ids]
     AI[AI author: columns, never rows]
     PO[Access policy]
     VA[Validator: strict schema]
     CS[CSV parser]
-    EN[Engine: six allowlisted steps]
+    EN[Engine: seven allowlisted steps]
   end
   MP[(Model provider)]
   DB[(SQLite: versions immutable, runs private)]
@@ -201,7 +212,7 @@ flowchart LR
 - **A small recipe language.** A strict JSON document with a declared input, typed parameters and up to 10 linear steps from an allowlist of seven (`filter`, `group_sum`, `aggregate`, `sort`, `limit`, `select`, `date_part`). Values are literals, lists or declared parameters, and nothing is ever evaluated. One shared rule (`lib/workflow/columns.ts`) says which columns exist after each step, and the validator uses it to explain problems precisely, e.g. *“Column "status" is no longer available: step s2 summarized the rows, which keeps only "region", "orders"”* or *“…step s5 renamed it to "Region"”*.
 - **A deterministic engine.** Sums are exact integers, averages are rounded half up with exact integer maths, groups and sorts order text by code point (never by locale) and ties keep their file order, a 30-second deadline is checked between steps and every 1,024 rows, and a step log records rows in and out.
 - **Versions, runs and copies.** Saving appends an immutable version, and title or description edits don't create one. Each run pins the exact version it executed. A copy is a new private recipe whose version 1 points back at one source version.
-- **The database enforces invariants itself.** Triggers reject editing or deleting a version; changing a recipe's owner, workspace or copy source; pointing a recipe at another recipe's version; updating a finished run; and editing the audit log.
+- **The database enforces invariants itself.** Triggers reject editing or deleting a version; changing a recipe's workspace or copy source, or handing it to anyone but an admin or member of its workspace; pointing a recipe at another recipe's version; updating a finished run; editing the audit log; storing a two-step secret without its start time; and turning two-step sign-in on for a shared demo account.
 - **One access policy.** Pure functions in `src/lib/policy.ts` are used by every endpoint and by the Access page's matrix.
 
 <details>
@@ -247,17 +258,19 @@ A summary with an empty `groupBy` gives one row over all rows. After a summary o
 
 ## API reference
 
-One server route (`/api/$`) fronts 45 REST endpoints through a single dispatcher, `handleApi(Request)`. The dispatcher matches the route, blocks cross-site writes, reads the session cookie or the `Authorization: Bearer` token, runs the handler and maps errors. Every response is `Cache-Control: private, no-store`. Every error has the shape `{ "error": { "code", "message", "issues"? , "draft"?, "runId"? } }`. Every path also answers `HEAD` (as `GET`, without a body) and `OPTIONS` (204 with `Allow`); any other method gets 405.
+One server route (`/api/$`) fronts 52 REST endpoints through a single dispatcher, `handleApi(Request)`. The dispatcher matches the route, blocks cross-site writes, reads the session cookie or the `Authorization: Bearer` token, runs the handler, maps errors, and times, counts and logs every request. Every response is `Cache-Control: private, no-store` and carries an `X-Request-Id`. Every error has the shape `{ "error": { "code", "message", "requestId", "issues"? , "draft"?, "runId"? } }`. Every path also answers `HEAD` (as `GET`, without a body) and `OPTIONS` (204 with `Allow`); any other method gets 405.
 
 | Method | Path | Who | Purpose |
 |---|---|---|---|
-| POST | `/api/auth/login` | anyone | `{email, password}` → session cookie. 401 is the same for unknown emails and wrong passwords; throttled per email + address (10), per email (50) and per address (100) in 10 minutes → 429 |
+| POST | `/api/auth/login` | anyone | `{email, password}` → session cookie; with two-step sign-in on, `{twoFactor: {challenge, expiresAt}}` and no cookie. 401 is the same for unknown emails and wrong passwords; throttled per email + address (10), per email (50) and per address (100) in 10 minutes → 429 |
+| POST | `/api/auth/two-factor` | anyone with a challenge | `{challenge, code}` (6 digits from the app, or a recovery code) → session cookie. 401 `INVALID_CODE` (tries left) or `CHALLENGE_EXPIRED` (five minutes, five tries); 10 wrong codes in 10 minutes per person → 429 |
 | POST | `/api/auth/logout` | anyone | Ends the session |
-| POST | `/api/auth/register` | anyone (per `REGISTRATION`) | `{name, email, password, workspaceName}` → account + workspace, signed in; or `{…, inviteToken}` to join a workspace. 409 if the email is taken |
+| POST | `/api/auth/register` | anyone (per `REGISTRATION`) | `{name, email, password, workspaceName, timeZone?}` → account + workspace (in the browser's time zone, else UTC), signed in; or `{…, inviteToken}` to join a workspace. 409 if the email is taken |
 | POST | `/api/auth/forgot` | anyone | `{email}` → the same answer whether or not the account exists; emails a one-hour reset link |
 | GET | `/api/auth/reset/:token` | anyone | Whether a reset link still works (and the masked email) |
-| POST | `/api/auth/reset` | anyone with the link | `{token, password}` → new password, every device signed out, this one signed in |
-| GET | `/api/health` | anyone | `{"status":"ok"}` when the database answers |
+| POST | `/api/auth/reset` | anyone with the link | `{token, password}` → new password, every device signed out, this one signed in (or, with two-step sign-in on, a challenge: the code is still needed) |
+| GET | `/api/health` | anyone | `{"status":"ok"}` when the database answers, with the version and schema state |
+| GET | `/api/metrics` | whoever holds `METRICS_TOKEN` | Prometheus metrics (`Authorization: Bearer <METRICS_TOKEN>`); 404 when `METRICS_TOKEN` isn't set |
 | GET | `/api/me` | signed in | User, memberships, the workspace in use, AI status |
 | PATCH | `/api/me` | signed in | `{name}` |
 | POST | `/api/me/password` | signed in | `{currentPassword, newPassword}`; signs out your other devices |
@@ -266,25 +279,30 @@ One server route (`/api/$`) fronts 45 REST endpoints through a single dispatcher
 | GET | `/api/me/tokens` | browser session | Your personal API tokens (name, prefix, created, last used, expiry; never the secret) |
 | POST | `/api/me/tokens` | browser session | `{name, expiresInDays: 30 \| 90 \| 365}` → the token, and its secret exactly once (201); at most 10 active |
 | DELETE | `/api/me/tokens/:id` | browser session | Revoke a token; scripts using it get 401 from then on |
+| GET | `/api/me/two-factor` | browser session | Whether two-step sign-in is on, since when, and recovery codes left |
+| POST | `/api/me/two-factor/setup` | browser session | A new secret and its `otpauth://` link for the QR code; nothing changes until a code confirms it (403 for demo accounts) |
+| POST | `/api/me/two-factor/enable` | browser session | `{password, code}` → on: ten recovery codes, shown once; other devices signed out; an email says so |
+| POST | `/api/me/two-factor/disable` | browser session | `{password, code}` (from the app or a recovery code) → off; an email says so |
+| POST | `/api/me/two-factor/recovery-codes` | browser session | `{password}` → ten new recovery codes; the old ones stop working |
 | POST | `/api/me/workspace` | member of it | `{workspaceId}`: work in another of your workspaces |
-| POST | `/api/workspaces` | signed in | `{name}` → a new workspace with you as admin |
+| POST | `/api/workspaces` | signed in | `{name, timeZone?}` → a new workspace with you as admin |
 | GET | `/api/dashboard` | signed in | Stats, 14-day runs, recent runs, filtered activity, checklist |
 | GET | `/api/workflows?scope=mine\|team\|all&q=&limit=&offset=` | signed in | One page of recipes you can read (60 by default, at most 200), newest first, with `total`, `nextOffset` and the count for each tab |
 | POST | `/api/workflows` | admin, member | `{title, description, definition}` → private v1 |
-| GET | `/api/workflows/:id?v=` | can view | A version, the version list and your permissions |
+| GET | `/api/workflows/:id?v=` | can view | A version, the version list, your permissions, and today in the recipe's workspace (`today`, `timeZone`) |
 | PATCH | `/api/workflows/:id` | owner | `{title?, description?, visibility?, archived?}` (unknown keys → 422) |
 | POST | `/api/workflows/:id/versions` | owner | `{definition}` → the next immutable version |
 | POST | `/api/workflows/:id/fork` | admin, member who can view | `{versionId, title}` → a private copy |
 | GET | `/api/workflows/:id/access` | can view | Workspace members and what each can do |
 | POST | `/api/workflows/:id/transfer` | owner | `{userId}` → hand the recipe to an admin or member of its workspace |
 | POST | `/api/generate` | signed in | `{request, columns}` → a draft, “unsupported” or a question; never writes |
-| POST | `/api/runs` | can view | Multipart `{versionId, file, parameters, asOf?}` → result, summary and step log; `asOf` (YYYY-MM-DD) is the day relative dates count from, saved with the run as `as_of` |
+| POST | `/api/runs` | can view | Multipart `{versionId, file, parameters, asOf?}` → result, summary and step log; `asOf` (YYYY-MM-DD) is the day relative dates count from (default: today in the recipe's workspace), saved with the run as `as_of` |
 | GET | `/api/runs?workflowId=&status=&limit=` | signed in | Your own runs only, newest first (at most 500), with exact `counts` per status |
 | DELETE | `/api/runs?workflowId=` | signed in | Delete your finished runs |
 | GET | `/api/runs/:id` | the runner | The full result and step log |
 | GET | `/api/runs/:id/csv` | the runner | A formula-escaped CSV attachment (409 if the run has no result) |
 | GET | `/api/workspace` | member | Members, roles and how many recipes each owns |
-| PATCH | `/api/workspace` | admin | `{name}` |
+| PATCH | `/api/workspace` | admin | `{name?, timeZone?}`: the workspace's name and time zone (an IANA name such as `Asia/Kolkata`); both audited |
 | POST | `/api/workspace/leave` | member | Leave; your recipes move to an admin. The last admin can't leave |
 | PATCH | `/api/workspace/members/:userId` | admin | `{role}`; not your own, and never the last admin |
 | DELETE | `/api/workspace/members/:userId` | admin | Remove someone; their recipes move to you |
@@ -297,7 +315,7 @@ One server route (`/api/$`) fronts 45 REST endpoints through a single dispatcher
 | POST | `/api/invites/:token/accept` | signed in | Join (or switch to) that workspace |
 | GET | `/api/system` | signed in | Schema, triggers, limits and endpoints: structure only, never rows |
 
-Status codes: 401 not signed in · 403 visible but not yours, a cross-site write, or an account rule (demo accounts, closed sign-ups) · 404 not visible to you, or an invite/reset link that no longer works · 409 email taken, already a member, or nothing to download · 413 over 1 MiB · 415 wrong content type · 422 validation failed, with `issues` · 429 too many attempts, with `Retry-After` · 500 run failed (`TIMEOUT`, `EXECUTION_ERROR`) · 503 AI unavailable.
+Status codes: 401 not signed in, or a wrong or expired second-step code · 403 visible but not yours, a cross-site write, or an account rule (demo accounts, closed sign-ups) · 404 not visible to you, or an invite/reset link that no longer works · 409 email taken, already a member, or nothing to download · 413 over 1 MiB · 415 wrong content type · 422 validation failed, with `issues` · 429 too many attempts, with `Retry-After` · 500 run failed (`TIMEOUT`, `EXECUTION_ERROR`) · 503 AI unavailable.
 
 ## Security and privacy
 
@@ -307,30 +325,33 @@ Status codes: 401 not signed in · 403 visible but not yours, a cross-site write
 - Identity always comes from the session: an `owner_id` sent by a client is ignored on create and rejected on update. Recipe definitions are re-validated on save, on copy and before every run.
 - Uploaded files are processed inside the request and never stored. Results are visible only to the person who ran them, and anyone can delete their own. CSV exports escape formula-like cells.
 - AI keys live only on the server, and `.env` is git-ignored. Drafting is rate-limited per person. Text from users or the model is always rendered as text, never as HTML.
+- **Two-step sign-in** (optional, per person) follows RFC 6238 with no crypto dependency. A correct password earns only a five-minute, five-try challenge; the session comes with the code. Each code works once (the last accepted time step is stored and spent with a conditional update, so two requests racing with one code can't both win), wrong codes are throttled per person across challenges, and a password reset still asks for the code. App secrets are encrypted with AES-256-GCM under a key kept outside the database (`SECRET_KEY`, or a `secret.key` file created beside it with mode 600) and bound to their account; recovery codes are stored as hashes. Turning it on or off takes the password and a code, signs out other devices and sends an email. A database trigger keeps it off the shared demo accounts.
+- Logs and metrics name route patterns (`/api/invites/:token`), never raw paths, so link tokens never reach them; the metrics endpoint exists only when `METRICS_TOKEN` is set and compares the token in constant time.
 
 ## Testing
 
 ```bash
-npm test                          # 171 unit and API tests
+npm test                          # 213 unit and API tests
+npm run test:coverage             # the same, with coverage of src/lib and src/server (about 88% of lines)
 npx playwright install chromium   # once
-npm run test:e2e                  # 32 browser tests
+npm run test:e2e                  # 35 browser tests
 npm run typecheck
 npm run lint                      # ESLint: TypeScript recommended rules plus the rules of hooks
 npm run smoke                     # every endpoint and error code against a running server (--base <url>)
 ```
 
-Every push runs the same checks on GitHub Actions ([`.github/workflows/ci.yml`](.github/workflows/ci.yml)): typecheck, lint, unit tests and the build; the browser suite; and the production image built, started and smoke-tested. The workflow mirrors the local commands above.
+Every push runs the same checks on GitHub Actions ([`.github/workflows/ci.yml`](.github/workflows/ci.yml)): typecheck, lint, unit tests with coverage (it fails below the thresholds in `vitest.config.ts`, and the figures appear in the run's summary) and the build; the browser suite; and the production image built, started and smoke-tested. [CodeQL](.github/workflows/codeql.yml) scans the code for security problems on every push to `main` and weekly.
 
-- **Unit and API tests (Vitest), 171 in total:** engine 13, CSV 20 (incl. header renaming and the copyable table), validator 13, access 20, demo loop 12, AI 13 (incl. relative dates, date parameters and periods from the flat reply, a repair, and provider configuration), hardening 16 (HTTP methods, HSTS, redirects, sessions, no-op edits, the activity feed on a busy team, list paging and run counts, the client address behind a proxy), accounts 17 (sign-up modes and rules, invitations, password resets, account settings, workspaces, removal and hand-over), language 14 (summaries and exact rounding, sort, top N, column choices, *contains* and *is one of*, whole numbers, validation messages, the seeded examples, a top-N run and CSV export through the API), governance 4 (archive and restore, the audit log's privacy rules, filters, paging and CSV), spreadsheet 8 (workbook → CSV on xlsx/xls/xlsb/ods files written by SheetJS: raw numbers, ISO dates, sheet choice and limits, refusing renamed text files; results → Excel with real numbers and an about sheet), dates 11 (strict date reading, calendar maths incl. ISO weeks and leap years, relative dates, periods, earliest and latest per group, every validator message, the as-of day through the API), templates 3 (every template validates, matches its sample's columns, and runs on its sample to known rows as of 27 Sep 2026), version changes 3 (columns, parameters and steps compared in words), tokens 4 (minting and one-time display, hash-only storage, a script running a recipe with no cookie or Origin, session-only endpoints, demo accounts, revocation, expiry, junk headers, the 10-token cap, X-Workspace-Id). They call the same `handleApi(Request)` the server uses, with real session cookies, against an in-memory SQLite database, so access rules are tested end to end rather than mocked. The model is always stubbed, and the tests never read `.env`.
-- **Browser tests (Playwright), 32 in total:**
+- **Unit and API tests (Vitest), 213 in total:** engine 13, CSV 20 (incl. header renaming and the copyable table), validator 13, access 20, demo loop 12, AI 13 (incl. relative dates, date parameters and periods from the flat reply, a repair, and provider configuration), hardening 16 (HTTP methods, HSTS, redirects, sessions, no-op edits, the activity feed on a busy team, list paging and run counts, the client address behind a proxy), accounts 17 (sign-up modes and rules, invitations, password resets, account settings, workspaces, removal and hand-over), language 14 (summaries and exact rounding, sort, top N, column choices, *contains* and *is one of*, whole numbers, validation messages, the seeded examples, a top-N run and CSV export through the API), governance 4 (archive and restore, the audit log's privacy rules, filters, paging and CSV), spreadsheet 8 (workbook → CSV on xlsx/xls/xlsb/ods files written by SheetJS: raw numbers, ISO dates, sheet choice and limits, refusing renamed text files; results → Excel with real numbers and an about sheet), dates 11 (strict date reading, calendar maths incl. ISO weeks and leap years, relative dates, periods, earliest and latest per group, every validator message, the as-of day through the API), templates 3 (every template validates, matches its sample's columns, and runs on its sample to known rows as of 27 Sep 2026), version changes 3 (columns, parameters and steps compared in words), tokens 4 (minting and one-time display, hash-only storage, a script running a recipe with no cookie or Origin, session-only endpoints, demo accounts, revocation, expiry, junk headers, the 10-token cap, X-Workspace-Id), observability 7 (request ids on every response and in error bodies, JSON request logs, the metrics token, counts by route pattern and never by raw path or token, a 500 that quotes its reference), one-time codes 10 (the RFC 4226 and RFC 6238 test vectors, base32, clock drift and replay, recovery codes, AES-GCM secrets bound to their owner, `SECRET_KEY`), two-step sign-in 12 (setup, the two-step sign-in, replay, recovery codes, five tries and five minutes, throttling across challenges, password resets, turning off, new recovery codes, demo accounts and API tokens refused, database triggers, a secret copied to another account, the operator script), run comparison 7 (grouped and raw rows, a single summary row, empty results, column changes and repeated labels explained), time zones 6 (the day a moment falls on across daylight saving, renamed zones, sign-up and settings with the audit entry, a run's default day, the dashboard's days). They call the same `handleApi(Request)` the server uses, with real session cookies, against an in-memory SQLite database, so access rules are tested end to end rather than mocked. The model is always stubbed, and the tests never read `.env`.
+- **Browser tests (Playwright), 35 in total:**
   - `demo.spec.ts` (4) is the demo above.
-  - `features.spec.ts` (20) covers the rest: the editor's value warning, an invalid AI draft and a clarifying question, Advanced JSON, in-browser file checks, samples and parameters, details-only saves and versions, runs from another recipe, large results, CSV escaping, the command palette, theme, roles, *Delete my results*, the mobile drawer, re-checking a file when the version changes, refusing a non-UTF-8 file, the in-app 404, wide tables at phone width, library paging, an AI-drafted top-N summary edited with the new step cards and run, archiving plus the audit log, Excel input (a two-sheet workbook, the sheet picker, a renamed text file refused) with the Excel download read back, and dates (the monthly example run as of a chosen day, a dated sample suggesting the date type, an AI-drafted by-month recipe with the relative-date and fixed-date controls), the landing page (signed-out `/` lands there, deep links come back after sign-in, a template link opens the editor pre-filled with sample values), the template gallery (tag filter, load, save, run on the sample, read the result as a chart and switch the figure), and a near-miss header fixed with one click, the table copied as tab-separated text, and a second version explaining its change from the first.
-  - `accounts.spec.ts` (6): a new team signs up, invites a teammate who joins through the link and runs a shared recipe; the workspace switcher (mouse and keyboard); account settings and a password change that signs out another device; forgot-password and dead links; the sign-in pages at phone width; API tokens minted once in account settings, used by a script, and revoked.
+  - `features.spec.ts` (21) covers the rest: the editor's value warning, an invalid AI draft and a clarifying question, Advanced JSON, in-browser file checks, samples and parameters, details-only saves and versions, runs from another recipe, large results, CSV escaping, the command palette, theme, roles, *Delete my results*, the mobile drawer, re-checking a file when the version changes, refusing a non-UTF-8 file, the in-app 404, wide tables at phone width, library paging, an AI-drafted top-N summary edited with the new step cards and run, archiving plus the audit log, Excel input (a two-sheet workbook, the sheet picker, a renamed text file refused) with the Excel download read back, and dates (the monthly example run as of a chosen day, a dated sample suggesting the date type, an AI-drafted by-month recipe with the relative-date and fixed-date controls), the landing page (signed-out `/` lands there, deep links come back after sign-in, a template link opens the editor pre-filled with sample values), the template gallery (tag filter, load, save, run on the sample, read the result as a chart and switch the figure), and a near-miss header fixed with one click, the table copied as tab-separated text, and a second version explaining its change from the first, and a rerun on next week's file showing what changed row by row.
+  - `accounts.spec.ts` (8): a new team signs up, invites a teammate who joins through the link and runs a shared recipe; the workspace switcher (mouse and keyboard); account settings and a password change that signs out another device; forgot-password and dead links; the sign-in pages at phone width; API tokens minted once in account settings, used by a script, and revoked; two-step sign-in turned on from the QR key, a wrong and a right code at sign-in, a recovery code used once, and turning it off; and a new workspace taking the browser's time zone, changed by its admin and recorded in the audit log.
   - `a11y.spec.ts` (2) runs an axe-core WCAG 2.1 AA scan of every page, including the landing page, sign-up, invitations and account settings, in light and dark mode.
 - The browser tests use their own database and a stand-in model (`tests/e2e/mock-model.ts`), so they never spend real credits. Screenshots of each demo stage are saved to `test-results/demo-screenshots/`; `UPDATE_SCREENSHOTS=1 npm run test:e2e` refreshes the ones in `docs/screenshots/` instead.
 - **Model quality:** `npm run eval:model`, described above.
 - **Lint:** `npm run lint` (ESLint with typescript-eslint and the React hooks rules; clean, with two documented exceptions for regexes that strip control characters).
-- **Smoke test:** `npm run smoke` signs up two throwaway accounts on any running FlowPilot and makes 78 checks across all 45 endpoints: the happy paths and the important errors (401, 403, 404, 405, 409, 413, 415, 422). It is how a deployment is verified: `npm run smoke -- --base https://your-app`.
+- **Smoke test:** `npm run smoke` signs up two throwaway accounts on any running FlowPilot and makes 91 checks across all 52 endpoints (92 with `--metrics-token`): the happy paths, two-step sign-in end to end, and the important errors (401, 403, 404, 405, 409, 413, 415, 422). It is how a deployment is verified: `npm run smoke -- --base https://your-app`.
 
 ## Configuration
 
@@ -347,6 +368,9 @@ Every push runs the same checks on GitHub Actions ([`.github/workflows/ci.yml`](
 | `MODEL_NAME` | `gpt-5` (OpenAI) · `openai/gpt-6-luna` (OpenRouter) · required for Anthropic | Model for the chosen provider |
 | `OPENROUTER_API_KEY` / `ANTHROPIC_API_KEY` / `OPENAI_API_KEY` | none | Turns on AI drafting |
 | `OPENROUTER_BASE_URL` / `ANTHROPIC_BASE_URL` / `OPENAI_BASE_URL` | the public APIs | Optional override, e.g. a proxy or the e2e mock |
+| `SECRET_KEY` | a random key in `secret.key` beside the database | Encrypts authenticator-app secrets (at least 32 characters, e.g. `openssl rand -base64 32`). Keep it, or that file, apart from database backups |
+| `METRICS_TOKEN` | none (no metrics endpoint) | Turns on `GET /api/metrics`; the scraper sends it as `Authorization: Bearer <token>` |
+| `LOG_FORMAT` | `json` in production, `pretty` in development | One line per API request: `json`, `pretty` or `off` (warnings and errors are always written) |
 
 `.env.example` lists all of them. `.env` is loaded by the server and scripts; real environment variables win over it.
 
@@ -407,6 +431,48 @@ What both kits configure:
 - **SQLite on the disk** at `/data/flowpilot.db`, migrations on start, one machine (SQLite has a single writer).
 - **`TRUST_PROXY`:** `true` behind Caddy or nginx (the address the proxy appended to `X-Forwarded-For`), `fly` on Fly.io (`Fly-Client-IP`). Each value believes exactly one header that the proxy writes itself; a visitor's own forwarded headers are never believed.
 - **Public showcase settings:** `DEMO_MODE=true` (one-click demo accounts, locked against changes, seeded into the empty database) and `REGISTRATION=open`. For a single company, set `DEMO_MODE=false` and `REGISTRATION=invite-only`.
+- **The encryption key for two-step secrets** is created as `/data/secret.key` on first start, unless `SECRET_KEY` is set. Database backups deliberately leave it out; keep a copy somewhere else. Without it, app codes stop working after a restore, recovery codes still sign people in, and they set two-step sign-in up again.
+
+## Operations and monitoring
+
+What someone running FlowPilot watches once it is live:
+
+- **Health:** `GET /api/health` answers anyone with `status`, `version`, the schema state (migrations and triggers) and uptime. Both deployment kits point the platform's health check at it.
+- **Request ids:** every API response carries `X-Request-Id` (an id a proxy already set is kept when it is safe to log). Error bodies include it, and an unexpected error asks the user to quote it, so a report leads straight to the log line.
+- **Logs:** one line per API request, JSON in production, ready for any log collector:
+
+  ```json
+  {"time":"2026-09-27T16:34:47.010Z","level":"info","msg":"request","requestId":"req_158bbb3208165022","method":"POST","route":"/api/runs","status":201,"durationMs":42.5,"userId":"usr_…","via":"session"}
+  ```
+
+  Routes are patterns (`/api/invites/:token`), never raw paths, so link tokens never reach the logs. `LOG_FORMAT=pretty` prints short lines instead; `off` keeps only warnings and errors.
+- **Metrics:** set `METRICS_TOKEN` and point Prometheus at `/api/metrics`:
+
+  ```yaml
+  scrape_configs:
+    - job_name: flowpilot
+      scheme: https
+      metrics_path: /api/metrics
+      authorization:
+        credentials: <METRICS_TOKEN>
+      static_configs:
+        - targets: ['flowpilot.example.com']
+  ```
+
+  | Metric | What it tells you |
+  |---|---|
+  | `flowpilot_http_requests_total{method,route,status}` | Traffic and errors, per endpoint |
+  | `flowpilot_http_request_duration_seconds` | Latency per endpoint (histogram) |
+  | `flowpilot_recipe_runs_total{status}`, `flowpilot_recipe_run_duration_seconds` | Runs that succeeded or failed, and how long they took |
+  | `flowpilot_ai_drafts_total{outcome}`, `flowpilot_ai_draft_duration_seconds` | Drafting outcomes (workflow, clarification, unsupported, error) and the model's latency |
+  | `flowpilot_sign_ins_total{outcome}`, `flowpilot_two_factor_checks_total{outcome}` | Sign-ins, throttling and second-step codes |
+  | `flowpilot_users`, `flowpilot_workspaces`, `flowpilot_recipes{state}`, `flowpilot_runs_stored{status}`, `flowpilot_sessions_active` and more | Totals read from the database at scrape time |
+  | `flowpilot_event_loop_lag_seconds`, `flowpilot_process_resident_memory_bytes` | Whether synchronous work, such as a large run, is holding up other requests |
+
+  Alerts worth setting: more than 1% of responses are 5xx for 5 minutes; p95 latency of `POST /api/runs` above 2 s (`histogram_quantile(0.95, sum by (le) (rate(flowpilot_http_request_duration_seconds_bucket{route="/api/runs"}[5m])))`); failed runs rising; event-loop lag p99 above 200 ms.
+- **Audit:** the Audit log page (admins) and its CSV export record every recipe, sharing, people, invite and workspace change.
+- **Backups and keys:** the Oracle kit backs the database up every day (`scripts/backup-db.mjs`: a consistent snapshot, an integrity check, the newest 14 kept). Keep `/data/secret.key` (or `SECRET_KEY`) somewhere else.
+- **Locked-out people:** `npm run two-factor:off -- person@company.com` turns two-step sign-in off for one account, once you have confirmed who is asking.
 
 ## Automation
 
@@ -435,6 +501,7 @@ curl -H "Authorization: Bearer $TOKEN" -o result.csv $FP/api/runs/run_.../csv
 - No `Origin` header is needed: the cross-site check only applies to browser requests that carry one.
 - Rate limits are per person, whichever way you sign in. Send CSV: workbooks are converted in the browser, not on the server.
 - Leaked a token? Revoke it on the account page; every request with it answers 401 from then on.
+- Two-step sign-in protects the browser sign-in; tokens keep working when it's turned on (you create them while signed in with it).
 
 ## Troubleshooting
 
@@ -451,14 +518,18 @@ curl -H "Authorization: Bearer $TOKEN" -o result.csv $FP/api/runs/run_.../csv
 | E2E tests can't find a browser | `npx playwright install chromium` |
 | A password-reset or invite email never arrives | Without `RESEND_API_KEY` and `MAIL_FROM` the email is written to the server log instead: copy the link from there |
 | "Too many accounts were created from here recently" | Sign-ups are limited to 20 an hour per address; behind a proxy set `TRUST_PROXY` (`true` for Caddy/nginx, `fly` on Fly.io) so each visitor counts separately |
+| Authenticator codes are always rejected | Set the phone's clock to automatic: codes change every 30 seconds and one step of drift is allowed. After moving the server, check that `SECRET_KEY` or `/data/secret.key` came along; until it does, sign in with a recovery code and set two-step sign-in up again |
+| Someone lost their phone and their recovery codes | Whoever runs the server confirms it's them another way, then runs `npm run two-factor:off -- person@company.com` (in the container: `docker compose exec -u node app node scripts/two-factor-off.mjs person@company.com`) |
+| Relative dates or the dashboard are a day off | Check the workspace's time zone: Access → Settings (admins) |
+| A user reports an error | Ask for the reference in the message (`req_…`, also the `X-Request-Id` header) and search the server log for it |
 | You want a clean slate | `npm run seed:reset` |
 
 ## Project structure
 
 ```
 src/lib/workflow/     the recipe language: schema, validate, execute, describe, draft, examples
-src/lib/              csv, policy, account rules, samples, api client, shared types, formatting, redirects, session server functions
-src/server/           db + migrations (triggers), auth, accounts, repo, audit events, rate limits, mail, config, boot, seed, http helpers
+src/lib/              csv, policy, account rules, dates and time zones, run comparison, samples, api client, shared types, formatting, redirects, session server functions
+src/server/           db + migrations (triggers), auth, two-step sign-in (totp, secrets, twofactor), accounts, repo, audit events, rate limits, observability (request ids, logs, metrics), mail, config, boot, seed, http helpers
 src/server/api/       the dispatcher (router.ts) and one file per resource
 src/server/ai/        model config and the generate loop (Anthropic, OpenAI, OpenRouter)
 src/routes/           login, signup, invite, forgot/reset password, _app (guard + shell), dashboard, library, editor, recipe, runs, access, account, system design, api/$
@@ -466,7 +537,7 @@ src/components/       UI kit, shell, command palette, editor, results grid, run 
 src/start.ts          global middleware: security headers, server-function CSRF
 tests/                Vitest suites · tests/e2e: Playwright specs and the mock model
 scripts/              seed, check-model, eval-model, smoke, screenshots
-docs/                 system-design.md (architecture, data model, flows, security) · screenshots/
+docs/                 system-design.md (architecture, data model, flows, security) · developer-guide.md (the code, request by request) · screenshots/
 fixtures/             demo and invalid CSVs used by the tests · public/samples: downloadable demo files
 ```
 
@@ -477,11 +548,10 @@ This is a working prototype, not a production platform:
 - **Single node.** SQLite suits one server process. The next step is Postgres with row-level security mirroring `lib/policy.ts`.
 - **Small, synchronous runs.** Up to 1 MiB, 5,000 rows and 50 columns per file, run inside the request with a 30-second deadline. There is no queue, scheduling or retry.
 - **Seven step types.** Filter, group & sum, summarize, sort, keep first N, choose columns and period from a date: no joins, percentages, charts, or comparisons between periods in the same row yet. The AI says so instead of pretending.
-- **Accounts.** Email and password only: no SSO, two-factor sign-in or email verification yet, and accounts can't be deleted from the UI.
-- **In-memory limits.** Sign-in, sign-up, reset and drafting limits live in the server's memory, so they reset on restart and aren't shared between servers (Redis would fix both).
+- **Accounts.** Email and password, with optional two-step sign-in: no SSO, passkeys or email verification yet, and accounts can't be deleted from the UI. The key that encrypts authenticator secrets can't be rotated in place yet.
+- **In-memory state.** Sign-in, sign-up, reset, drafting and second-step limits, and the metrics counters, live in the server's memory, so they reset on restart and aren't shared between servers (Redis and a metrics backend would fix both).
 - **No deleting recipes.** Versions are immutable by design.
 - **Other small gaps:**
-  - Dashboard days are in UTC.
   - CSV line numbers count records, the way a spreadsheet numbers rows; in a text editor, a quoted field containing a newline shifts the numbers after it.
   - Lists show one page at a time: 60 recipes in the library (with *Show more*) and your latest 500 runs (the counts are always exact).
   - The model can't see values, so rely on the editor's sample check for text casing.
