@@ -44,11 +44,18 @@ describe('time zone helpers', () => {
 })
 
 describe('a workspace’s time zone', () => {
+  let app: Awaited<ReturnType<typeof freshApp>>
+
   beforeEach(async () => {
     vi.useFakeTimers({ toFake: ['Date'] })
     vi.setSystemTime(LATE_EVENING_UTC)
-    await freshApp()
+    app = await freshApp()
   })
+
+  /** Writes a zone straight into the Sales workspace, as a hand edit of the database would. */
+  function setSalesZone(zone: string) {
+    app.db.prepare('UPDATE workspaces SET time_zone = ? WHERE id = ?').run(zone, app.seed.workspaces.Sales)
+  }
 
   afterEach(() => {
     vi.useRealTimers()
@@ -106,6 +113,19 @@ describe('a workspace’s time zone', () => {
     // The recipe page hands the browser the same day, so a click and a script agree.
     expect((await asha.get(`/api/workflows/${created.body.workflow.id}`)).body.today).toBe('2026-09-28')
     expect((await sam.get(`/api/workflows/${utc.body.workflow.id}`)).body.today).toBe('2026-09-27')
+  })
+
+  it('falls back to UTC for a stored zone this runtime can’t use, instead of failing requests', async () => {
+    const asha = await signIn('asha')
+    setSalesZone('Not/A_Zone')
+    expect((await asha.get('/api/me')).body.workspace.timeZone).toBe('UTC')
+    const dashboard = await asha.get('/api/dashboard')
+    expect(dashboard.status).toBe(200)
+    expect(dashboard.body.runsByDay.at(-1).date).toBe('2026-09-27')
+    const created = await asha.post('/api/workflows', { title: 'Months', definition: MONTHLY_PAID_REVENUE })
+    const run = await asha.run(created.body.version.id, fixture('orders_dated.csv'))
+    expect(run.status, run.text).toBe(201)
+    expect(run.body.parameters[AS_OF_KEY]).toBe('2026-09-27')
   })
 
   it('counts the dashboard’s days in the workspace’s zone', async () => {

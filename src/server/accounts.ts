@@ -4,6 +4,7 @@ import { API_TOKEN_PREFIX, hashToken, newToken } from './auth'
 import { newId, nowIso } from './ids'
 import { recordEvent } from './events'
 import type { Role } from '../lib/types'
+import { usableTimeZone } from '../lib/dates'
 
 // People, workspaces, invitations and password resets. Handlers check who may
 // do what (lib/policy.ts); these functions only read and write.
@@ -65,7 +66,7 @@ export function setWorkspaceTimeZone(db: DB, workspaceId: string, timeZone: stri
 
 /** A workspace's calendar; UTC for one that doesn't exist (it can't have runs either). */
 export function workspaceTimeZone(db: DB, workspaceId: string): string {
-  return (db.prepare('SELECT time_zone FROM workspaces WHERE id = ?').pluck().get(workspaceId) as string | undefined) ?? 'UTC'
+  return usableTimeZone(db.prepare('SELECT time_zone FROM workspaces WHERE id = ?').pluck().get(workspaceId))
 }
 
 export function addMember(db: DB, workspaceId: string, userId: string, role: Role): void {

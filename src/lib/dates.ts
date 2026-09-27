@@ -167,16 +167,27 @@ export function todayIso(now: Date = new Date(), utc: boolean = typeof window ==
 
 // ----- Time zones: each workspace keeps its own calendar --------------------------------------
 
+const KNOWN_ZONES = new Map<string, boolean>()
+
 /** Whether a value names a time zone this runtime knows: an IANA name such as Asia/Kolkata, or UTC. */
 export function isTimeZone(value: unknown): value is string {
   if (typeof value !== 'string' || value.length > 64 || !/^[A-Za-z][A-Za-z0-9_+\-/]*$/.test(value)) return false
-  try {
-    new Intl.DateTimeFormat('en-US', { timeZone: value })
-    return true
-  } catch {
-    return false
+  // Memberships are read on every request, so each answer is kept (the set of names is small and fixed).
+  let known = KNOWN_ZONES.get(value)
+  if (known === undefined) {
+    try {
+      new Intl.DateTimeFormat('en-US', { timeZone: value })
+      known = true
+    } catch {
+      known = false
+    }
+    KNOWN_ZONES.set(value, known)
   }
+  return known
 }
+
+/** A stored zone this runtime can use, else UTC: a bad value can't take a request down. */
+export const usableTimeZone = (value: unknown): string => (isTimeZone(value) ? value : 'UTC')
 
 /**
  * Old names that browsers still report (ICU keeps them as its canonical IDs), and

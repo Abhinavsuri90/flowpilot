@@ -1,6 +1,7 @@
 import { createHash, randomBytes, scrypt as scryptCallback, timingSafeEqual, type ScryptOptions } from 'node:crypto'
 import type { DB } from './db'
 import type { Membership, Role } from '../lib/types'
+import { usableTimeZone } from '../lib/dates'
 
 // ---------------------------------------------------------------------------
 // Passwords: scrypt (N = 16384, r = 8, p = 1) with a random 16-byte salt,
@@ -141,7 +142,7 @@ export function membershipsFor(db: DB, userId: string): Membership[] {
         ORDER BY m.joined_at, w.name`,
     )
     .all(userId) as { workspace_id: string; workspace_name: string; time_zone: string; role: Role }[]
-  return rows.map((r) => ({ workspaceId: r.workspace_id, workspaceName: r.workspace_name, role: r.role, timeZone: r.time_zone }))
+  return rows.map((r) => ({ workspaceId: r.workspace_id, workspaceName: r.workspace_name, role: r.role, timeZone: usableTimeZone(r.time_zone) }))
 }
 
 /**
