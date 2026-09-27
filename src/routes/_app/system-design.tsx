@@ -464,6 +464,10 @@ function FailuresSection() {
           ['Invite or reset link expired, used or revoked', 'Hashed token lookup', '404 INVITE_INVALID / RESET_INVALID with “ask for a new one”'],
           ['Too many sign-ins, sign-ups, resets or drafts', 'In-memory sliding windows', '429 with Retry-After; sign-in counts per email and address, so nobody can lock out someone else'],
           ['Someone edits a recipe you’re viewing', 'Versions are immutable', 'Your pinned version keeps working; a banner says “Version N (latest is M)”'],
+          ['Authenticator code rejected', 'One step of clock drift allowed; spent steps refused', '401 INVALID_CODE with the tries left; after five, sign in again; recovery codes still work'],
+          ['Encryption key for authenticator secrets lost or changed', 'Decryption fails (and is logged)', 'App codes stop working; recovery codes (hashes, not encrypted) still sign in, then two-step sign-in is set up again'],
+          ['Two runs can’t be compared row by row', 'Different columns, or repeated labels', 'The comparison says why, instead of guessing'],
+          ['Unexpected server error', 'Caught by the dispatcher, logged with its request id', '500 INTERNAL_ERROR quoting the request id, which finds the log line'],
         ]}
       />
     </Section>
@@ -494,7 +498,8 @@ function LanguageSection() {
       />
       <ul className="mt-3 space-y-1 text-[13px] text-muted">
         <li>• Column types: text, amounts in whole rupees, whole numbers and dates (YYYY-MM-DD text; the maths uses day numbers, never a time zone). Amounts are never rounded or guessed; dates are never guessed either (an ambiguous 03/04/2026 is reported with both readings); averages are rounded half up with exact integer maths, and the step says so.</li>
-        <li>• Relative dates count from the day the recipe runs; the runner can pick another day, which is stored with the run and shown in its summary.</li>
+        <li>• Relative dates count from the day the recipe runs, in the workspace’s time zone (a run at 01:30 in India counts on that Indian day); the runner can pick another day, which is stored with the run and shown in its summary.</li>
+        <li>• A result can be compared with an earlier run of the same recipe ({code('lib/compare.ts')}): rows matched by their text and date columns, figures compared exactly, and a plain reason when two results can’t be matched.</li>
         <li>• One shape rule ({code('lib/workflow/columns.ts')}) decides which columns exist after each step, for the engine, the validator, the editor, the descriptions and the AI adapter alike.</li>
         <li>• Saved versions are immutable, so the language only grows: every recipe saved before a new step type existed still runs exactly as it did.</li>
       </ul>
@@ -539,6 +544,18 @@ function IdentitySection() {
             note: 'Admins can list and revoke pending links; a revoked or expired link answers 404 with “ask for a new one”.',
           },
           {
+            value: 'two-step',
+            label: 'Two-step sign-in',
+            steps: [
+              { title: 'Password', lines: ['Right password, two-step on', 'No session yet'] },
+              { title: 'Challenge', lines: ['5 minutes, 5 tries', 'One live per person'], tag: 'hash only' },
+              { title: 'Code', lines: ['6 digits from the app (±30 s)', 'or a single-use recovery code'] },
+              { title: 'Checks', lines: ['Spent steps refused (no replay)', '10 wrong codes / 10 min per person'] },
+              { title: 'Session', lines: ['256-bit cookie, as usual', 'Challenge deleted'] },
+            ],
+            note: 'App secrets are encrypted with AES-256-GCM under a key kept outside the database and bound to their account; recovery codes are stored as hashes. A password reset still asks for the code.',
+          },
+          {
             value: 'reset',
             label: 'Reset password',
             steps: [
@@ -560,7 +577,9 @@ function IdentitySection() {
           ['Roles', 'Admin, member, viewer, read fresh on every request, so a change applies to the next click'],
           ['People leaving', 'Their recipes move to an admin; a trigger only allows handing a recipe to an admin or member of its workspace'],
           ['Brute force', 'Sign-in failures counted per email + address (10), per email (50) and per address (100): an attacker can’t lock out someone else'],
-          ['Demo accounts', 'Only in DEMO_MODE, and locked: no password, name or membership changes'],
+          ['Demo accounts', 'Only in DEMO_MODE, and locked: no password, name or membership changes, and (by a trigger) no two-step sign-in'],
+          ['Two-step sign-in', 'Authenticator-app codes (RFC 6238) and ten recovery codes; turning it on or off needs the password and a code, signs out other devices and sends an email'],
+          ['Time zone', 'Each workspace keeps a calendar: “today” for relative dates, the run panel’s default day and the dashboard’s days'],
         ]}
       />
     </Section>
@@ -586,6 +605,9 @@ function SecuritySection() {
           ['Password guessing / lockout abuse', 'Three-way sign-in throttle; strong-password rules', 'accounts suite'],
           ['Account enumeration', 'Uniform sign-in errors, dummy scrypt for unknown emails, uniform forgot-password answer', 'accounts suite'],
           ['Open redirect after sign-in', 'Only same-site paths; control characters refused', 'hardening suite'],
+          ['Stolen password', 'Optional two-step sign-in: a code from an authenticator app (replay-proof, throttled per person) or a single-use recovery code; a password reset alone can’t bypass it', 'two-factor suite, browser test, smoke'],
+          ['Stolen database file or backup', 'Authenticator secrets encrypted (AES-256-GCM) under a key outside the database and bound to their row; recovery codes hashed', 'totp and two-factor suites'],
+          ['Link tokens in logs', 'Logs and metrics name route patterns (/api/invites/:token), never raw paths', 'observability suite'],
           ['Stolen or leaked API token', 'fp_-prefixed tokens stored only as SHA-256 hashes; they expire, can be revoked, and can never reach account, password, membership or token endpoints (403 SESSION_REQUIRED)', 'tokens suite, smoke'],
           ['Spreadsheet formula injection', 'Formula-like cells escaped in every CSV export; the Excel export writes text, never formulas', 'csv, governance and spreadsheet suites'],
           ['Hostile workbooks (archive bombs, macros)', 'Excel/ODS files become CSV in the browser (SheetJS on demand, 4 MB cap, zip/CFB bytes only, bounded rows); the server only ever parses CSV', 'spreadsheet suite, browser test “Excel files”'],
@@ -631,6 +653,9 @@ function DeploymentSection() {
           [code('TRUST_PROXY'), 'true behind Caddy or nginx, fly on Fly.io', 'Rate limits read the one header that proxy writes; a visitor’s own forwarded headers are never believed'],
           [code('APP_URL'), 'the public https:// address', 'Correct links in invite and reset emails'],
           [code('OPENROUTER_API_KEY'), 'a secret, never in the image', 'AI drafting; runs work without it'],
+          [code('SECRET_KEY'), '32+ random characters, or unset (a key file is created beside the database)', 'Encrypts authenticator secrets; kept apart from database backups'],
+          [code('METRICS_TOKEN'), 'a secret shared with the Prometheus scraper', 'Turns on GET /api/metrics; without it the endpoint doesn’t exist'],
+          [code('LOG_FORMAT'), 'json (the default in production)', 'One line per request with its id, route pattern, status and time'],
         ]}
       />
     </Section>
@@ -652,11 +677,11 @@ function ScalingSection() {
         rows={[
           ['Storage', 'SQLite (WAL) + triggers, one file', 'Postgres with row-level security mirroring lib/policy.ts; RPC functions for multi-row writes', 'Read replicas; partition runs by month; archive old results'],
           ['Execution', 'In-request, ≤ 5,000 rows, 30 s', 'Job queue + workers; inputs in object storage with a short TTL; progress polling', 'Columnar engine (e.g. DuckDB) streaming large files; autoscaled pool'],
-          ['Identity', 'Email + password, invitations by link, reset links, per-session workspace', 'SSO / OIDC, two-factor sign-in, email verification', 'SCIM provisioning; per-workspace policies'],
+          ['Identity', 'Email + password, two-step sign-in (TOTP + recovery codes), invitations, resets, per-session workspace', 'SSO / OIDC, passkeys, email verification', 'SCIM provisioning; per-workspace policies (require two-step sign-in)'],
           ['Sharing', 'Private or workspace-wide', 'Named groups; column mapping when headers differ', 'Cross-workspace publishing with review'],
           ['AI authoring', 'One call + one repair', 'Cache by hash(request, schema); offline eval set', 'Per-tenant model config, budgets, AI-assisted copies with diffs'],
           ['Rate limits', 'In-memory sliding windows (sign-in, sign-up, resets, drafts)', 'Redis token buckets shared across servers', 'Edge rate limiting and abuse detection'],
-          ['Observability', 'Append-only audit log (admin page + CSV), health check, smoke test', 'Structured logs, OpenTelemetry traces', 'SLOs on run latency (p95) and failure rate, with alerts'],
+          ['Observability', 'Request ids, JSON request logs, Prometheus metrics (latency by route, runs, drafts, sign-ins, event-loop lag), audit log, health check, smoke test', 'OpenTelemetry traces; alert rules on error rate and run latency', 'SLOs on run latency (p95) and failure rate, with paging'],
           ['Integrations', 'CSV, Excel and ODS upload; CSV and Excel download', 'One spreadsheet source, bound per runner, never the author’s account', 'Adapter to an execution backend (e.g. n8n) for a validated subset'],
         ]}
       />
@@ -686,6 +711,9 @@ function TradeoffsSection() {
           ['Viewer role can run but not copy', 'Teams can share reports with read-only colleagues', 'One more role to explain'],
           ['SQLite + triggers', 'Zero setup; invariants still enforced in the database', 'Single writer, single node; Postgres + RLS is the production path'],
           ['Strict whole-rupee amounts', 'No silent rounding or blank-as-zero', 'Files with decimals or “60,000” must be cleaned first'],
+          ['Authenticator codes (TOTP) for the second step', 'Works offline with any app; no SMS cost or SIM-swap risk', 'A code can still be phished in real time, unlike passkeys'],
+          ['Metrics kept in the process', 'No agent or extra service; one scrape shows everything', 'Counters reset on restart and are per machine (fine for one node)'],
+          ['One time zone per workspace', 'A team, its scripts and its dashboard agree on what “today” is', 'Someone travelling still sees the team’s day'],
         ]}
       />
       <p className="mt-3 text-[13px] text-muted">
