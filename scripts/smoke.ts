@@ -191,6 +191,10 @@ async function main() {
   // ----- workspace, invitations, a second person
   await check('workspace', sam, 'GET', '/api/workspace', 200)
   await check('rename workspace', sam, 'PATCH', '/api/workspace', 200, { json: { name: `Smoke team ${STAMP}` } })
+  await check('workspace time zone', sam, 'PATCH', '/api/workspace', 200, { json: { timeZone: 'Asia/Kolkata' } }, (r) =>
+    r.data?.workspace?.timeZone === 'Asia/Kolkata' ? true : `got ${r.data?.workspace?.timeZone}`,
+  )
+  await check('unknown time zone → 422', sam, 'PATCH', '/api/workspace', 422, { json: { timeZone: 'Mars/Olympus' } })
   const invite = await check('create invite link', sam, 'POST', '/api/workspace/invites', 201, { json: { role: 'member' } })
   const token = String(invite.data?.link ?? '').split('/invite/')[1] ?? 'missing'
   await check('list invites', sam, 'GET', '/api/workspace/invites', 200)
