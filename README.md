@@ -131,7 +131,7 @@ Anthropic (`ANTHROPIC_API_KEY`, which uses a forced tool call) and OpenAI (`OPEN
 | Model | Eval result | Median | Slowest | Price in / out per M tokens |
 |---|---|---|---|---|
 | **`openai/gpt-6-luna`** (chosen) | **14 / 14** (two runs) | **3.0 s** | 4.4 s | **$0.10 / $0.50** |
-| `anthropic/claude-sonnet-5` | 14 / 14 | 5.3 s | 6.8 s | $2 / $10 |
+| Anthropic's Sonnet model (via OpenRouter) | 14 / 14 | 5.3 s | 6.8 s | $2 / $10 |
 | `google/gemini-3.8-flash` | 14 / 14 | 5.0 s | 8.0 s | $0.75 / $3.75 |
 
 All three are accurate. `gpt-6-luna` is the fastest and costs about a twentieth as much, and a draft is one short call, so each draft costs well under a cent. The eval also found two prompt weaknesses, both since fixed: copying a sentence-initial capital ("Paid orders…" became `"Paid"`), and filtering raw amounts before grouping when the request meant a per-group total. To switch models, change `MODEL_NAME` and re-run `npm run eval:model`.
@@ -339,7 +339,7 @@ Every push runs the same checks on GitHub Actions ([`.github/workflows/ci.yml`](
 | `TRUST_PROXY` | `false` | `true` behind Caddy/nginx (last `X-Forwarded-For` hop), `fly` on Fly.io (`Fly-Client-IP`); rate limits use that address |
 | `RESEND_API_KEY` / `MAIL_FROM` | none | Send invite and reset emails through Resend; without them the emails are written to the server log |
 | `MODEL_PROVIDER` | inferred from whichever key is set | `anthropic`, `openai` or `openrouter` |
-| `MODEL_NAME` | `claude-sonnet-5` · `gpt-5` · `openai/gpt-6-luna` | Model for the chosen provider |
+| `MODEL_NAME` | `gpt-5` (OpenAI) · `openai/gpt-6-luna` (OpenRouter) · required for Anthropic | Model for the chosen provider |
 | `OPENROUTER_API_KEY` / `ANTHROPIC_API_KEY` / `OPENAI_API_KEY` | none | Turns on AI drafting |
 | `OPENROUTER_BASE_URL` / `ANTHROPIC_BASE_URL` / `OPENAI_BASE_URL` | the public APIs | Optional override, e.g. a proxy or the e2e mock |
 

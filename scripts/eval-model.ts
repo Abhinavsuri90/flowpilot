@@ -2,7 +2,7 @@
 // Runs each case against the configured model (or every --model given) and
 // prints pass/fail, latency and repairs. Costs a few cents at most.
 //   npm run eval:model
-//   npm run eval:model -- --model openai/gpt-6-luna --model anthropic/claude-sonnet-5
+//   npm run eval:model -- --model openai/gpt-6-luna --model google/gemini-3.8-flash
 import { loadEnv } from '../src/server/env'
 import { modelStatus } from '../src/server/ai/config'
 import { generateRecipe } from '../src/server/ai/generate'

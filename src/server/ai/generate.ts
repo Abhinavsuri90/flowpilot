@@ -1,5 +1,5 @@
 import { z } from 'zod'
-import { modelConfig, type ModelConfig } from './config'
+import { modelConfig, modelUnavailableReason, type ModelConfig } from './config'
 import { ApiError } from '../http'
 import { validateDefinition } from '../../lib/workflow/validate'
 import { AGGREGATE_OPS, COLUMN_TYPE_LABEL, DATE_PARTS, DATE_UNITS, LIMITS, OPERATORS, type Column, type ColumnType, type Step, type WorkflowDefinition } from '../../lib/workflow/schema'
@@ -469,7 +469,7 @@ const unavailable = (why: string) =>
 /** Drafts a recipe. Throws 503 MODEL_UNAVAILABLE or 422 DRAFT_INVALID (with the draft). Never writes. */
 export async function generateRecipe(input: { request: string; columns: Record<string, ColumnType> }): Promise<GenerateResult> {
   const config = modelConfig()
-  if (!config) throw unavailable('no model key is configured on this server')
+  if (!config) throw unavailable(modelUnavailableReason())
   const conversation = config.provider === 'anthropic' ? anthropicConversation(config) : openaiConversation(config)
 
   try {

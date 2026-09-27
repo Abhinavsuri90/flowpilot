@@ -79,11 +79,12 @@ afterEach(() => {
 describe('AI authoring', () => {
   it('turns a valid forced tool call into the demo recipe, sending columns but never rows', async () => {
     vi.stubEnv('ANTHROPIC_API_KEY', 'test-key')
+    vi.stubEnv('MODEL_NAME', 'sonnet-test')
     stubFetch(anthropic(GOOD))
     const before = counts()
     const res = await generate()
     expect(res.status).toBe(200)
-    expect(res.body).toEqual({ kind: 'workflow', definition: ORIGINAL, provider: 'anthropic', model: 'claude-sonnet-5', repaired: false })
+    expect(res.body).toEqual({ kind: 'workflow', definition: ORIGINAL, provider: 'anthropic', model: 'sonnet-test', repaired: false })
 
     expect(calls).toHaveLength(1)
     const [call] = calls
@@ -136,6 +137,7 @@ describe('AI authoring', () => {
 
   it('repairs exactly once, then returns 422 DRAFT_INVALID with the draft for the editor', async () => {
     vi.stubEnv('ANTHROPIC_API_KEY', 'test-key')
+    vi.stubEnv('MODEL_NAME', 'sonnet-test')
     const fetchFn = stubFetch(anthropic(BAD), anthropic(BAD), anthropic(GOOD))
     const res = await generate()
     expect(fetchFn).toHaveBeenCalledTimes(2)
@@ -153,6 +155,7 @@ describe('AI authoring', () => {
 
   it('accepts a draft that the one repair fixed', async () => {
     vi.stubEnv('ANTHROPIC_API_KEY', 'test-key')
+    vi.stubEnv('MODEL_NAME', 'sonnet-test')
     stubFetch(anthropic(BAD), anthropic(GOOD))
     const res = await generate()
     expect(res.status).toBe(200)
@@ -162,6 +165,7 @@ describe('AI authoring', () => {
 
   it('answers "unsupported" for Gmail and scheduling, and writes nothing', async () => {
     vi.stubEnv('ANTHROPIC_API_KEY', 'test-key')
+    vi.stubEnv('MODEL_NAME', 'sonnet-test')
     stubFetch(anthropic({ kind: 'unsupported', reason: 'Recipes cannot send email or run on a schedule.', question: null, parameters: [], steps: [] }))
     const before = counts()
     const res = await generate('Email this report to my manager via Gmail every Monday.')
@@ -211,6 +215,7 @@ describe('AI authoring', () => {
 
   it('reports a provider error or a 20-second timeout as 503 MODEL_UNAVAILABLE', async () => {
     vi.stubEnv('ANTHROPIC_API_KEY', 'test-key')
+    vi.stubEnv('MODEL_NAME', 'sonnet-test')
     stubFetch(() => new Response('overloaded', { status: 529 }))
     const failed = await generate()
     expect(failed.status).toBe(503)
@@ -244,6 +249,7 @@ describe('AI authoring', () => {
 
   it('limits drafts per person (they cost money) and tells them when to retry', async () => {
     vi.stubEnv('ANTHROPIC_API_KEY', 'test-key')
+    vi.stubEnv('MODEL_NAME', 'sonnet-test')
     const fetchFn = stubFetch(anthropic(GOOD))
     for (let i = 0; i < GENERATE_LIMITS.perMinute; i++) expect((await generate()).status).toBe(200)
     const limited = await generate()
@@ -328,5 +334,17 @@ describe('AI authoring with dates', () => {
     expect(res.body.repaired).toBe(true)
     expect(calls).toHaveLength(2)
     expect(calls[1]!.body.messages.at(-1).content).toContain('A date relative to the run day only works on a date column')
+  })
+})
+
+describe('model configuration', () => {
+  it('needs MODEL_NAME for the Anthropic provider and says so', async () => {
+    vi.stubEnv('ANTHROPIC_API_KEY', 'test-key')
+    vi.stubEnv('MODEL_NAME', '')
+    const res = await generate()
+    expect(res.status).toBe(503)
+    expect(res.body.error.code).toBe('MODEL_UNAVAILABLE')
+    expect(res.body.error.message).toContain('MODEL_NAME is not set for the anthropic provider')
+    expect((await asha.get('/api/me')).body.model).toEqual({ available: false, provider: null, model: null })
   })
 })

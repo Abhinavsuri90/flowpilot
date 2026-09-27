@@ -2,8 +2,8 @@ import type { ModelStatus } from '../../lib/types'
 
 export type Provider = 'anthropic' | 'openai' | 'openrouter'
 
-export const DEFAULT_MODELS: Record<Provider, string> = {
-  anthropic: 'claude-sonnet-5',
+/** Defaults per provider; Anthropic has none and takes its model from MODEL_NAME. */
+export const DEFAULT_MODELS: Partial<Record<Provider, string>> = {
   openai: 'gpt-5',
   // Any OpenRouter model id that supports structured outputs works; see README.
   // gpt-6-luna: correct on the whole eval set, fastest and cheapest of those tested.
@@ -50,10 +50,20 @@ export function modelConfig(): ModelConfig | null {
   const apiKey = keyFor(provider)
   if (!apiKey) return null
   const model = process.env.MODEL_NAME?.trim() || DEFAULT_MODELS[provider]
+  if (!model) return null
   // Optional override (same convention as the official SDKs), e.g. a proxy or a local mock in e2e tests.
   const override = process.env[BASE_URL_VARS[provider]]?.trim()
   const baseUrl = (override || DEFAULT_BASE_URLS[provider]).replace(/\/+$/, '')
   return { provider, model, apiKey, baseUrl }
+}
+
+/** Why drafting is off right now, for the 503 message. */
+export function modelUnavailableReason(): string {
+  const requested = process.env.MODEL_PROVIDER?.trim().toLowerCase()
+  const keyFor = (provider: Provider) => process.env[KEY_VARS[provider]]?.trim() || ''
+  const provider = PROVIDERS.includes(requested as Provider) ? (requested as Provider) : PROVIDERS.find((p) => keyFor(p))
+  if (!provider || !keyFor(provider)) return 'no model key is configured on this server'
+  return `MODEL_NAME is not set for the ${provider} provider`
 }
 
 export function modelStatus(): ModelStatus {
