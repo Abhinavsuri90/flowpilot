@@ -4,6 +4,14 @@
   "type": "module",
   "version": "1.0.0",
   "description": "Turn a one-sentence description of a repetitive CSV or Excel report into a checked, versioned recipe your team reruns on any file.",
+  "homepage": "https://github.com/Abhinavsuri90/flowpilot#readme",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Abhinavsuri90/flowpilot.git"
+  },
+  "bugs": {
+    "url": "https://github.com/Abhinavsuri90/flowpilot/issues"
+  },
   "engines": {
     "node": ">=22"
   },
