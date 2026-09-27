@@ -41,6 +41,32 @@ export type Me = {
   model: ModelStatus
 }
 
+/**
+ * Signing in (or resetting a password) on an account with two-step sign-in: the
+ * password was right, and a code from the authenticator app is still owed.
+ */
+export type TwoFactorChallenge = { twoFactor: { challenge: string; expiresAt: string } }
+
+/** POST /api/auth/login: signed in, or one more step to go. */
+export type SignInResult = Me | TwoFactorChallenge
+
+export const needsSecondStep = (result: SignInResult): result is TwoFactorChallenge => 'twoFactor' in result
+
+/** POST /api/auth/two-factor: signed in; after a recovery code, how many are left. */
+export type SecondStepResult = Me & { recoveryCodesLeft?: number }
+
+/** GET /api/me/two-factor */
+export type TwoFactorStatus = {
+  enabled: boolean
+  enabledAt: string | null
+  recoveryCodesLeft: number
+  /** False for the shared demo accounts. */
+  available: boolean
+}
+
+/** POST /api/me/two-factor/setup: the secret for the authenticator app, as a key and as an otpauth:// link for the QR code. */
+export type TwoFactorSetup = { secret: string; uri: string }
+
 export type RegistrationMode = 'open' | 'invite-only' | 'closed'
 
 /** What the sign-in and sign-up pages need to know about this server. */

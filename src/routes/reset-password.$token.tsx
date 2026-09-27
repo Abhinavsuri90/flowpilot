@@ -1,11 +1,12 @@
 import * as React from 'react'
 import { Link, createFileRoute, useRouter } from '@tanstack/react-router'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
-import { KeyRound } from 'lucide-react'
+import { KeyRound, ShieldCheck } from 'lucide-react'
 import { api, ApiError } from '~/lib/api'
 import { passwordProblem } from '~/lib/account'
-import type { Me } from '~/lib/types'
+import { needsSecondStep, type SignInResult } from '~/lib/types'
 import { AuthLayout, PasswordInput } from '~/components/auth-layout'
+import { SecondStepForm } from '~/components/two-factor'
 import { Button, Callout, Field, Skeleton, buttonClass, useHydrated } from '~/components/ui'
 
 export const Route = createFileRoute('/reset-password/$token')({
@@ -21,17 +22,40 @@ function ResetPasswordPage() {
   const [password, setPassword] = React.useState('')
   const [confirm, setConfirm] = React.useState('')
   const [touched, setTouched] = React.useState(false)
+  // The new password is saved; with two-step sign-in on, a code finishes signing in.
+  const [challenge, setChallenge] = React.useState<string | null>(null)
 
   const link = useQuery({ queryKey: ['reset', token], queryFn: () => api.get<{ email: string }>(`/api/auth/reset/${token}`), retry: false })
+  const signedIn = async () => {
+    queryClient.clear()
+    await router.invalidate()
+    await router.navigate({ to: '/', replace: true })
+  }
   const reset = useMutation({
-    mutationFn: () => api.post<Me>('/api/auth/reset', { token, password }),
-    onSuccess: async () => {
-      queryClient.clear()
-      await router.invalidate()
-      await router.navigate({ to: '/', replace: true })
+    mutationFn: () => api.post<SignInResult>('/api/auth/reset', { token, password }),
+    onSuccess: async (result) => {
+      if (needsSecondStep(result)) setChallenge(result.twoFactor.challenge)
+      else await signedIn()
     },
   })
   const problem = passwordProblem(password) ?? (confirm !== password ? 'The two passwords don’t match' : null)
+
+  if (challenge) {
+    return (
+      <AuthLayout>
+        <div className="mb-6 grid size-11 place-items-center rounded-xl bg-brand-soft text-brand-ink">
+          <ShieldCheck className="size-5" aria-hidden />
+        </div>
+        <h1 className="text-[26px] font-semibold tracking-tight text-ink">Password saved</h1>
+        <p className="mt-1.5 text-[14.5px] text-muted">Your account has two-step sign-in on, so enter a code to finish signing in.</p>
+        <SecondStepForm
+          challenge={challenge}
+          onSignedIn={signedIn}
+          onRestart={() => void router.navigate({ to: '/login', search: { redirect: undefined }, replace: true })}
+        />
+      </AuthLayout>
+    )
+  }
 
   return (
     <AuthLayout>

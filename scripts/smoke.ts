@@ -9,6 +9,8 @@
 // It signs up two throwaway accounts (smoke-<time>@example.com), so the server
 // needs REGISTRATION=open, and exits non-zero if any check fails.
 
+import { base32Decode, totp } from '../src/server/totp'
+
 const argv = process.argv.slice(2)
 const flag = (name: string) => argv.includes(`--${name}`)
 const option = (name: string) => {
@@ -161,6 +163,26 @@ async function main() {
   await check('list tokens (prefix only)', sam, 'GET', '/api/me/tokens', 200, {}, (r) => (r.data?.tokens?.length === 1 && !('secret' in r.data.tokens[0]) ? true : 'expected one token without its secret'))
   await check('revoke the token', sam, 'DELETE', `/api/me/tokens/${minted.data?.token?.id ?? 'none'}`, 200)
   await check('revoked token → 401', bot, 'GET', '/api/me', 401, { headers: bearer, origin: null })
+  // two-step sign-in: on with the password and a first code, then a code at every sign-in
+  await check('two-step status', sam, 'GET', '/api/me/two-factor', 200, {}, (r) => (r.data?.enabled === false && r.data?.available === true ? true : 'expected off and available'))
+  const setup = await check('two-step setup (QR secret)', sam, 'POST', '/api/me/two-factor/setup', 200, {}, (r) => (/^otpauth:\/\/totp\//.test(r.data?.uri ?? '') ? true : 'no otpauth uri'))
+  const secret = base32Decode(String(setup.data?.secret ?? ''))
+  await check('two-step on needs a correct code → 422', sam, 'POST', '/api/me/two-factor/enable', 422, { json: { password: PASSWORD, code: '000000' } }, code('INVALID_CODE'))
+  const enabled = await check('two-step on (password + first code)', sam, 'POST', '/api/me/two-factor/enable', 200, { json: { password: PASSWORD, code: totp(secret) } }, (r) =>
+    r.data?.recoveryCodes?.length === 10 ? true : 'expected ten recovery codes',
+  )
+  const recovery = (enabled.data?.recoveryCodes ?? []) as string[]
+  const phone = new Actor('phone')
+  const pending = await check('password alone → challenge, no session', phone, 'POST', '/api/auth/login', 200, { json: { email: samEmail, password: PASSWORD } }, (r) =>
+    r.data?.twoFactor?.challenge && !r.headers.get('set-cookie') ? true : 'expected a challenge and no cookie',
+  )
+  const challenge = String(pending.data?.twoFactor?.challenge ?? '')
+  await check('wrong code → 401', phone, 'POST', '/api/auth/two-factor', 401, { json: { challenge, code: '000000' } }, code('INVALID_CODE'))
+  await check('recovery code signs in', phone, 'POST', '/api/auth/two-factor', 200, { json: { challenge, code: recovery[0] ?? '' } }, (r) =>
+    r.data?.recoveryCodesLeft === 9 ? true : `expected 9 codes left, got ${r.data?.recoveryCodesLeft}`,
+  )
+  await check('spent challenge → 401', phone, 'POST', '/api/auth/two-factor', 401, { json: { challenge, code: recovery[1] ?? '' } }, code('CHALLENGE_EXPIRED'))
+  await check('two-step off (password + a code)', sam, 'POST', '/api/me/two-factor/disable', 200, { json: { password: PASSWORD, code: recovery[1] ?? '' } })
   await check('password change needs the current one', sam, 'POST', '/api/me/password', 422, { json: { currentPassword: 'wrong wrong wrong', newPassword: 'another long passphrase' } })
   await check('forgot password (same answer for anyone)', anon, 'POST', '/api/auth/forgot', 200, { json: { email: `nobody-${STAMP}@example.com` } })
   await check('dead reset link → 404', anon, 'GET', '/api/auth/reset/not-a-real-token', 404, {}, code('RESET_INVALID'))

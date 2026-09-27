@@ -204,7 +204,7 @@ test('command palette, theme, roles, my runs and the mobile drawer all work', as
   await page.getByRole('button', { name: 'Open menu' }).click()
   await page.getByRole('navigation', { name: 'Main' }).getByRole('link', { name: 'System design' }).click()
   await expect(page.getByText('Live schema and triggers')).toBeVisible()
-  await expect(page.getByText('13 triggers')).toBeVisible()
+  await expect(page.getByText('15 triggers')).toBeVisible()
   expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBeLessThanOrEqual(390)
 })
 

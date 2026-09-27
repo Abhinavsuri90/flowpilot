@@ -2,6 +2,7 @@ import { getDb } from './db'
 import { appConfig } from './config'
 import { isSeeded, seedDatabase } from './seed'
 import { startRuntimeMonitors } from './observability'
+import { checkSecretKey } from './secrets'
 
 let ready: Promise<void> | null = null
 
@@ -13,6 +14,7 @@ let ready: Promise<void> | null = null
 export function ensureReady(): Promise<void> {
   ready ??= (async () => {
     const db = getDb()
+    checkSecretKey()
     startRuntimeMonitors()
     if (appConfig().demoMode && process.env.NODE_ENV === 'production' && !isSeeded(db)) {
       const result = await seedDatabase(db, { password: process.env.SEED_PASSWORD })

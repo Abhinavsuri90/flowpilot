@@ -1,14 +1,15 @@
 import * as React from 'react'
 import { createFileRoute, useRouter } from '@tanstack/react-router'
-import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
-import { Building2, Copy, KeyRound, LogOut, MonitorSmartphone, Plus, TerminalSquare, UserRound } from 'lucide-react'
+import { useMutation, useQuery, useQueryClient, type UseMutationResult } from '@tanstack/react-query'
+import { Building2, Copy, KeyRound, LogOut, MonitorSmartphone, Plus, RefreshCw, ShieldCheck, TerminalSquare, UserRound } from 'lucide-react'
 import { api, ApiError } from '~/lib/api'
 import { nameProblem, passwordProblem } from '~/lib/account'
 import { timeAgo } from '~/lib/format'
-import type { ApiTokenInfo, Me, SessionInfo } from '~/lib/types'
+import type { ApiTokenInfo, Me, SessionInfo, TwoFactorSetup, TwoFactorStatus } from '~/lib/types'
 import { formatDate } from '~/lib/dates'
 import { PasswordInput } from '~/components/auth-layout'
 import { CreateWorkspaceDialog } from '~/components/shell'
+import { QrCode, RecoveryCodes, groupKey } from '~/components/two-factor'
 import { Badge, Button, Callout, Card, CardHeader, Dialog, Field, Input, PageHeader, Select, Skeleton } from '~/components/ui'
 import { RoleBadge } from '~/components/workflow-bits'
 import { useToast } from '~/components/toast'
@@ -31,6 +32,7 @@ function AccountPage() {
       <div className="grid grid-cols-1 gap-6 xl:grid-cols-2">
         <ProfileCard me={me} />
         <PasswordCard me={me} />
+        <TwoFactorCard me={me} />
         <DevicesCard />
         <TokensCard me={me} />
         <WorkspacesCard me={me} />
@@ -137,6 +139,293 @@ function PasswordCard({ me }: { me: Me }) {
         </div>
       </form>
     </Card>
+  )
+}
+
+// ---------------------------------------------------------------------------
+// Two-step sign-in
+// ---------------------------------------------------------------------------
+
+const TWO_FACTOR_KEY = ['two-factor'] as const
+
+function TwoFactorCard({ me }: { me: Me }) {
+  const status = useQuery({ queryKey: TWO_FACTOR_KEY, queryFn: () => api.get<TwoFactorStatus>('/api/me/two-factor') })
+  const [dialog, setDialog] = React.useState<'setup' | 'off' | 'codes' | null>(null)
+  // Each setup call makes a new secret, so it runs on the click, exactly once, never from a render.
+  const setup = useMutation({ mutationFn: () => api.post<TwoFactorSetup>('/api/me/two-factor/setup') })
+  const close = () => {
+    setup.reset()
+    setDialog(null)
+  }
+  const on = status.data?.enabled ?? false
+  const left = status.data?.recoveryCodesLeft ?? 0
+  return (
+    <Card className="animate-rise">
+      <CardHeader
+        icon={<ShieldCheck />}
+        title="Two-step sign-in"
+        description="Ask for a code from an authenticator app as well as your password, so a stolen password alone can’t open your account."
+        actions={status.data && !me.user.isDemo ? <Badge tone={on ? 'ok' : 'neutral'}>{on ? 'On' : 'Off'}</Badge> : undefined}
+      />
+      <div className="space-y-3 px-5 pb-5">
+        {me.user.isDemo ? (
+          <p className="text-[13px] text-muted">Demo accounts are shared, so they can’t turn this on. Create your own account to protect it with a code.</p>
+        ) : status.isPending ? (
+          <Skeleton className="h-16" />
+        ) : status.isError ? (
+          <Callout tone="bad">{status.error.message}</Callout>
+        ) : on ? (
+          <>
+            <p className="text-[13px] text-muted">
+              On since {formatDate(status.data.enabledAt!.slice(0, 10))}. {left} of 10 recovery codes left, for when your phone isn’t at hand.
+            </p>
+            {left <= 3 && (
+              <Callout tone="warn" title={left === 0 ? 'No recovery codes left' : 'Recovery codes are running out'}>
+                Make new ones now, so a lost phone can’t lock you out.
+              </Callout>
+            )}
+            <div className="flex flex-wrap gap-2">
+              <Button size="sm" variant="secondary" icon={<RefreshCw className="size-3.5" />} onClick={() => setDialog('codes')}>
+                New recovery codes
+              </Button>
+              <Button size="sm" variant="danger" onClick={() => setDialog('off')}>
+                Turn off
+              </Button>
+            </div>
+          </>
+        ) : (
+          <>
+            <p className="text-[13px] text-muted">
+              Works with Google Authenticator, Microsoft Authenticator, 1Password, Authy and any app that shows 6-digit codes. Your API tokens keep working.
+            </p>
+            <Button
+              size="sm"
+              variant="brand"
+              icon={<ShieldCheck className="size-3.5" />}
+              onClick={() => {
+                setup.mutate()
+                setDialog('setup')
+              }}
+            >
+              Turn on
+            </Button>
+          </>
+        )}
+      </div>
+      {dialog === 'setup' && <TwoFactorSetupDialog me={me} setup={setup} onClose={close} />}
+      {dialog === 'off' && <TwoFactorOffDialog onClose={close} />}
+      {dialog === 'codes' && <NewRecoveryCodesDialog me={me} onClose={close} />}
+    </Card>
+  )
+}
+
+/** Scan, confirm with the first code and the password, then save the recovery codes (shown once). */
+function TwoFactorSetupDialog({
+  me,
+  setup: start,
+  onClose,
+}: {
+  me: Me
+  setup: UseMutationResult<TwoFactorSetup, Error, void>
+  onClose: () => void
+}) {
+  const queryClient = useQueryClient()
+  const toast = useToast()
+  const [code, setCode] = React.useState('')
+  const [password, setPassword] = React.useState('')
+  const [saved, setSaved] = React.useState(false)
+  const enable = useMutation({
+    mutationFn: () =>
+      api.post<{ enabled: true; recoveryCodes: string[]; signedOutOtherDevices: number }>('/api/me/two-factor/enable', { password, code: code.trim() }),
+    onSuccess: async (res) => {
+      await Promise.all([queryClient.invalidateQueries({ queryKey: TWO_FACTOR_KEY, exact: true }), queryClient.invalidateQueries({ queryKey: ['sessions'] })])
+      if (res.signedOutOtherDevices) {
+        toast.show({ tone: 'ok', title: `Signed out ${res.signedOutOtherDevices} other device${res.signedOutOtherDevices === 1 ? '' : 's'}`, description: 'They’ll need a code to sign in again.' })
+      }
+    },
+  })
+  const fieldError = (path: string) => (enable.error instanceof ApiError ? enable.error.issues.find((i) => i.path === path)?.message : undefined)
+  const codes = enable.data?.recoveryCodes
+
+  return (
+    <Dialog
+      open
+      onClose={onClose}
+      icon={<ShieldCheck />}
+      title={codes ? 'Save your recovery codes' : 'Turn on two-step sign-in'}
+      description={
+        codes
+          ? 'Two-step sign-in is on. If you lose your phone, each of these codes signs you in once. They won’t be shown again.'
+          : 'Scan the QR code with your authenticator app, then enter the 6-digit code it shows.'
+      }
+      footer={
+        codes ? (
+          <Button variant="brand" disabled={!saved} onClick={onClose}>
+            Done
+          </Button>
+        ) : (
+          <>
+            <Button variant="ghost" onClick={onClose}>
+              Cancel
+            </Button>
+            <Button
+              type="submit"
+              form="two-factor-setup"
+              variant="brand"
+              loading={enable.isPending}
+              disabled={!start.data || !/^\d{6}$/.test(code.replace(/\s/g, '')) || !password}
+            >
+              Turn on
+            </Button>
+          </>
+        )
+      }
+    >
+      {codes ? (
+        <div className="space-y-4">
+          <RecoveryCodes codes={codes} email={me.user.email} />
+          <label className="flex items-center gap-2 text-[13.5px] text-ink-2">
+            <input type="checkbox" checked={saved} onChange={(e) => setSaved(e.target.checked)} className="size-4 accent-[var(--brand)]" />
+            I’ve saved these codes somewhere safe
+          </label>
+        </div>
+      ) : start.isError ? (
+        <Callout tone="bad">{start.error.message}</Callout>
+      ) : !start.data ? (
+        <Skeleton className="h-64" />
+      ) : (
+        <form
+          id="two-factor-setup"
+          className="space-y-4"
+          onSubmit={(e) => {
+            e.preventDefault()
+            if (/^\d{6}$/.test(code.replace(/\s/g, '')) && password) enable.mutate()
+          }}
+        >
+          <div className="flex flex-col items-center gap-3 sm:flex-row sm:items-start">
+            <div className="shrink-0 rounded-xl border border-line bg-white p-2">
+              <QrCode value={start.data.uri} label="QR code for your authenticator app" />
+            </div>
+            <div className="min-w-0 text-[13px] text-muted">
+              <p>Can’t scan it? Add an account by hand with this key:</p>
+              <code className="mt-1.5 block rounded-lg bg-sunken px-2.5 py-2 font-mono text-[13px] break-all text-ink" data-testid="two-factor-key">
+                {groupKey(start.data.secret)}
+              </code>
+              <p className="mt-1.5">Account: {me.user.email} · time-based, 6 digits.</p>
+            </div>
+          </div>
+          <Field label="Code from the app" htmlFor="two-factor-setup-code" error={fieldError('code')}>
+            <Input
+              id="two-factor-setup-code"
+              value={code}
+              onChange={(e) => setCode(e.target.value.replace(/[^\d\s]/g, ''))}
+              inputMode="numeric"
+              autoComplete="one-time-code"
+              maxLength={7}
+              placeholder="123456"
+              className="font-mono tracking-[0.25em]"
+            />
+          </Field>
+          <Field label="Your password" htmlFor="two-factor-setup-password" error={fieldError('password')}>
+            <PasswordInput id="two-factor-setup-password" autoComplete="current-password" value={password} onChange={(e) => setPassword(e.target.value)} />
+          </Field>
+          {enable.error && !(enable.error instanceof ApiError && enable.error.issues.length) && <Callout tone="bad">{enable.error.message}</Callout>}
+        </form>
+      )}
+    </Dialog>
+  )
+}
+
+function TwoFactorOffDialog({ onClose }: { onClose: () => void }) {
+  const queryClient = useQueryClient()
+  const toast = useToast()
+  const [password, setPassword] = React.useState('')
+  const [code, setCode] = React.useState('')
+  const off = useMutation({
+    mutationFn: () => api.post<{ enabled: false }>('/api/me/two-factor/disable', { password, code: code.trim() }),
+    onSuccess: async () => {
+      await queryClient.invalidateQueries({ queryKey: TWO_FACTOR_KEY, exact: true })
+      toast.show({ tone: 'ok', title: 'Two-step sign-in is off', description: 'Signing in needs only your password now.' })
+      onClose()
+    },
+  })
+  const fieldError = (path: string) => (off.error instanceof ApiError ? off.error.issues.find((i) => i.path === path)?.message : undefined)
+  return (
+    <Dialog
+      open
+      onClose={onClose}
+      size="sm"
+      icon={<ShieldCheck />}
+      title="Turn off two-step sign-in?"
+      description="Your account will be protected by your password alone, and your recovery codes stop working."
+      footer={
+        <>
+          <Button variant="ghost" onClick={onClose}>
+            Cancel
+          </Button>
+          <Button variant="danger" loading={off.isPending} disabled={!password || !code.trim()} onClick={() => off.mutate()}>
+            Turn off
+          </Button>
+        </>
+      }
+    >
+      <div className="space-y-4">
+        <Field label="Code from the app, or a recovery code" htmlFor="two-factor-off-code" error={fieldError('code')}>
+          <Input id="two-factor-off-code" value={code} onChange={(e) => setCode(e.target.value)} autoComplete="one-time-code" className="font-mono" />
+        </Field>
+        <Field label="Your password" htmlFor="two-factor-off-password" error={fieldError('password')}>
+          <PasswordInput id="two-factor-off-password" autoComplete="current-password" value={password} onChange={(e) => setPassword(e.target.value)} />
+        </Field>
+        {off.error && !(off.error instanceof ApiError && off.error.issues.length) && <Callout tone="bad">{off.error.message}</Callout>}
+      </div>
+    </Dialog>
+  )
+}
+
+function NewRecoveryCodesDialog({ me, onClose }: { me: Me; onClose: () => void }) {
+  const queryClient = useQueryClient()
+  const [password, setPassword] = React.useState('')
+  const regenerate = useMutation({
+    mutationFn: () => api.post<{ recoveryCodes: string[] }>('/api/me/two-factor/recovery-codes', { password }),
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: TWO_FACTOR_KEY, exact: true }),
+  })
+  const codes = regenerate.data?.recoveryCodes
+  const fieldError = regenerate.error instanceof ApiError ? regenerate.error.issues.find((i) => i.path === 'password')?.message : undefined
+  return (
+    <Dialog
+      open
+      onClose={onClose}
+      icon={<RefreshCw />}
+      title={codes ? 'Your new recovery codes' : 'Make new recovery codes?'}
+      description={codes ? 'The old codes no longer work. Save these; they won’t be shown again.' : 'You get ten new codes, and every old one stops working.'}
+      footer={
+        codes ? (
+          <Button variant="brand" onClick={onClose}>
+            Done
+          </Button>
+        ) : (
+          <>
+            <Button variant="ghost" onClick={onClose}>
+              Cancel
+            </Button>
+            <Button variant="brand" loading={regenerate.isPending} disabled={!password} onClick={() => regenerate.mutate()}>
+              Make new codes
+            </Button>
+          </>
+        )
+      }
+    >
+      {codes ? (
+        <RecoveryCodes codes={codes} email={me.user.email} />
+      ) : (
+        <div className="space-y-4">
+          <Field label="Your password" htmlFor="two-factor-codes-password" error={fieldError}>
+            <PasswordInput id="two-factor-codes-password" autoComplete="current-password" value={password} onChange={(e) => setPassword(e.target.value)} />
+          </Field>
+          {regenerate.error && !fieldError && <Callout tone="bad">{regenerate.error.message}</Callout>}
+        </div>
+      )}
+    </Dialog>
   )
 }
 

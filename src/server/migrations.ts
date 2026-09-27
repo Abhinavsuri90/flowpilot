@@ -306,4 +306,55 @@ CREATE TABLE api_tokens (
 CREATE INDEX api_tokens_user_idx ON api_tokens(user_id, created_at);
 `,
   },
+  {
+    id: 6,
+    name: 'two_step_sign_in',
+    sql: /* sql */ `
+-- Two-step sign-in with an authenticator app (TOTP). Secrets are encrypted with a
+-- key kept outside the database (see src/server/secrets.ts); pending holds the
+-- secret between showing the QR code and the first correct code.
+ALTER TABLE users ADD COLUMN totp_secret TEXT;
+ALTER TABLE users ADD COLUMN totp_pending_secret TEXT;
+ALTER TABLE users ADD COLUMN totp_enabled_at TEXT;
+-- The last time step accepted: a code works once, and never an older one after it.
+ALTER TABLE users ADD COLUMN totp_last_step INTEGER;
+
+-- Turned on means a secret and a start time, together.
+CREATE TRIGGER users_totp_consistent
+BEFORE UPDATE OF totp_secret, totp_enabled_at ON users
+WHEN (NEW.totp_secret IS NULL) <> (NEW.totp_enabled_at IS NULL)
+BEGIN
+  SELECT RAISE(ABORT, 'two-step sign-in needs both a secret and a start time');
+END;
+
+-- Shared demo accounts can't turn it on: one visitor could lock everyone else out.
+CREATE TRIGGER users_demo_no_totp
+BEFORE UPDATE OF totp_secret, totp_pending_secret ON users
+WHEN NEW.is_demo = 1 AND (NEW.totp_secret IS NOT NULL OR NEW.totp_pending_secret IS NOT NULL)
+BEGIN
+  SELECT RAISE(ABORT, 'demo accounts can''t use two-step sign-in');
+END;
+
+-- Single-use recovery codes for a lost phone. Only a hash is stored.
+CREATE TABLE recovery_codes (
+  id         INTEGER PRIMARY KEY,
+  user_id    TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  code_hash  TEXT NOT NULL CHECK (length(code_hash) = 64),
+  created_at TEXT NOT NULL,
+  used_at    TEXT,
+  UNIQUE (user_id, code_hash)
+) STRICT;
+
+-- The password was right and a code is still owed: five minutes, five tries, hash only.
+CREATE TABLE sign_in_challenges (
+  token_hash TEXT PRIMARY KEY CHECK (length(token_hash) = 64),
+  user_id    TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  created_at TEXT NOT NULL,
+  expires_at TEXT NOT NULL,
+  attempts   INTEGER NOT NULL DEFAULT 0 CHECK (attempts BETWEEN 0 AND 5)
+) STRICT;
+CREATE INDEX sign_in_challenges_user_idx ON sign_in_challenges(user_id);
+CREATE INDEX sign_in_challenges_expiry_idx ON sign_in_challenges(expires_at);
+`,
+  },
 ]

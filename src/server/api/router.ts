@@ -17,6 +17,7 @@ import * as account from './account'
 import * as invites from './invites'
 import * as audit from './audit'
 import * as metrics from './metrics'
+import * as twoFactor from './two-factor'
 
 type Method = 'GET' | 'POST' | 'PATCH' | 'DELETE'
 
@@ -31,6 +32,7 @@ type Route = {
 const ROUTES: Route[] = [
   { method: 'POST', pattern: '/api/auth/login', auth: false, handler: auth.login },
   { method: 'POST', pattern: '/api/auth/logout', auth: false, handler: auth.logout },
+  { method: 'POST', pattern: '/api/auth/two-factor', auth: false, handler: twoFactor.completeSignIn },
   { method: 'POST', pattern: '/api/auth/register', auth: false, handler: account.register },
   { method: 'POST', pattern: '/api/auth/forgot', auth: false, handler: account.forgotPassword },
   { method: 'GET', pattern: '/api/auth/reset/:token', auth: false, handler: account.resetInfo },
@@ -44,6 +46,11 @@ const ROUTES: Route[] = [
   { method: 'GET', pattern: '/api/me/tokens', auth: 'session', handler: account.tokens },
   { method: 'POST', pattern: '/api/me/tokens', auth: 'session', handler: account.createToken },
   { method: 'DELETE', pattern: '/api/me/tokens/:id', auth: 'session', handler: account.revokeToken },
+  { method: 'GET', pattern: '/api/me/two-factor', auth: 'session', handler: twoFactor.status },
+  { method: 'POST', pattern: '/api/me/two-factor/setup', auth: 'session', handler: twoFactor.setup },
+  { method: 'POST', pattern: '/api/me/two-factor/enable', auth: 'session', handler: twoFactor.enable },
+  { method: 'POST', pattern: '/api/me/two-factor/disable', auth: 'session', handler: twoFactor.disable },
+  { method: 'POST', pattern: '/api/me/two-factor/recovery-codes', auth: 'session', handler: twoFactor.regenerateCodes },
   { method: 'POST', pattern: '/api/workspaces', auth: 'session', handler: account.createWorkspaceHandler },
   { method: 'GET', pattern: '/api/health', auth: false, handler: ({ db }) => json(health(db)) },
   { method: 'GET', pattern: '/api/metrics', auth: false, handler: metrics.get },

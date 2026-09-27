@@ -1,5 +1,6 @@
 import { expect, test, type Page } from '@playwright/test'
 import { REGIONAL_REVENUE_EXCEPTIONS as ORIGINAL } from '../../src/lib/workflow/examples'
+import { base32Decode, totp } from '../../src/server/totp'
 
 // Accounts and teams in a real browser: sign-up creates a workspace, an invite
 // link brings a teammate in, the workspace switcher, and account settings.
@@ -200,4 +201,63 @@ test('API tokens: minted once in account settings, usable by a script, revoked w
   await expect(page.getByText('Token revoked')).toBeVisible()
   await expect(page.getByText('No tokens yet.')).toBeVisible()
   expect((await page.request.get('/api/me', { headers: { authorization: `Bearer ${secret}` } })).status()).toBe(401)
+})
+
+test('two-step sign-in: turned on from a QR key, then the password alone no longer signs in, and recovery codes work once', async ({ page }) => {
+  const origin = new URL((await page.goto('/login'))!.url()).origin
+  const email = `kim.${unique}@acme.test`
+  const registered = await page.request.post('/api/auth/register', {
+    headers: { origin },
+    data: { name: 'Kim Lee', email, password: PASSWORD, workspaceName: `Kim Co ${unique}` },
+  })
+  expect(registered.status()).toBe(201)
+
+  // Turn it on: scan (here, read the key the page shows), confirm with a code and the password.
+  await open(page, '/account')
+  await page.getByRole('button', { name: 'Turn on' }).click()
+  const dialog = page.getByRole('dialog')
+  await expect(dialog.getByRole('img', { name: 'QR code for your authenticator app' })).toBeVisible()
+  const secret = base32Decode(await dialog.getByTestId('two-factor-key').innerText())
+  await dialog.getByLabel('Code from the app').fill(totp(secret))
+  await dialog.getByLabel('Your password').fill(PASSWORD)
+  await dialog.getByRole('button', { name: 'Turn on' }).click()
+  await expect(dialog.getByRole('heading', { name: 'Save your recovery codes' })).toBeVisible()
+  const codes = await dialog.getByRole('list', { name: 'Recovery codes' }).locator('li').allInnerTexts()
+  expect(codes).toHaveLength(10)
+  await expect(dialog.getByRole('button', { name: 'Done' })).toBeDisabled()
+  await dialog.getByLabel('I’ve saved these codes somewhere safe').check()
+  await dialog.getByRole('button', { name: 'Done' }).click()
+  await expect(page.getByText(/10 of 10 recovery codes left/)).toBeVisible()
+
+  // Signing in now takes a code as well: a wrong one is refused, the next one from the app works.
+  await page.getByRole('button', { name: 'Sign out', exact: true }).click()
+  await page.getByLabel('Email').fill(email)
+  await page.getByLabel('Password', { exact: true }).fill(PASSWORD)
+  await page.getByRole('button', { name: 'Sign in' }).click()
+  await expect(page.getByRole('heading', { name: 'Two-step sign-in' })).toBeVisible()
+  await page.getByLabel('Code from your authenticator app').fill('000000')
+  await expect(page.getByText(/That code isn’t right/)).toBeVisible()
+  // The code used to turn it on is spent, so the app's next code is the one to use.
+  await page.getByLabel('Code from your authenticator app').fill(totp(secret, Date.now() + 30_000))
+  await expect(page.getByRole('heading', { name: 'Welcome, Kim' })).toBeVisible()
+
+  // Without the phone: a recovery code signs in once.
+  await page.getByRole('button', { name: 'Sign out', exact: true }).click()
+  await page.getByLabel('Email').fill(email)
+  await page.getByLabel('Password', { exact: true }).fill(PASSWORD)
+  await page.getByRole('button', { name: 'Sign in' }).click()
+  await page.getByRole('button', { name: 'Use a recovery code' }).click()
+  await page.getByLabel('Recovery code').fill(codes[0]!)
+  await page.getByRole('button', { name: 'Verify and sign in' }).click()
+  await expect(page.getByRole('heading', { name: 'Welcome, Kim' })).toBeVisible()
+
+  // Turning it off takes the password and a code.
+  await open(page, '/account')
+  await expect(page.getByText(/9 of 10 recovery codes left/)).toBeVisible()
+  await page.getByRole('button', { name: 'Turn off' }).click()
+  await page.getByRole('dialog').getByLabel('Code from the app, or a recovery code').fill(codes[1]!)
+  await page.getByRole('dialog').getByLabel('Your password').fill(PASSWORD)
+  await page.getByRole('dialog').getByRole('button', { name: 'Turn off' }).click()
+  await expect(page.getByText('Two-step sign-in is off')).toBeVisible()
+  await expect(page.getByRole('button', { name: 'Turn on' })).toBeVisible()
 })

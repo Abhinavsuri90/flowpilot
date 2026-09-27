@@ -20,8 +20,9 @@ import { clientIp } from '../config'
 import { modelStatus } from '../ai/config'
 import { ApiError, invalid, isSecureRequest, json, readJson } from '../http'
 import { metrics } from '../observability'
+import { createChallenge, isTwoFactorOn } from '../twofactor'
 import type { DB } from '../db'
-import type { Me } from '../../lib/types'
+import type { Me, TwoFactorChallenge } from '../../lib/types'
 import type { AuthedContext, ApiContext } from './context'
 
 const LoginBody = z.object({
@@ -74,9 +75,24 @@ export async function login({ request, db }: ApiContext): Promise<Response> {
   }
 
   clearLoginFailures(email, ip)
+  const second = secondStepFor(db, row.id)
+  if (second) {
+    metrics.signIns.inc({ outcome: 'second_step' })
+    return json(second)
+  }
   metrics.signIns.inc({ outcome: 'success' })
   const { cookie, me } = issueSession(db, request, row.id)
   return json(me, { headers: { 'Set-Cookie': cookie } })
+}
+
+/**
+ * With two-step sign-in on, a correct password earns a short-lived challenge, not
+ * a session: POST /api/auth/two-factor with a code finishes signing in.
+ */
+export function secondStepFor(db: DB, userId: string): TwoFactorChallenge | null {
+  if (!isTwoFactorOn(db, userId)) return null
+  const { token, expiresAt } = createChallenge(db, userId)
+  return { twoFactor: { challenge: token, expiresAt } }
 }
 
 export function logout({ request, db }: ApiContext): Response {

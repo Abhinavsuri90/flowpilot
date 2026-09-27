@@ -163,7 +163,8 @@ export const metrics = {
   runDuration: new Histogram('flowpilot_recipe_run_duration_seconds', 'Time to execute a run and store its result.', [0.001, 0.005, 0.01, 0.05, 0.1, 0.5, 1, 5, 30]),
   drafts: new Counter('flowpilot_ai_drafts_total', 'AI drafting requests sent to the model, by outcome (workflow, clarification, unsupported, error).'),
   draftDuration: new Histogram('flowpilot_ai_draft_duration_seconds', 'Time the model took to answer a drafting request.', [0.5, 1, 2, 3, 5, 8, 13, 21, 34]),
-  signIns: new Counter('flowpilot_sign_ins_total', 'Sign-in attempts with a password, by outcome.'),
+  signIns: new Counter('flowpilot_sign_ins_total', 'Sign-in attempts with a password, by outcome (success, second_step, invalid, throttled).'),
+  secondFactor: new Counter('flowpilot_two_factor_checks_total', 'Codes checked at the second step of signing in, by outcome (totp, recovery, invalid, expired, throttled).'),
 }
 
 export function resetMetrics(): void {
@@ -231,6 +232,7 @@ export function renderMetrics(db: DB, now = Date.now()): string {
   for (const metric of Object.values(metrics)) lines.push(...metric.render())
   lines.push(
     ...gauge('flowpilot_users', 'Accounts.', [{ value: count('SELECT COUNT(*) FROM users') }]),
+    ...gauge('flowpilot_two_factor_users', 'Accounts with two-step sign-in on.', [{ value: count('SELECT COUNT(*) FROM users WHERE totp_enabled_at IS NOT NULL') }]),
     ...gauge('flowpilot_workspaces', 'Workspaces.', [{ value: count('SELECT COUNT(*) FROM workspaces') }]),
     ...gauge('flowpilot_recipes', 'Recipes, by state.', [
       { labels: { state: 'active' }, value: count('SELECT COUNT(*) FROM workflows WHERE archived_at IS NULL') },

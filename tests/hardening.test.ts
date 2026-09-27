@@ -225,7 +225,7 @@ describe('health', () => {
     const res = await handleApi(new Request(`${BASE}/api/health`))
     expect(res.status).toBe(200)
     const body = await res.json()
-    expect(body).toMatchObject({ status: 'ok', version: APP_VERSION, schema: { migrations: 5, triggers: 13 } })
+    expect(body).toMatchObject({ status: 'ok', version: APP_VERSION, schema: { migrations: 6, triggers: 15 } })
     expect(body.uptimeSeconds).toBeGreaterThanOrEqual(0)
     expect(JSON.parse(readFileSync('package.json', 'utf8')).version).toBe(APP_VERSION)
   })

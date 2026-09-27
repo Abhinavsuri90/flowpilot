@@ -2,12 +2,14 @@ import * as React from 'react'
 import { Link, createFileRoute, redirect, useRouter } from '@tanstack/react-router'
 import { useMutation, useQueryClient } from '@tanstack/react-query'
 import { z } from 'zod'
-import { ArrowRight } from 'lucide-react'
+import { ArrowRight, ShieldCheck } from 'lucide-react'
 import { getLoginInfoFn, getSessionFn } from '~/lib/session'
 import { api, ApiError } from '~/lib/api'
 import { DEMO_PEOPLE } from '~/lib/demo'
-import type { Me } from '~/lib/types'
+import { needsSecondStep, type SecondStepResult, type SignInResult } from '~/lib/types'
 import { AuthLayout, PasswordInput } from '~/components/auth-layout'
+import { SecondStepForm } from '~/components/two-factor'
+import { useToast } from '~/components/toast'
 import { Avatar, Badge, Button, Callout, Field, Input, cn, useHydrated } from '~/components/ui'
 import { safeRedirect } from '~/lib/redirect'
 
@@ -35,14 +37,35 @@ function LoginPage() {
   // Until React hydrates, controls stay disabled: a click would do nothing, and a
   // native submit must never put credentials in a URL (the form is also POST).
   const hydrated = useHydrated()
+  const toast = useToast()
+  // Set when the password was right and the account asks for a code as well.
+  const [challenge, setChallenge] = React.useState<string | null>(null)
+  const [restartReason, setRestartReason] = React.useState<string | null>(null)
+
+  const signedIn = async (result?: SecondStepResult) => {
+    // A new account must never see the previous account's cached data.
+    queryClient.clear()
+    await router.invalidate()
+    await router.navigate({ href: safeRedirect(search.redirect), replace: true })
+    const left = result?.recoveryCodesLeft
+    if (left !== undefined && left <= 3) {
+      toast.show({
+        tone: 'bad',
+        title: left === 0 ? 'That was your last recovery code' : `${left} recovery code${left === 1 ? '' : 's'} left`,
+        description: 'Make new ones in Account settings before you run out.',
+      })
+    }
+  }
 
   const login = useMutation({
-    mutationFn: (creds: { email: string; password: string }) => api.post<Me>('/api/auth/login', creds),
-    onSuccess: async () => {
-      // A new account must never see the previous account's cached data.
-      queryClient.clear()
-      await router.invalidate()
-      await router.navigate({ href: safeRedirect(search.redirect), replace: true })
+    mutationFn: (creds: { email: string; password: string }) => api.post<SignInResult>('/api/auth/login', creds),
+    onSuccess: async (result) => {
+      setRestartReason(null)
+      if (needsSecondStep(result)) {
+        setChallenge(result.twoFactor.challenge)
+        return
+      }
+      await signedIn()
     },
   })
 
@@ -64,6 +87,30 @@ function LoginPage() {
   }
 
   const error = login.error instanceof ApiError ? login.error : login.error ? new ApiError(0, 'ERROR', login.error.message) : null
+
+  if (challenge) {
+    return (
+      <AuthLayout>
+        <div className="mb-6 grid size-11 place-items-center rounded-xl bg-brand-soft text-brand-ink">
+          <ShieldCheck className="size-5" aria-hidden />
+        </div>
+        <h1 className="text-[26px] font-semibold tracking-tight text-ink">Two-step sign-in</h1>
+        <p className="mt-1.5 text-[14.5px] text-muted">
+          Your password was right. To finish signing in as <span className="font-medium text-ink">{email.trim()}</span>, enter a code.
+        </p>
+        <SecondStepForm
+          challenge={challenge}
+          onSignedIn={signedIn}
+          onRestart={(reason) => {
+            setChallenge(null)
+            setPassword('')
+            login.reset()
+            setRestartReason(reason ?? null)
+          }}
+        />
+      </AuthLayout>
+    )
+  }
 
   return (
     <AuthLayout>
@@ -107,6 +154,7 @@ function LoginPage() {
             {error.message}
           </Callout>
         )}
+        {!error && restartReason && <Callout tone="warn">{restartReason}</Callout>}
         <Button
           type="submit"
           variant="brand"

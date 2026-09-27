@@ -26,7 +26,7 @@ import { takePasswordReset, takeRegistration } from '../ratelimit'
 import { emailProblem, nameProblem, normalizeEmail, passwordProblem, workspaceNameProblem } from '../../lib/account'
 import type { ApiIssue, ApiTokenInfo, SessionInfo } from '../../lib/types'
 import type { ApiContext, AuthedContext } from './context'
-import { issueSession, toMe } from './auth'
+import { issueSession, secondStepFor, toMe } from './auth'
 
 export const inviteGone = () =>
   new ApiError(404, 'INVITE_INVALID', 'This invite link has expired, was revoked or was already used. Ask for a new one.')
@@ -157,7 +157,11 @@ export function resetInfo({ db, params }: ApiContext): Response {
 
 const ResetBody = z.object({ token: z.string().max(128), password: z.string({ error: 'Choose a password' }) })
 
-/** POST /api/auth/reset: sets the new password, signs out every device, and signs this one in. */
+/**
+ * POST /api/auth/reset: sets the new password, signs out every device, and signs
+ * this one in; with two-step sign-in on, a code is still needed (a reset link
+ * proves access to the inbox, not to the phone).
+ */
 export async function resetPassword({ db, request }: ApiContext): Promise<Response> {
   const parsed = ResetBody.safeParse(await readJson(request))
   if (!parsed.success) throw invalid(parsed.error.issues[0]?.message ?? 'Choose a password')
@@ -174,6 +178,8 @@ export async function resetPassword({ db, request }: ApiContext): Promise<Respon
     deleteSessionsOf(db, user.id)
   })()
   clearLoginFailures(user.email, clientIp(request))
+  const second = secondStepFor(db, user.id)
+  if (second) return json(second)
   const { cookie, me } = issueSession(db, request, user.id)
   return json(me, { headers: { 'Set-Cookie': cookie } })
 }
