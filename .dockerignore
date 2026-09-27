@@ -13,6 +13,7 @@ data
 deploy
 fly.toml
 test-results
+coverage
 playwright-report
 docs/screenshots
 .DS_Store
