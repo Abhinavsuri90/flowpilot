@@ -31,6 +31,18 @@ const signIn = async (who: string) => {
   if (!res.ok()) throw new Error(`login as ${who} failed: ${res.status()}`)
 }
 
+// 0. The social preview image (1200×630) for link cards.
+{
+  const og = await browser.newContext({ viewport: { width: 1200, height: 630 }, deviceScaleFactor: 1 })
+  const ogPage = await og.newPage()
+  await ogPage.goto(`${base}/welcome`)
+  await ogPage.locator('html[data-hydrated="true"]').waitFor({ state: 'attached' })
+  await ogPage.waitForLoadState('networkidle')
+  await ogPage.screenshot({ path: 'public/og.png' })
+  console.log('saved public/og.png')
+  await og.close()
+}
+
 // 11. The landing page, signed out.
 await page.goto(`${base}/welcome`)
 await settle()

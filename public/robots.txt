@@ -1,0 +1,15 @@
+# The public pages may be indexed; everything behind sign-in and the API may not.
+User-agent: *
+Allow: /welcome
+Allow: /login
+Allow: /signup
+Disallow: /api/
+Disallow: /w/
+Disallow: /workflows/
+Disallow: /runs
+Disallow: /library
+Disallow: /access
+Disallow: /audit
+Disallow: /account
+Disallow: /invite/
+Disallow: /reset-password/

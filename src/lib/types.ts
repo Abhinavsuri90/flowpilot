@@ -51,6 +51,8 @@ export type AuthOptions = {
   registration: RegistrationMode
   /** Whether emails (reset links, invites) are really sent. */
   mail: boolean
+  /** The public base URL (APP_URL, else this request's origin), for absolute links in page metadata. */
+  siteUrl: string
 }
 
 export type InviteInfo = {

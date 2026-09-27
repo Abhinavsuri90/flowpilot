@@ -36,5 +36,6 @@ export const getLoginInfoFn = createServerFn({ method: 'GET' }).handler(async ()
     demoPassword: config.demoMode && documented ? DEFAULT_SEED_PASSWORD : null,
     registration: config.registration,
     mail: config.mail !== null,
+    siteUrl: config.appUrl ?? new URL(getRequest().url).origin,
   }
 })

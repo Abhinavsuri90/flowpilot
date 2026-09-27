@@ -24,12 +24,27 @@ import { buttonClass, cn } from '~/components/ui'
 
 export const Route = createFileRoute('/welcome')({
   loader: async () => ({ options: await getLoginInfoFn(), me: await getSessionFn() }),
-  head: () => ({
-    meta: [
-      { title: 'FlowPilot · Recipes for repetitive CSV reports' },
-      { name: 'description', content: 'Describe a repetitive CSV or Excel report once. FlowPilot turns it into a checked, versioned recipe your team reruns on any file, with no AI in the loop.' },
-    ],
-  }),
+  head: ({ loaderData }) => {
+    const title = 'FlowPilot · Recipes for repetitive CSV reports'
+    const description = 'Describe a repetitive CSV or Excel report once. FlowPilot turns it into a checked, versioned recipe your team reruns on any file, with no AI in the loop.'
+    const site = loaderData?.options.siteUrl ?? ''
+    return {
+      meta: [
+        { title },
+        { name: 'description', content: description },
+        // Link previews (LinkedIn, Slack, X) read these.
+        { property: 'og:type', content: 'website' },
+        { property: 'og:title', content: title },
+        { property: 'og:description', content: description },
+        { property: 'og:url', content: `${site}/welcome` },
+        { property: 'og:image', content: `${site}/og.png` },
+        { name: 'twitter:card', content: 'summary_large_image' },
+        { name: 'twitter:title', content: title },
+        { name: 'twitter:description', content: description },
+        { name: 'twitter:image', content: `${site}/og.png` },
+      ],
+    }
+  },
   component: WelcomePage,
 })
 
