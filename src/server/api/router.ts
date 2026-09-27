@@ -4,6 +4,7 @@ import { loadEnv } from '../env'
 import { ensureReady } from '../boot'
 import { ApiError, HSTS, errorResponse, isSecureRequest, json, noContent, unauthorized } from '../http'
 import type { ApiContext, AuthedContext } from './context'
+import { APP_VERSION } from '../../lib/version'
 import * as auth from './auth'
 import * as workflows from './workflows'
 import * as runs from './runs'
@@ -42,7 +43,7 @@ const ROUTES: Route[] = [
   { method: 'POST', pattern: '/api/me/tokens', auth: 'session', handler: account.createToken },
   { method: 'DELETE', pattern: '/api/me/tokens/:id', auth: 'session', handler: account.revokeToken },
   { method: 'POST', pattern: '/api/workspaces', auth: 'session', handler: account.createWorkspaceHandler },
-  { method: 'GET', pattern: '/api/health', auth: false, handler: ({ db }) => json({ status: db.prepare('SELECT 1').pluck().get() === 1 ? 'ok' : 'degraded' }) },
+  { method: 'GET', pattern: '/api/health', auth: false, handler: ({ db }) => json(health(db)) },
   { method: 'GET', pattern: '/api/dashboard', auth: true, handler: dashboard.get },
   { method: 'GET', pattern: '/api/workflows', auth: true, handler: workflows.list },
   { method: 'POST', pattern: '/api/workflows', auth: true, handler: workflows.create },
@@ -91,6 +92,20 @@ const COMPILED: CompiledRoute[] = ROUTES.map((route) => {
 })
 
 const WRITE_METHODS = new Set(['POST', 'PUT', 'PATCH', 'DELETE'])
+
+/** Public and unauthenticated: enough for a platform check and an operator's first look, nothing about users or data. */
+function health(db: ApiContext['db']) {
+  const ok = db.prepare('SELECT 1').pluck().get() === 1
+  return {
+    status: ok ? 'ok' : 'degraded',
+    version: APP_VERSION,
+    schema: {
+      migrations: db.prepare('SELECT COUNT(*) FROM schema_migrations').pluck().get() as number,
+      triggers: db.prepare("SELECT COUNT(*) FROM sqlite_master WHERE type = 'trigger'").pluck().get() as number,
+    },
+    uptimeSeconds: Math.round(process.uptime()),
+  }
+}
 
 /**
  * Blocks cross-site writes: the Origin host must equal the Host (or

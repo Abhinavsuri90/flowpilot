@@ -61,7 +61,8 @@ describe('access control', () => {
   it('exposes a public health check that reveals nothing else', async () => {
     const res = await new Client().get('/api/health')
     expect(res.status).toBe(200)
-    expect(res.body).toEqual({ status: 'ok' })
+    expect(res.body).toMatchObject({ status: 'ok', version: expect.any(String), schema: { migrations: expect.any(Number), triggers: expect.any(Number) } })
+    expect(Object.keys(res.body).sort()).toEqual(['schema', 'status', 'uptimeSeconds', 'version'])
     expect(res.headers.get('cache-control')).toBe('private, no-store')
   })
 

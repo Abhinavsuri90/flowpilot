@@ -7,6 +7,8 @@ import { finishRunFailed, insertRun } from '../src/server/repo'
 import { hashToken } from '../src/server/auth'
 import { safeRedirect } from '../src/lib/redirect'
 import { clientIp } from '../src/server/config'
+import { readFileSync } from 'node:fs'
+import { APP_VERSION } from '../src/lib/version'
 import { REGIONAL_REVENUE_EXCEPTIONS as ORIGINAL } from '../src/lib/workflow/examples'
 
 // Problems found in the phase 10 review, each pinned by a test.
@@ -215,5 +217,16 @@ describe('client address behind a proxy', () => {
     expect(clientIp(request)).toBe('2.2.2.2')
     vi.stubEnv('TRUST_PROXY', '')
     expect(clientIp(request)).toBe('unknown')
+  })
+})
+
+describe('health', () => {
+  it('reports the version and schema state to anyone, and the version matches package.json', async () => {
+    const res = await handleApi(new Request(`${BASE}/api/health`))
+    expect(res.status).toBe(200)
+    const body = await res.json()
+    expect(body).toMatchObject({ status: 'ok', version: APP_VERSION, schema: { migrations: 5, triggers: 13 } })
+    expect(body.uptimeSeconds).toBeGreaterThanOrEqual(0)
+    expect(JSON.parse(readFileSync('package.json', 'utf8')).version).toBe(APP_VERSION)
   })
 })
