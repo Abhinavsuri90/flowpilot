@@ -6,7 +6,7 @@ import reactHooks from 'eslint-plugin-react-hooks'
 import globals from 'globals'
 
 export default tseslint.config(
-  { ignores: ['.output/**', '.nitro/**', '.tanstack/**', 'node_modules/**', 'src/routeTree.gen.ts', 'test-results/**', 'playwright-report/**', 'data/**', 'deploy/**', 'public/**'] },
+  { ignores: ['.output/**', '.nitro/**', '.tanstack/**', 'node_modules/**', 'src/routeTree.gen.ts', 'test-results/**', 'playwright-report/**', 'coverage/**', 'data/**', 'deploy/**', 'public/**'] },
   js.configs.recommended,
   ...tseslint.configs.recommended,
   {
