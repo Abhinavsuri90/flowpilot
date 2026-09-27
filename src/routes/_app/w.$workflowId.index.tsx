@@ -65,6 +65,7 @@ import {
 } from '~/components/workflow-bits'
 import { FileDrop } from '~/components/file-drop'
 import { ResultView, StepFunnel } from '~/components/results'
+import { RunComparison } from '~/components/run-comparison'
 import { ShareDialog, CopyLinkButton, shareLink } from '~/components/share-dialog'
 import { ForkDialog } from '~/components/fork-dialog'
 import { WhoHasAccess } from '~/components/access-panel'
@@ -985,6 +986,8 @@ function ResultCard({ runId, detail, onClose }: { runId: string; detail: Workflo
         ) : (
           <ResultView columns={r.columns} rows={r.rows} caption={`Result of run ${r.id}`} />
         )}
+
+        {r.status === 'succeeded' && <RunComparison key={r.id} run={r} />}
 
         {r.stepLog.length > 0 && (
           <div className="rounded-xl border border-line bg-surface-2 p-4">

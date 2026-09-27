@@ -550,3 +550,28 @@ test('a near-miss header is fixed in the browser with one click, and a version s
   await expect(page.getByRole('heading', { name: 'Changes from v1' })).toBeVisible()
   await expect(page.getByText('threshold: default ₹1,00,000 → ₹80,000')).toBeVisible()
 })
+
+test('a rerun shows what changed since the previous run, row by row', async ({ page }) => {
+  await signIn(page, 'Asha')
+  const { id } = await createRecipe(page, 'QA weekly comparison')
+  await open(page, `/w/${id}`)
+  await runFile(page, F + 'sales_A.csv')
+  await page.getByRole('button', { name: 'Run recipe' }).click()
+  await expect(page.getByRole('table', { name: /Result of run/ }).locator('tbody tr')).toHaveCount(2)
+  // A first run has nothing to compare with.
+  await expect(page.getByRole('region', { name: 'Changes between runs' })).toHaveCount(0)
+
+  // Next week's file: the result says what moved, before anyone reads the table.
+  await page.getByRole('button', { name: 'Remove sales_A.csv' }).click()
+  await runFile(page, F + 'sales_B.csv')
+  await page.getByRole('button', { name: 'Run recipe' }).click()
+  const changes = page.getByRole('region', { name: 'Changes between runs' })
+  await expect(changes).toContainText('1 changed · 1 new · 1 gone')
+  await changes.getByRole('button', { name: /Show the changes/ }).click()
+  const table = changes.getByRole('table', { name: 'Changes between the two runs' })
+  await expect(table.locator('tbody tr')).toHaveCount(3)
+  await expect(table.locator('tbody tr').nth(0)).toHaveText(/West.*₹70,000.*→.*₹20,000.*−₹50,000.*Changed/)
+  await expect(table.locator('tbody tr').nth(1)).toHaveText(/North.*₹70,000.*New/)
+  await expect(table.locator('tbody tr').nth(2)).toHaveText(/South.*₹40,000.*Gone/)
+  await expect(changes.getByRole('combobox', { name: 'Run to compare with' })).toContainText('sales_A.csv')
+})
