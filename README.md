@@ -463,7 +463,6 @@ tests/                Vitest suites · tests/e2e: Playwright specs and the mock 
 scripts/              seed, check-model, eval-model, smoke, screenshots
 docs/                 system-design.md (architecture, data model, flows, security) · screenshots/
 fixtures/             demo and invalid CSVs used by the tests · public/samples: downloadable demo files
-context.md            project memory: status, decisions, deviations, known issues
 ```
 
 ## Limitations and next steps
@@ -483,4 +482,4 @@ This is a working prototype, not a production platform:
   - The model can't see values, so rely on the editor's sample check for text casing.
 - **Not yet deployed by us.** The production image and the Oracle kit (app + Caddy, backups) were verified on a laptop; the console steps that need an Oracle account are documented in `deploy/oracle/README.md`, not executed.
 
-Decisions, deviations from the original brief and known issues are logged in [`context.md`](context.md).
+Design decisions and their trade-offs are recorded in [`docs/system-design.md`](docs/system-design.md).
